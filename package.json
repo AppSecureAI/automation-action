@@ -44,7 +44,7 @@
     "zod": "^3.25.56"
   },
   "devDependencies": {
-    "@eslint/compat": "^1.2.9",
+    "@eslint/compat": "^2.0.0",
     "@github/local-action": "^6.0.2",
     "@jest/globals": "^29.7.0",
     "@rollup/plugin-commonjs": "^28.0.1",
