@@ -312,7 +312,7 @@ describe('utils.ts', () => {
       expect(result).not.toContain('...and')
     })
 
-    it('truncates list at 5 PRs', () => {
+    it('shows all PRs without truncation', () => {
       const urls = [
         'https://github.com/org/repo/pull/1',
         'https://github.com/org/repo/pull/2',
@@ -323,20 +323,28 @@ describe('utils.ts', () => {
         'https://github.com/org/repo/pull/7'
       ]
       const result = formatPrLinks(urls)
+      // All PRs should be shown
       expect(result).toContain('https://github.com/org/repo/pull/1')
       expect(result).toContain('https://github.com/org/repo/pull/5')
-      expect(result).not.toContain('https://github.com/org/repo/pull/6')
-      expect(result).toContain('...and 2 more')
+      expect(result).toContain('https://github.com/org/repo/pull/6')
+      expect(result).toContain('https://github.com/org/repo/pull/7')
+      // No truncation message
+      expect(result).not.toContain('...and')
+      expect(result).not.toContain('more')
     })
 
-    it('uses correct tree characters for truncated list', () => {
+    it('uses correct tree characters for full list', () => {
       const urls = Array.from(
         { length: 7 },
         (_, i) => `https://github.com/org/repo/pull/${i + 1}`
       )
       const result = formatPrLinks(urls)
       const lines = result.split('\n')
-      expect(lines[lines.length - 1]).toContain('└─ ...and 2 more')
+      // Last line should use └─ and contain the last PR
+      expect(lines[lines.length - 1]).toContain('└─')
+      expect(lines[lines.length - 1]).toContain('pull/7')
+      // Other lines should use ├─
+      expect(lines[0]).toContain('├─')
     })
   })
 

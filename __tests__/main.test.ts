@@ -45,7 +45,13 @@ describe('main.ts', () => {
         run_id: 'run-12345'
       })
     )
-    getStatus.mockImplementation(() => Promise.resolve({ status: 'completed' }))
+    getStatus.mockImplementation(() =>
+      Promise.resolve({
+        status: 'completed',
+        processTracking: null,
+        summary: null
+      })
+    )
     pollStatusUntilComplete.mockImplementation(() =>
       Promise.resolve({ status: 'completed' })
     )
@@ -82,7 +88,7 @@ describe('main.ts', () => {
       expect(pollStatusUntilComplete).toHaveBeenCalledWith(
         expect.any(Function),
         50,
-        10000
+        30000
       )
     })
   })
@@ -137,7 +143,7 @@ describe('main.ts', () => {
 
       expect(core.error).toHaveBeenNthCalledWith(
         1,
-        'Failed to submit analysis results for processing. Please check your network connection and API configuration.'
+        'Failed to submit analysis results for processing. Please try again later.'
       )
       expect(core.setFailed).toHaveBeenCalledWith(expect.any(String))
     })
@@ -153,7 +159,7 @@ describe('main.ts', () => {
 
       // Check that the mock calls include the two expected messages
       expect(core.error).toHaveBeenCalledWith(
-        'Failed to submit analysis results for processing. Please check your network connection and API configuration.'
+        'Failed to submit analysis results for processing. Please try again later.'
       )
     })
 
@@ -166,7 +172,7 @@ describe('main.ts', () => {
 
       expect(core.error).toHaveBeenNthCalledWith(
         1,
-        'Failed to submit analysis results for processing. Please check your network connection and API configuration.'
+        'Failed to submit analysis results for processing. Please try again later.'
       )
       expect(core.setFailed).toHaveBeenCalledWith(expect.any(String))
     })

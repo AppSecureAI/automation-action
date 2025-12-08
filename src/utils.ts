@@ -414,18 +414,11 @@ export async function writeJobSummary(
       core.summary.addTable(sevData)
     }
 
-    // Add PR links if available
+    // Add PR links if available (show all PRs without truncation)
     if (summary.pr_urls.length > 0) {
       core.summary.addHeading('Pull Requests', 4)
-      const displayCount = Math.min(5, summary.pr_urls.length)
-      for (let i = 0; i < displayCount; i++) {
-        core.summary.addRaw(`- ${summary.pr_urls[i]}\n`, true)
-      }
-      if (summary.pr_urls.length > 5) {
-        core.summary.addRaw(
-          `\n_...and ${summary.pr_urls.length - 5} more_\n`,
-          true
-        )
+      for (const prUrl of summary.pr_urls) {
+        core.summary.addRaw(`- ${prUrl}\n`, true)
       }
     }
   }
@@ -551,24 +544,19 @@ export function formatRemediationResults(summary: RunSummary): string {
 }
 
 /**
- * Format PR links (show up to 5, then "...and X more")
+ * Format PR links (show all PRs without truncation)
  */
 export function formatPrLinks(prUrls: string[]): string {
   if (prUrls.length === 0) {
     return 'No pull requests created'
   }
 
-  const displayCount = Math.min(5, prUrls.length)
   const lines: string[] = []
 
-  for (let i = 0; i < displayCount; i++) {
-    const isLast = i === displayCount - 1 && prUrls.length <= 5
+  for (let i = 0; i < prUrls.length; i++) {
+    const isLast = i === prUrls.length - 1
     const prefix = isLast ? '└─' : '├─'
     lines.push(`${prefix} ${prUrls[i]}`)
-  }
-
-  if (prUrls.length > 5) {
-    lines.push(`└─ ...and ${prUrls.length - 5} more`)
   }
 
   return lines.join('\n')

@@ -404,12 +404,10 @@ describe('input.ts', () => {
         )
       })
 
-      it('returns false when debug is empty string', () => {
+      it('returns false when debug is empty string (default)', () => {
         core.getInput.mockReturnValue('')
         expect(getDebug()).toBe(false)
-        expect(core.warning).toHaveBeenCalledWith(
-          expect.stringContaining('Invalid debug value')
-        )
+        expect(core.warning).not.toHaveBeenCalled()
       })
 
       it('prefers INPUT_DEBUG environment variable', () => {

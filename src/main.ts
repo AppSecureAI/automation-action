@@ -1,40 +1,92 @@
+// src/main.ts
+// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// This software and its source code are the proprietary information of AppSecAI, Inc.
+// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
+
 import * as core from '@actions/core'
 import { readFile } from './file.js'
 import { getStatus, pollStatusUntilComplete, submitRun } from './service.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
-import { SubmitRunOutput } from './types.js'
+import { SubmitRunOutput, RunProcessTracking, RunSummary } from './types.js'
 import { LogLabels } from './constants.js'
+import {
+  getApiUrl,
+  getMode,
+  getUseTriageCc,
+  getTriageMethod,
+  getUseRemediateCc,
+  getRemediateMethod,
+  getUseValidateCc,
+  getValidateMethod,
+  getUseRemediateLoopCc,
+  getAutoCreatePrs,
+  getDebug
+} from './input.js'
+import { writeJobSummary, formatFinalResults } from './utils.js'
+
+/**
+ * Log all input configuration in a collapsible group
+ */
+function logConfiguration(file: string): void {
+  core.startGroup('Input Configuration')
+  core.info(`File: ${file}`)
+  core.info(`API URL: ${getApiUrl()}`)
+  core.info(`Processing Mode: ${getMode()}`)
+  core.info(`Use Triage CC: ${getUseTriageCc()}`)
+  core.info(`Triage Method: ${getTriageMethod()}`)
+  core.info(`Use Remediate CC: ${getUseRemediateCc()}`)
+  core.info(`Remediate Method: ${getRemediateMethod()}`)
+  core.info(`Use Validate CC: ${getUseValidateCc()}`)
+  core.info(`Validate Method: ${getValidateMethod()}`)
+  core.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`)
+  core.info(`Auto Create PRs: ${getAutoCreatePrs()}`)
+  core.endGroup()
+}
 
 export async function run(): Promise<void> {
   const file: string = core.getInput('file')
+  const isDebug = getDebug()
 
   // Polling configuration for status checks
-  // timeout: Maximum wait time (10 seconds) between status check attempts
-  // intervalCheck: Display progress messages every 10 seconds during submission
-  // retries: Maximum number of polling attempts (50 retries × 10s = ~8 minutes total)
-  const timeout = 10000
-  const intervalCheck = 10000
+  // pollDelay: Wait time between status check attempts (30 seconds)
+  // intervalCheck: Display progress messages every 30 seconds during submission
+  // retries: Maximum number of polling attempts (50 retries × 30s = ~25 minutes total)
+  const pollDelay = 30000
+  const intervalCheck = 30000
   const retries = 50
 
   let fileBuffer: Buffer
   let submitOutput: SubmitRunOutput
+  let finalProcessTracking: RunProcessTracking | null = null
+  let finalSummary: RunSummary | null = null
+  const startTime = Date.now()
 
   try {
     core.info(
       '======== Getting static analysis results for further processing. ========'
     )
 
+    // Log configuration in collapsible group only if debug is enabled
+    if (isDebug) {
+      logConfiguration(file)
+    }
+
     // Step 1: Read the file
+    core.startGroup(`File Processing (${file})`)
     try {
       fileBuffer = await readFile(file)
+      core.info(`Successfully read file: ${file}`)
     } catch (error) {
       core.debug(`Error reading file: ${error}.`)
+      core.endGroup()
       // Re-throw to be caught by the outer block and handled as a final error
       throw error
     }
+    core.endGroup()
 
     // Step 2: Submit the run
+    core.startGroup('Run Submission')
     const intervalId = setInterval(() => {
       core.info(`[${LogLabels.RUN_SUBMIT}] submit in progress...`)
     }, intervalCheck)
@@ -44,9 +96,10 @@ export async function run(): Promise<void> {
       core.info(submitOutput.message)
     } catch (error) {
       core.debug(`Error submit run ${error}`)
+      core.endGroup()
       // Re-throw to be caught by the outer block
       throw new SubmitRunError(
-        `Failed to submit analysis results for processing. Please check your network connection and API configuration.`,
+        `Failed to submit analysis results for processing. Please try again later.`,
         error
       )
     } finally {
@@ -54,6 +107,7 @@ export async function run(): Promise<void> {
         clearInterval(intervalId)
       }
     }
+    core.endGroup()
 
     // Step 3: Poll for status (non-critical failure)
     if (submitOutput.run_id) {
@@ -64,7 +118,18 @@ export async function run(): Promise<void> {
       )
       try {
         const getRunStatus = () => getStatus(store.id)
-        await pollStatusUntilComplete(getRunStatus, retries, timeout)
+        const pollResult = await pollStatusUntilComplete(
+          getRunStatus,
+          retries,
+          pollDelay
+        )
+        // Capture final process tracking and summary for job summary
+        if (pollResult?.processTracking) {
+          finalProcessTracking = pollResult.processTracking
+        }
+        if (pollResult?.summary) {
+          finalSummary = pollResult.summary
+        }
       } catch (pollError) {
         // This is a "soft" failure. Log a warning but let the process complete
         core.warning(
@@ -73,9 +138,26 @@ export async function run(): Promise<void> {
       }
     }
 
-    core.info(
-      '======== Analysis processing complete. Results have been submitted successfully. ========'
+    // Write job summary for successful completion
+    const durationMs = Date.now() - startTime
+    await writeJobSummary(
+      finalProcessTracking,
+      finalSummary,
+      store.id,
+      durationMs,
+      true
     )
+
+    // Final summary
+    core.startGroup('Final Results')
+    const finalResultsOutput = formatFinalResults(
+      finalSummary,
+      store.id,
+      durationMs
+    )
+    core.info(finalResultsOutput)
+    core.endGroup()
+
     core.setOutput('message', 'Processing completed successfully.')
   } catch (error) {
     // This is the final catch for any critical errors
@@ -104,6 +186,16 @@ export async function run(): Promise<void> {
     } else if (typeof error === 'string') {
       errorMessage = error
     }
+
+    // Write job summary for failed completion
+    const durationMs = Date.now() - startTime
+    await writeJobSummary(
+      finalProcessTracking,
+      finalSummary,
+      store.id,
+      durationMs,
+      false
+    )
 
     core.error(errorMessage)
     core.setFailed(errorMessage)

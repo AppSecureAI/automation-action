@@ -6,7 +6,7 @@ import store from '../src/store'
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 import axios from '../__fixtures__/axios'
-import { logSteps } from '../__fixtures__/utils.js'
+import { logSteps, logProcessTracking } from '../__fixtures__/utils.js'
 
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('@actions/github', github)
@@ -22,6 +22,7 @@ const mockGetRemediateMethod = jest.fn()
 const mockGetUseValidateCc = jest.fn()
 const mockGetValidateMethod = jest.fn()
 const mockGetUseRemediateLoopCc = jest.fn()
+const mockGetAutoCreatePrs = jest.fn()
 
 jest.mock('../src/input', () => ({
   getApiUrl: mockGetApiUrl,
@@ -32,7 +33,8 @@ jest.mock('../src/input', () => ({
   getRemediateMethod: mockGetRemediateMethod,
   getUseValidateCc: mockGetUseValidateCc,
   getValidateMethod: mockGetValidateMethod,
-  getUseRemediateLoopCc: mockGetUseRemediateLoopCc
+  getUseRemediateLoopCc: mockGetUseRemediateLoopCc,
+  getAutoCreatePrs: mockGetAutoCreatePrs
 }))
 jest.mock('../src/store', () => ({
   __esModule: true,
@@ -47,7 +49,8 @@ jest.mock('../src/github', () => ({
 }))
 
 jest.unstable_mockModule('../src/utils', () => ({
-  logSteps
+  logSteps,
+  logProcessTracking
 }))
 
 const { submitRun, getStatus, pollStatusUntilComplete } =
@@ -67,8 +70,10 @@ describe('service.ts', () => {
     mockGetUseValidateCc.mockReturnValue('false')
     mockGetValidateMethod.mockReturnValue('baseline')
     mockGetUseRemediateLoopCc.mockReturnValue('false')
+    mockGetAutoCreatePrs.mockReturnValue('true')
     store.finalLogPrinted = {}
     logSteps.mockClear()
+    logProcessTracking.mockClear()
   })
 
   afterEach(() => {
@@ -191,7 +196,7 @@ describe('service.ts', () => {
       const inputBuffer = Buffer.from(jsonData)
 
       await expect(submitRun(inputBuffer, 'file')).rejects.toThrow(
-        '[Submit Analysis for Processing] Call failed: Request timed out. Please check your network connection and try again.'
+        '[Submit Analysis for Processing] Call failed: Request timed out. Please try again later.'
       )
     })
 
@@ -315,7 +320,7 @@ describe('service.ts', () => {
         error: 'Status check failed'
       })
       expect(core.warning).toHaveBeenCalledWith(
-        '[Analysis Processing Status]: An unexpected error occurred. Please try again.'
+        '[Analysis Processing Status]: An unexpected error occurred. Please try again later.'
       )
     })
   })
@@ -337,7 +342,7 @@ describe('service.ts', () => {
       error: 'Status check failed'
     })
     expect(core.warning).toHaveBeenCalledWith(
-      '[Analysis Processing Status] Call failed: Request timed out. Please check your network connection.'
+      '[Analysis Processing Status] Call failed: Request timed out. Please try again later.'
     )
   })
 
@@ -440,7 +445,7 @@ describe('service.ts', () => {
       error: 'Status check failed'
     })
     expect(core.warning).toHaveBeenCalledWith(
-      '[Analysis Processing Status] Call failed with status code: 404. The server may be temporarily unavailable.'
+      '[Analysis Processing Status] Call failed with status code: 404. Please try again later.'
     )
   })
 
@@ -455,7 +460,7 @@ describe('service.ts', () => {
       error: 'Status check failed'
     })
     expect(core.warning).toHaveBeenCalledWith(
-      '[Analysis Processing Status]: An unexpected error occurred. Please try again.'
+      '[Analysis Processing Status]: An unexpected error occurred. Please try again later.'
     )
     expect(core.debug).toHaveBeenCalledWith(
       'Calling status API: GET /api-product/submit/status/test-id'
@@ -511,7 +516,7 @@ describe('service.ts', () => {
     const result = await pollStatusUntilComplete(mockGetStatus, 3, 100)
 
     expect(result).toEqual({ status: 'completed' })
-    expect(core.warning).toHaveBeenCalledWith(
+    expect(core.debug).toHaveBeenCalledWith(
       'Status check attempt failed. Retrying...'
     )
     expect(core.debug).toHaveBeenCalledWith(

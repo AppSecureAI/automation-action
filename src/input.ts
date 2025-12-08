@@ -201,7 +201,7 @@ export function getAutoCreatePrs(): boolean {
 }
 
 export function getDebug(): boolean {
-  const value = getInputValue('debug', 'INPUT_DEBUG')
+  const value = getInputValue('debug', 'INPUT_DEBUG') || 'false'
   if (value !== 'true' && value !== 'false') {
     core.warning(
       `Invalid debug value "${value}". Must be "true" or "false". Using default: false`

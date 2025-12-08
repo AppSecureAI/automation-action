@@ -55688,6 +55688,22 @@ const ValidateMethod = {
     BASELINE: 'baseline',
     ADVANCED: 'advanced'
 };
+/**
+ * Error codes returned by the Product API for plan-related errors.
+ */
+const PlanErrorCode = {
+    UNKNOWN: 'UNKNOWN'
+};
+/**
+ * Valid status values for process tracking stages.
+ */
+const ProcessStatusValue = {
+    NOT_STARTED: 'not_started',
+    INITIATED: 'initiated',
+    IN_PROGRESS: 'in_progress',
+    COMPLETED: 'completed',
+    FAILED: 'failed'
+};
 
 // src/input.ts
 // Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
@@ -55793,6 +55809,22 @@ function getUseRemediateLoopCc() {
     }
     return value === 'true';
 }
+function getAutoCreatePrs() {
+    const value = getInputValue('auto-create-prs', 'INPUT_AUTO_CREATE_PRS', 'AUTO_CREATE_PRS') || 'true';
+    if (value !== 'true' && value !== 'false') {
+        coreExports.warning(`Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: true`);
+        return true;
+    }
+    return value === 'true';
+}
+function getDebug() {
+    const value = getInputValue('debug', 'INPUT_DEBUG') || 'false';
+    if (value !== 'true' && value !== 'false') {
+        coreExports.warning(`Invalid debug value "${value}". Must be "true" or "false". Using default: false`);
+        return false;
+    }
+    return value === 'true';
+}
 
 // src/store.ts
 // Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
@@ -55808,6 +55840,32 @@ const store = {
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
+ * Mapping of internal stage names to user-friendly display names
+ */
+const STAGE_DISPLAY_NAMES = {
+    find: 'Vulnerability Import',
+    triage: 'Triage Analysis',
+    remediation_loop: 'Remediation',
+    remediation_validation_loop: 'Remediation',
+    push: 'Pull Requests'
+};
+/**
+ * Get user-friendly display name for a stage
+ */
+function getDisplayName(internalName) {
+    return STAGE_DISPLAY_NAMES[internalName] || internalName;
+}
+/**
+ * Status icons for visual scanning
+ */
+const STATUS_ICONS = {
+    completed: '✅',
+    in_progress: '⏳',
+    pending: '⏸️',
+    failed: '❌',
+    initiated: '🔄'
+};
+/**
  * Logs steps with appropriate logging level based on status
  * @param steps Array of steps to log
  * @param apiContext Optional string to indicate which API call these steps are related to
@@ -55822,7 +55880,496 @@ function logSteps(steps, apiContext) {
         logFunction(`${prefix}------ ------`);
     });
 }
+/**
+ * Format a single stage status into a human-readable string
+ * @param name The internal stage name (e.g., 'triage', 'remediation_validation_loop')
+ * @param status The ProcessStatus object for this stage
+ * @param remediationLoopStatus Optional remediation loop status to check if still in progress (for push formatting)
+ * @returns A formatted status string with user-friendly names
+ */
+function formatStageStatus(name, status, remediationLoopStatus) {
+    const displayName = getDisplayName(name);
+    if (!status || status.status === ProcessStatusValue.NOT_STARTED) {
+        return `${STATUS_ICONS.pending} ${displayName}: Pending`;
+    }
+    if (status.status === ProcessStatusValue.INITIATED) {
+        return `${STATUS_ICONS.initiated} ${displayName}: Initializing...`;
+    }
+    if (status.status === ProcessStatusValue.COMPLETED) {
+        const details = [];
+        // For triage/Analysis, show confirmed vulnerabilities and false positives
+        if (name === 'triage') {
+            const truePositives = status.success_count - (status.false_positive_count || 0);
+            if (truePositives > 0) {
+                details.push(`${truePositives} confirmed vulnerabilities`);
+            }
+            if (status.false_positive_count > 0) {
+                details.push(`${status.false_positive_count} false positives`);
+            }
+        }
+        else if (name === 'push') {
+            // For push, show PRs created
+            if (status.success_count > 0) {
+                details.push(`${status.success_count} PRs created`);
+            }
+        }
+        else if (name === 'find') {
+            // For find/scan, show vulnerabilities found
+            if (status.success_count > 0) {
+                details.push(`${status.success_count} vulnerabilities found`);
+            }
+        }
+        else if (status.success_count > 0) {
+            // For remediation and other stages
+            details.push(`${status.success_count} fixes generated`);
+        }
+        if (status.error_count > 0) {
+            details.push(`${status.error_count} errors`);
+        }
+        if (details.length === 0 && status.total_items > 0) {
+            details.push(`${status.total_items} processed`);
+        }
+        const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+        return `${STATUS_ICONS.completed} ${displayName}: Completed${detailStr}`;
+    }
+    if (status.status === ProcessStatusValue.IN_PROGRESS) {
+        const pct = status.progress_percentage.toFixed(0);
+        // For triage/Analysis, show confirmed vulnerabilities found so far
+        if (name === 'triage') {
+            const falsePos = status.false_positive_count || 0;
+            const truePos = (status.success_count || 0) - falsePos;
+            return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} (${pct}%) - ${truePos} confirmed, ${falsePos} false positives`;
+        }
+        // Special handling for push/PRs when remediation is still in progress
+        if (name === 'push' &&
+            remediationLoopStatus?.status === ProcessStatusValue.IN_PROGRESS) {
+            return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items} PRs created (more expected as remediation continues)`;
+        }
+        // For push, use PR terminology
+        if (name === 'push') {
+            return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} PRs (${pct}%)`;
+        }
+        return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} (${pct}%)`;
+    }
+    if (status.status === ProcessStatusValue.FAILED) {
+        const errorMsg = status.error_message || 'unknown error';
+        return `${STATUS_ICONS.failed} ${displayName}: Failed - ${errorMsg}`;
+    }
+    return `${displayName}: ${status.status}`;
+}
+/**
+ * Log all process tracking stages
+ * @param tracking The RunProcessTracking object
+ * @param prefixLabel The log prefix label (e.g., '[RUN_STATUS]')
+ */
+function logProcessTracking(tracking, prefixLabel) {
+    if (!tracking) {
+        return;
+    }
+    // Define the stages to display in order with user-friendly names
+    const stages = [
+        { field: 'find_status', name: 'find' },
+        { field: 'triage_status', name: 'triage' },
+        { field: 'remediation_validation_loop_status', name: 'remediation_loop' },
+        { field: 'push_status', name: 'push' }
+    ];
+    // Log each stage that has a status
+    for (const { field, name } of stages) {
+        const status = tracking[field];
+        if (status) {
+            // Pass remediation loop status for special push formatting
+            const remediationLoopStatus = tracking.remediation_validation_loop_status;
+            const formatted = formatStageStatus(name, status, remediationLoopStatus);
+            coreExports.info(`${prefixLabel}: ${formatted}`);
+        }
+    }
+}
+/**
+ * Get status icon for a given status
+ */
+function getStatusIcon(status) {
+    if (!status || status === ProcessStatusValue.NOT_STARTED) {
+        return STATUS_ICONS.pending;
+    }
+    if (status === ProcessStatusValue.COMPLETED) {
+        return STATUS_ICONS.completed;
+    }
+    if (status === ProcessStatusValue.IN_PROGRESS) {
+        return STATUS_ICONS.in_progress;
+    }
+    if (status === ProcessStatusValue.FAILED) {
+        return STATUS_ICONS.failed;
+    }
+    if (status === ProcessStatusValue.INITIATED) {
+        return STATUS_ICONS.initiated;
+    }
+    return '❓';
+}
+/**
+ * Get human-readable status text
+ */
+function getStatusText(status) {
+    if (!status || status === ProcessStatusValue.NOT_STARTED) {
+        return 'Pending';
+    }
+    if (status === ProcessStatusValue.COMPLETED) {
+        return 'Completed';
+    }
+    if (status === ProcessStatusValue.IN_PROGRESS) {
+        return 'In Progress';
+    }
+    if (status === ProcessStatusValue.FAILED) {
+        return 'Failed';
+    }
+    if (status === ProcessStatusValue.INITIATED) {
+        return 'Starting';
+    }
+    return status;
+}
+/**
+ * Format details for job summary based on stage and status
+ */
+function formatSummaryDetails(name, status) {
+    if (!status) {
+        return '-';
+    }
+    if (name === 'triage') {
+        const truePos = status.success_count - (status.false_positive_count || 0);
+        const falsePos = status.false_positive_count || 0;
+        if (truePos > 0 || falsePos > 0) {
+            return `${truePos} confirmed, ${falsePos} false positives`;
+        }
+    }
+    else if (name === 'push') {
+        if (status.success_count > 0) {
+            return `${status.success_count} PRs created`;
+        }
+    }
+    else if (name === 'find') {
+        if (status.success_count > 0) {
+            return `${status.success_count} vulnerabilities`;
+        }
+    }
+    else if (status.success_count > 0) {
+        return `${status.success_count} processed`;
+    }
+    if (status.total_items > 0) {
+        return `${status.processed_items}/${status.total_items}`;
+    }
+    return '-';
+}
+/**
+ * Write job summary markdown to the GitHub Actions summary
+ * @param tracking The RunProcessTracking object
+ * @param summary The RunSummary object with metrics
+ * @param runId The run ID
+ * @param durationMs Duration in milliseconds
+ * @param success Whether the run completed successfully
+ */
+async function writeJobSummary(tracking, summary, runId, durationMs, success) {
+    const durationStr = formatDuration(durationMs);
+    // Start building the summary
+    coreExports.summary.addHeading('AppSecAI Results', 2);
+    // Add outcome banner
+    if (success) {
+        coreExports.summary.addRaw('> **Status:** ✅ Completed successfully\n\n', true);
+    }
+    else {
+        coreExports.summary.addRaw('> **Status:** ❌ Completed with errors\n\n', true);
+    }
+    // Build the stages table
+    if (tracking) {
+        const stages = [
+            { field: 'find_status', name: 'find' },
+            { field: 'triage_status', name: 'triage' },
+            {
+                field: 'remediation_validation_loop_status',
+                name: 'remediation_loop'
+            },
+            { field: 'push_status', name: 'push' }
+        ];
+        const tableData = [
+            [
+                { data: 'Stage', header: true },
+                { data: 'Status', header: true },
+                { data: 'Details', header: true }
+            ]
+        ];
+        for (const { field, name } of stages) {
+            const status = tracking[field];
+            const displayName = getDisplayName(name);
+            const icon = getStatusIcon(status?.status);
+            const statusText = getStatusText(status?.status);
+            const details = formatSummaryDetails(name, status);
+            tableData.push([
+                { data: displayName },
+                { data: `${icon} ${statusText}` },
+                { data: details }
+            ]);
+        }
+        coreExports.summary.addTable(tableData);
+    }
+    // Add summary metrics if available
+    if (summary) {
+        coreExports.summary.addHeading('Key Metrics', 3);
+        const metricsData = [
+            [
+                { data: 'Metric', header: true },
+                { data: 'Value', header: true }
+            ]
+        ];
+        // Vulnerability counts
+        metricsData.push([
+            { data: 'Total Vulnerabilities' },
+            { data: summary.total_vulnerabilities.toString() }
+        ]);
+        metricsData.push([
+            { data: 'True Positives' },
+            { data: summary.true_positives.toString() }
+        ]);
+        metricsData.push([
+            { data: 'False Positives' },
+            { data: summary.false_positives.toString() }
+        ]);
+        // Remediation
+        if (summary.remediation_success + summary.remediation_failed > 0) {
+            metricsData.push([
+                { data: 'Remediation Success' },
+                { data: summary.remediation_success.toString() }
+            ]);
+            metricsData.push([
+                { data: 'Remediation Failed' },
+                { data: summary.remediation_failed.toString() }
+            ]);
+        }
+        // PRs
+        if (summary.pr_count > 0) {
+            metricsData.push([
+                { data: 'Pull Requests Created' },
+                { data: summary.pr_count.toString() }
+            ]);
+        }
+        coreExports.summary.addTable(metricsData);
+        // Add CWE breakdown if available
+        if (Object.keys(summary.cwe_breakdown).length > 0) {
+            coreExports.summary.addHeading('CWE Distribution', 4);
+            const cweData = [
+                [
+                    { data: 'CWE', header: true },
+                    { data: 'Count', header: true }
+                ]
+            ];
+            const sortedCwes = Object.entries(summary.cwe_breakdown).sort((a, b) => b[1] - a[1]);
+            for (const [cwe, count] of sortedCwes) {
+                cweData.push([{ data: cwe }, { data: count.toString() }]);
+            }
+            coreExports.summary.addTable(cweData);
+        }
+        // Add severity breakdown if available
+        if (Object.keys(summary.severity_breakdown).length > 0) {
+            coreExports.summary.addHeading('Severity Distribution', 4);
+            const sevData = [
+                [
+                    { data: 'Severity', header: true },
+                    { data: 'Count', header: true }
+                ]
+            ];
+            const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
+            const sortedSeverities = Object.entries(summary.severity_breakdown).sort((a, b) => {
+                const indexA = severityOrder.indexOf(a[0].toLowerCase());
+                const indexB = severityOrder.indexOf(b[0].toLowerCase());
+                return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
+            });
+            for (const [severity, count] of sortedSeverities) {
+                const capitalizedSeverity = severity.charAt(0).toUpperCase() + severity.slice(1);
+                sevData.push([
+                    { data: capitalizedSeverity },
+                    { data: count.toString() }
+                ]);
+            }
+            coreExports.summary.addTable(sevData);
+        }
+        // Add PR links if available (show all PRs without truncation)
+        if (summary.pr_urls.length > 0) {
+            coreExports.summary.addHeading('Pull Requests', 4);
+            for (const prUrl of summary.pr_urls) {
+                coreExports.summary.addRaw(`- ${prUrl}\n`, true);
+            }
+        }
+    }
+    // Add run metadata
+    coreExports.summary.addRaw('\n---\n\n', true);
+    coreExports.summary.addRaw(`**Run ID:** \`${runId || 'N/A'}\`\n\n`, true);
+    coreExports.summary.addRaw(`**Duration:** ${durationStr}\n`, true);
+    // Write the summary
+    await coreExports.summary.write();
+}
+/**
+ * Format duration in milliseconds to human-readable string
+ */
+function formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) {
+        return remainingSeconds > 0
+            ? `${minutes}m ${remainingSeconds}s`
+            : `${minutes}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+/**
+ * Format vulnerability summary with counts and percentages
+ */
+function formatVulnerabilitySummary(summary) {
+    const total = summary.total_vulnerabilities;
+    if (total === 0) {
+        return 'No vulnerabilities found';
+    }
+    const tpPercent = ((summary.true_positives / total) * 100).toFixed(1);
+    const fpPercent = ((summary.false_positives / total) * 100).toFixed(1);
+    return [
+        `Total: ${total}`,
+        `├─ True Positives: ${summary.true_positives} (${tpPercent}%)`,
+        `└─ False Positives: ${summary.false_positives} (${fpPercent}%)`
+    ].join('\n');
+}
+/**
+ * Format CWE breakdown with counts
+ */
+function formatCweBreakdown(cweBreakdown) {
+    const entries = Object.entries(cweBreakdown).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) {
+        return 'No CWE data available';
+    }
+    const lines = [];
+    entries.forEach(([cwe, count], index) => {
+        const isLast = index === entries.length - 1;
+        const prefix = isLast ? '└─' : '├─';
+        lines.push(`${prefix} ${cwe}: ${count}`);
+    });
+    return lines.join('\n');
+}
+/**
+ * Format severity distribution with color coding
+ */
+function formatSeverityDistribution(severityBreakdown) {
+    const entries = Object.entries(severityBreakdown);
+    if (entries.length === 0) {
+        return 'No severity data available';
+    }
+    // Sort by standard severity order
+    const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
+    const sorted = entries.sort((a, b) => {
+        const indexA = severityOrder.indexOf(a[0].toLowerCase());
+        const indexB = severityOrder.indexOf(b[0].toLowerCase());
+        return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
+    });
+    const lines = [];
+    sorted.forEach(([severity, count], index) => {
+        const isLast = index === sorted.length - 1;
+        const prefix = isLast ? '└─' : '├─';
+        const capitalizedSeverity = severity.charAt(0).toUpperCase() + severity.slice(1);
+        lines.push(`${prefix} ${capitalizedSeverity}: ${count}`);
+    });
+    return lines.join('\n');
+}
+/**
+ * Format remediation results with success/failure counts
+ */
+function formatRemediationResults(summary) {
+    const total = summary.remediation_success + summary.remediation_failed;
+    if (total === 0) {
+        return 'No remediation attempts';
+    }
+    const successPercent = ((summary.remediation_success / total) * 100).toFixed(1);
+    return [
+        `Total Attempts: ${total}`,
+        `├─ Successful: ${summary.remediation_success} (${successPercent}%)`,
+        `└─ Failed: ${summary.remediation_failed}`
+    ].join('\n');
+}
+/**
+ * Format PR links (show all PRs without truncation)
+ */
+function formatPrLinks(prUrls) {
+    if (prUrls.length === 0) {
+        return 'No pull requests created';
+    }
+    const lines = [];
+    for (let i = 0; i < prUrls.length; i++) {
+        const isLast = i === prUrls.length - 1;
+        const prefix = isLast ? '└─' : '├─';
+        lines.push(`${prefix} ${prUrls[i]}`);
+    }
+    return lines.join('\n');
+}
+/**
+ * Format final results with actionable metrics
+ * @param summary The run summary with metrics
+ * @param runId The run ID
+ * @param durationMs Duration in milliseconds
+ * @returns Formatted output string
+ */
+function formatFinalResults(summary, runId, durationMs) {
+    const lines = [];
+    const durationStr = formatDuration(durationMs);
+    lines.push('╔═══════════════════════════════════════════════════════════════╗');
+    lines.push('║              AppSecAI - Final Results                         ║');
+    lines.push('╚═══════════════════════════════════════════════════════════════╝');
+    lines.push('');
+    lines.push(`Run ID: ${runId || 'N/A'}`);
+    lines.push(`Duration: ${durationStr}`);
+    lines.push('');
+    if (!summary) {
+        lines.push('Summary data not available');
+        return lines.join('\n');
+    }
+    // Vulnerability Summary
+    lines.push('┌─ Vulnerability Summary');
+    const vulnLines = formatVulnerabilitySummary(summary).split('\n');
+    vulnLines.forEach((line) => lines.push(`│  ${line}`));
+    lines.push('│');
+    // CWE Breakdown
+    if (Object.keys(summary.cwe_breakdown).length > 0) {
+        lines.push('├─ CWE Breakdown');
+        const cweLines = formatCweBreakdown(summary.cwe_breakdown).split('\n');
+        cweLines.forEach((line) => lines.push(`│  ${line}`));
+        lines.push('│');
+    }
+    // Severity Distribution
+    if (Object.keys(summary.severity_breakdown).length > 0) {
+        lines.push('├─ Severity Distribution');
+        const sevLines = formatSeverityDistribution(summary.severity_breakdown).split('\n');
+        sevLines.forEach((line) => lines.push(`│  ${line}`));
+        lines.push('│');
+    }
+    // Remediation Results
+    if (summary.remediation_success + summary.remediation_failed > 0) {
+        lines.push('├─ Remediation Results');
+        const remLines = formatRemediationResults(summary).split('\n');
+        remLines.forEach((line) => lines.push(`│  ${line}`));
+        lines.push('│');
+    }
+    // Pull Requests
+    if (summary.pr_count > 0) {
+        lines.push(`├─ Pull Requests (${summary.pr_count})`);
+        const prLines = formatPrLinks(summary.pr_urls).split('\n');
+        prLines.forEach((line) => lines.push(`│  ${line}`));
+    }
+    lines.push('└─────────────────────────────────────────────────────────────');
+    return lines.join('\n');
+}
 
+// src/service.ts
+// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// This software and its source code are the proprietary information of AppSecAI, Inc.
+// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const API_TIMEOUT = 8 * 60 * 1000;
 async function submitRun(file, fileName) {
     const apiUrl = getApiUrl();
@@ -55830,11 +56377,10 @@ async function submitRun(file, fileName) {
     const url = `${apiUrl}/api-product/submit`;
     const mode = getMode();
     coreExports.info(`Processing mode: ${mode}`);
-    coreExports.info(`Claude Code solvers - Triage: ${getUseTriageCc()}, Remediate: ${getUseRemediateCc()}, Validate: ${getUseValidateCc()}, Loop: ${getUseRemediateLoopCc()}`);
     const formData = new FormData();
     formData.append('file', new Blob([file]), fileName);
     formData.append('processing_mode', mode);
-    // Add Claude Code solver variant parameters
+    // Add AI solver variant parameters
     formData.append('use_triage_cc', String(getUseTriageCc()));
     formData.append('triage_method', getTriageMethod());
     formData.append('use_remediate_cc', String(getUseRemediateCc()));
@@ -55842,6 +56388,8 @@ async function submitRun(file, fileName) {
     formData.append('use_validate_cc', String(getUseValidateCc()));
     formData.append('validate_method', getValidateMethod());
     formData.append('use_remediate_loop_cc', String(getUseRemediateLoopCc()));
+    // Add PR creation flag
+    formData.append('auto_create_prs', String(getAutoCreatePrs()));
     coreExports.debug('Calling submit API: POST /api-product/submit');
     const setup = {
         headers: token
@@ -55872,14 +56420,38 @@ async function submitRun(file, fileName) {
         };
     })
         .catch((error) => {
-        let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. Please check your configuration and try again.`;
+        let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. Please try again later.`;
         if (axios.isAxiosError(error)) {
             if (error.code === 'ECONNABORTED') {
-                errorMessage = `${prefixLabel} Call failed: Request timed out. Please check your network connection and try again.`;
+                errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`;
             }
             else if (error.response?.data) {
                 const apiDetail = error.response.data.detail;
-                errorMessage = apiDetail?.description ?? errorMessage;
+                // Handle both string and structured error detail formats
+                if (typeof apiDetail === 'string') {
+                    // Simple string detail (legacy format)
+                    errorMessage = `${prefixLabel} ${apiDetail}`;
+                }
+                else if (typeof apiDetail === 'object' && apiDetail !== null) {
+                    // Structured detail with code and description (new format)
+                    const structuredDetail = apiDetail;
+                    const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN;
+                    const description = structuredDetail.description ??
+                        'An error occurred. Please try again.';
+                    // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
+                    errorMessage = `${prefixLabel} [${code}] ${description}`;
+                    // Log additional context for debugging if available
+                    if (structuredDetail.organization_id) {
+                        coreExports.debug(`Organization ID: ${structuredDetail.organization_id}`);
+                    }
+                    if (structuredDetail.expires_at) {
+                        coreExports.debug(`Plan expires at: ${structuredDetail.expires_at}`);
+                    }
+                    if (structuredDetail.status) {
+                        coreExports.debug(`Plan status: ${structuredDetail.status}`);
+                    }
+                }
+                // Handle step list if present (works with both formats)
                 if (apiDetail?.steps) {
                     const stepList = StepListSchema.safeParse(apiDetail.steps);
                     if (stepList.success) {
@@ -55922,27 +56494,35 @@ async function getStatus(id) {
             throw new Error(errorMessage);
         }
         const results = parsedResponse.data.results;
+        const processTracking = parsedResponse.data.process_tracking;
+        const summary = parsedResponse.data.summary;
         let totalVulns = 0;
+        // Log process tracking information if available (Issue #181)
+        if (processTracking) {
+            logProcessTracking(processTracking, prefixLabel);
+        }
         if (results) {
             if (results.find && typeof results.find.count === 'number') {
                 totalVulns = results.find.count;
             }
             for (const [key, value] of Object.entries(results)) {
-                if (!store.finalLogPrinted[key] &&
-                    typeof value === 'object' &&
-                    value !== null) {
-                    if (key === 'find' && Array.isArray(value.extras?.cwe_list)) {
-                        coreExports.info(`${prefixLabel}: CWE found: ${value.extras.cwe_list.join(', ')}`);
+                // Skip non-solver fields (description is a string, not a solver result)
+                if (key === 'description' || typeof value !== 'object' || !value) {
+                    continue;
+                }
+                if (!store.finalLogPrinted[key]) {
+                    if (key === 'find' && Array.isArray(value?.extras?.cwe_list)) {
+                        coreExports.info(`${prefixLabel}: CWE found: ${value?.extras?.cwe_list.join(', ')}`);
                     }
                     if (key === 'triage') {
-                        if (value.extras?.true_positives) {
-                            coreExports.info(`${prefixLabel}: True positives found: ${value.extras.true_positives}`);
+                        if (value?.extras?.true_positives) {
+                            coreExports.info(`${prefixLabel}: True positives found: ${value?.extras?.true_positives}`);
                         }
-                        if (value.extras?.false_positives) {
-                            coreExports.info(`${prefixLabel}: False positives found: ${value.extras.false_positives}`);
+                        if (value?.extras?.false_positives) {
+                            coreExports.info(`${prefixLabel}: False positives found: ${value?.extras?.false_positives}`);
                         }
                     }
-                    if (typeof value.count === 'number') {
+                    if (value) {
                         coreExports.info(`${prefixLabel}: ${key} ..... processed ${value.count} vulnerabilities`);
                         if (value.count === totalVulns) {
                             coreExports.info(`${prefixLabel}: ${key} solver has processed all vulnerabilities!`);
@@ -55952,12 +56532,48 @@ async function getStatus(id) {
                 }
             }
         }
-        else {
+        else if (!processTracking) {
+            // Only show generic message if we have neither results nor process_tracking
             coreExports.debug(`${prefixLabel}: No results found (.......)`);
             coreExports.info('.......');
         }
         coreExports.info('======= ***** =======');
-        return { status: 'progress' };
+        // Determine completion status from overall_status if available
+        const overallStatus = processTracking?.overall_status?.status;
+        if (overallStatus === 'completed') {
+            coreExports.info(`${prefixLabel}: Processing completed successfully`);
+            return { status: 'completed', processTracking, summary };
+        }
+        else if (overallStatus === 'failed') {
+            const errorMsg = processTracking?.overall_status?.error_message || 'Processing failed';
+            coreExports.error(`${prefixLabel}: Processing failed - ${errorMsg}`);
+            return { status: 'failed', error: errorMsg, processTracking, summary };
+        }
+        // Fallback: Check process_tracking stage statuses when overall_status isn't set
+        // This handles cases where processing is done but overall_status wasn't updated
+        if (processTracking) {
+            const pushStatus = processTracking.push_status?.status;
+            // Terminal statuses for push stage (matches backend PUSH_TERMINAL_STATUSES)
+            const pushTerminalStatuses = ['completed', 'failed', 'not_scheduled'];
+            // Check if push stage has reached a terminal state
+            if (pushStatus && pushTerminalStatuses.includes(pushStatus)) {
+                // Only mark as completed if push succeeded or was skipped (not_scheduled)
+                // Failed push should still return progress to allow retry detection
+                if (pushStatus === 'completed' || pushStatus === 'not_scheduled') {
+                    coreExports.info(`${prefixLabel}: Push stage ${pushStatus} - marking run as complete`);
+                    return { status: 'completed', processTracking, summary };
+                }
+            }
+            // Check if remediation loop is completed and there's no push stage configured
+            // (for runs that don't have push in their pipeline)
+            if (processTracking.remediation_validation_loop_status?.status ===
+                'completed' &&
+                !processTracking.push_status) {
+                coreExports.info(`${prefixLabel}: Remediation stage completed (no push) - marking run as complete`);
+                return { status: 'completed', processTracking, summary };
+            }
+        }
+        return { status: 'progress', processTracking, summary };
     })
         .catch((error) => {
         if (error.message &&
@@ -55967,70 +56583,136 @@ async function getStatus(id) {
         if (axios.isAxiosError(error)) {
             const status = error.response?.status;
             if (status) {
-                coreExports.warning(`${prefixLabel} Call failed with status code: ${status}. The server may be temporarily unavailable.`);
+                coreExports.warning(`${prefixLabel} Call failed with status code: ${status}. Please try again later.`);
             }
             else if (error.code === 'ECONNABORTED') {
-                coreExports.warning(`${prefixLabel} Call failed: Request timed out. Please check your network connection.`);
+                coreExports.warning(`${prefixLabel} Call failed: Request timed out. Please try again later.`);
             }
             else {
                 coreExports.warning(`${prefixLabel} Call failed: ${error.message}`);
             }
         }
         else {
-            coreExports.warning(`${prefixLabel}: An unexpected error occurred. Please try again.`);
+            coreExports.warning(`${prefixLabel}: An unexpected error occurred. Please try again later.`);
             coreExports.debug(`Original error: ${error.toString()}`);
         }
-        return { status: 'failed', error: 'Status check failed' };
+        return {
+            status: 'failed',
+            error: 'Status check failed',
+            processTracking: undefined
+        };
     });
 }
+/**
+ * Format elapsed time in a human-readable way
+ */
+function formatElapsedTime(seconds) {
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) {
+        return remainingSeconds > 0
+            ? `${minutes}m ${remainingSeconds}s`
+            : `${minutes}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
 async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3000) {
+    const startTime = Date.now();
     for (let retryCount = 0; retryCount < maxRetries; retryCount++) {
+        const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+        const elapsedStr = formatElapsedTime(elapsedSeconds);
+        // Create collapsible group for each poll iteration
+        coreExports.startGroup(`Status Update #${retryCount + 1} (${elapsedStr} elapsed)`);
         coreExports.debug(`Status check attempt ${retryCount + 1}/${maxRetries}`);
         try {
             const statusData = await getStatusFunc();
             coreExports.debug(`Status response data: ${JSON.stringify(statusData)}`);
             if (statusData.status === 'completed') {
+                coreExports.info('Processing completed successfully!');
+                coreExports.endGroup();
                 return statusData;
             }
             else if (statusData.status === 'failed') {
                 coreExports.error(`Processing failed: ${statusData.error}. Please review the logs for more details.`);
+                coreExports.endGroup();
                 return null;
             }
         }
         catch (error) {
-            coreExports.warning(`Status check attempt failed. Retrying...`);
+            coreExports.debug(`Status check attempt failed. Retrying...`);
             coreExports.debug(`Original status error: ${error.message || error}`);
         }
-        coreExports.info(`Still processing, waiting ${delay / 1000} seconds...`);
+        coreExports.debug(`Still processing, waiting ${delay / 1000} seconds...`);
+        coreExports.endGroup();
         await new Promise((res) => setTimeout(res, delay));
     }
     coreExports.warning(`Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server.`);
     return null;
 }
 
+// src/main.ts
+// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// This software and its source code are the proprietary information of AppSecAI, Inc.
+// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
+/**
+ * Log all input configuration in a collapsible group
+ */
+function logConfiguration(file) {
+    coreExports.startGroup('Input Configuration');
+    coreExports.info(`File: ${file}`);
+    coreExports.info(`API URL: ${getApiUrl()}`);
+    coreExports.info(`Processing Mode: ${getMode()}`);
+    coreExports.info(`Use Triage CC: ${getUseTriageCc()}`);
+    coreExports.info(`Triage Method: ${getTriageMethod()}`);
+    coreExports.info(`Use Remediate CC: ${getUseRemediateCc()}`);
+    coreExports.info(`Remediate Method: ${getRemediateMethod()}`);
+    coreExports.info(`Use Validate CC: ${getUseValidateCc()}`);
+    coreExports.info(`Validate Method: ${getValidateMethod()}`);
+    coreExports.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`);
+    coreExports.info(`Auto Create PRs: ${getAutoCreatePrs()}`);
+    coreExports.endGroup();
+}
 async function run() {
     const file = coreExports.getInput('file');
+    const isDebug = getDebug();
     // Polling configuration for status checks
-    // timeout: Maximum wait time (10 seconds) between status check attempts
-    // intervalCheck: Display progress messages every 10 seconds during submission
-    // retries: Maximum number of polling attempts (50 retries × 10s = ~8 minutes total)
-    const timeout = 10000;
-    const intervalCheck = 10000;
+    // pollDelay: Wait time between status check attempts (30 seconds)
+    // intervalCheck: Display progress messages every 30 seconds during submission
+    // retries: Maximum number of polling attempts (50 retries × 30s = ~25 minutes total)
+    const pollDelay = 30000;
+    const intervalCheck = 30000;
     const retries = 50;
     let fileBuffer;
     let submitOutput;
+    let finalProcessTracking = null;
+    let finalSummary = null;
+    const startTime = Date.now();
     try {
         coreExports.info('======== Getting static analysis results for further processing. ========');
+        // Log configuration in collapsible group only if debug is enabled
+        if (isDebug) {
+            logConfiguration(file);
+        }
         // Step 1: Read the file
+        coreExports.startGroup(`File Processing (${file})`);
         try {
             fileBuffer = await readFile(file);
+            coreExports.info(`Successfully read file: ${file}`);
         }
         catch (error) {
             coreExports.debug(`Error reading file: ${error}.`);
+            coreExports.endGroup();
             // Re-throw to be caught by the outer block and handled as a final error
             throw error;
         }
+        coreExports.endGroup();
         // Step 2: Submit the run
+        coreExports.startGroup('Run Submission');
         const intervalId = setInterval(() => {
             coreExports.info(`[${LogLabels.RUN_SUBMIT}] submit in progress...`);
         }, intervalCheck);
@@ -56040,28 +56722,44 @@ async function run() {
         }
         catch (error) {
             coreExports.debug(`Error submit run ${error}`);
+            coreExports.endGroup();
             // Re-throw to be caught by the outer block
-            throw new SubmitRunError(`Failed to submit analysis results for processing. Please check your network connection and API configuration.`, error);
+            throw new SubmitRunError(`Failed to submit analysis results for processing. Please try again later.`, error);
         }
         finally {
             if (intervalId) {
                 clearInterval(intervalId);
             }
         }
+        coreExports.endGroup();
         // Step 3: Poll for status (non-critical failure)
         if (submitOutput.run_id) {
             store.id = submitOutput.run_id;
             coreExports.info(`[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`);
             try {
                 const getRunStatus = () => getStatus(store.id);
-                await pollStatusUntilComplete(getRunStatus, retries, timeout);
+                const pollResult = await pollStatusUntilComplete(getRunStatus, retries, pollDelay);
+                // Capture final process tracking and summary for job summary
+                if (pollResult?.processTracking) {
+                    finalProcessTracking = pollResult.processTracking;
+                }
+                if (pollResult?.summary) {
+                    finalSummary = pollResult.summary;
+                }
             }
             catch (pollError) {
                 // This is a "soft" failure. Log a warning but let the process complete
                 coreExports.warning(`[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`);
             }
         }
-        coreExports.info('======== Analysis processing complete. Results have been submitted successfully. ========');
+        // Write job summary for successful completion
+        const durationMs = Date.now() - startTime;
+        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, true);
+        // Final summary
+        coreExports.startGroup('Final Results');
+        const finalResultsOutput = formatFinalResults(finalSummary, store.id, durationMs);
+        coreExports.info(finalResultsOutput);
+        coreExports.endGroup();
         coreExports.setOutput('message', 'Processing completed successfully.');
     }
     catch (error) {
@@ -56090,6 +56788,9 @@ async function run() {
         else if (typeof error === 'string') {
             errorMessage = error;
         }
+        // Write job summary for failed completion
+        const durationMs = Date.now() - startTime;
+        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, false);
         coreExports.error(errorMessage);
         coreExports.setFailed(errorMessage);
     }
