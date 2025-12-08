@@ -1,0 +1,44 @@
+name: AppSecAI Vulnerability Analysis
+description:
+  Automated security vulnerability triage, remediation, and validation powered
+  by AI
+author: AppSecAI
+
+# Add your action's branding here. This will appear on the GitHub Marketplace.
+branding:
+  icon: shield
+  color: blue
+
+# Define your inputs here.
+inputs:
+  file:
+    description: The SARIF or JSON file containing security scan results
+    required: true
+
+# Define your outputs here.
+outputs:
+  message:
+    description: Processed message
+    value: ${{ steps.run-action.outputs.message }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run submit action
+      id: run-action
+      shell: bash
+      env:
+        # Required inputs passed directly
+        INPUT_FILE: ${{ inputs.file }}
+        INPUT_API_URL: https://gh.cloud.appsecai.io
+        # Configuration from workflow environment variables (with defaults)
+        INPUT_PROCESSING_MODE: ${{ env.PROCESSING_MODE || 'individual' }}
+        INPUT_USE_TRIAGE_CC: ${{ env.USE_TRIAGE_CC || 'true' }}
+        INPUT_TRIAGE_METHOD: ${{ env.TRIAGE_METHOD || 'ml_based' }}
+        INPUT_USE_REMEDIATE_CC: ${{ env.USE_REMEDIATE_CC || 'false' }}
+        INPUT_REMEDIATE_METHOD: ${{ env.REMEDIATE_METHOD || 'advanced' }}
+        INPUT_USE_VALIDATE_CC: ${{ env.USE_VALIDATE_CC || 'false' }}
+        INPUT_VALIDATE_METHOD: ${{ env.VALIDATE_METHOD || 'baseline' }}
+        INPUT_USE_REMEDIATE_LOOP_CC: ${{ env.USE_REMEDIATE_LOOP_CC || 'true' }}
+        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'true' }}
+      run: node ${{ github.action_path }}/dist/index.js
