@@ -5,7 +5,12 @@
 
 import * as core from '@actions/core'
 import { readFile } from './file.js'
-import { getStatus, pollStatusUntilComplete, submitRun } from './service.js'
+import {
+  getStatus,
+  pollStatusUntilComplete,
+  submitRun,
+  finalizeRun
+} from './service.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
 import { SubmitRunOutput, RunProcessTracking, RunSummary } from './types.js'
@@ -61,6 +66,7 @@ export async function run(): Promise<void> {
   let finalProcessTracking: RunProcessTracking | null = null
   let finalSummary: RunSummary | null = null
   const startTime = Date.now()
+  let success = false
 
   try {
     core.info(
@@ -138,26 +144,7 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Write job summary for successful completion
-    const durationMs = Date.now() - startTime
-    await writeJobSummary(
-      finalProcessTracking,
-      finalSummary,
-      store.id,
-      durationMs,
-      true
-    )
-
-    // Final summary
-    core.startGroup('Final Results')
-    const finalResultsOutput = formatFinalResults(
-      finalSummary,
-      store.id,
-      durationMs
-    )
-    core.info(finalResultsOutput)
-    core.endGroup()
-
+    success = true
     core.setOutput('message', 'Processing completed successfully.')
   } catch (error) {
     // This is the final catch for any critical errors
@@ -187,17 +174,39 @@ export async function run(): Promise<void> {
       errorMessage = error
     }
 
-    // Write job summary for failed completion
+    core.error(errorMessage)
+    core.setFailed(errorMessage)
+  } finally {
+    // Always try to finalize and get summary when we have a run ID
+    // This ensures summary data is available even on timeout or failure
+    if (store.id) {
+      core.info('Finalizing run and fetching summary...')
+      const finalizeSummary = await finalizeRun(store.id)
+
+      // Use finalize summary if we don't already have one from polling
+      if (finalizeSummary && !finalSummary) {
+        finalSummary = finalizeSummary
+      }
+    }
+
+    // Write job summary
     const durationMs = Date.now() - startTime
     await writeJobSummary(
       finalProcessTracking,
       finalSummary,
       store.id,
       durationMs,
-      false
+      success
     )
 
-    core.error(errorMessage)
-    core.setFailed(errorMessage)
+    // Final summary
+    core.startGroup('Final Results')
+    const finalResultsOutput = formatFinalResults(
+      finalSummary,
+      store.id,
+      durationMs
+    )
+    core.info(finalResultsOutput)
+    core.endGroup()
   }
 }

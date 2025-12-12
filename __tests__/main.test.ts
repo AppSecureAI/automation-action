@@ -11,8 +11,10 @@ import { fileExists, readFile } from '../__fixtures__/file'
 import {
   submitRun,
   getStatus,
-  pollStatusUntilComplete
+  pollStatusUntilComplete,
+  finalizeRun
 } from '../__fixtures__/service'
+import store from '../src/store'
 
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
@@ -23,7 +25,8 @@ jest.unstable_mockModule('../src/file', () => ({
 jest.unstable_mockModule('../src/service', () => ({
   submitRun,
   getStatus,
-  pollStatusUntilComplete
+  pollStatusUntilComplete,
+  finalizeRun
 }))
 
 // The module being tested should be imported dynamically. This ensures that the
@@ -55,10 +58,15 @@ describe('main.ts', () => {
     pollStatusUntilComplete.mockImplementation(() =>
       Promise.resolve({ status: 'completed' })
     )
+    finalizeRun.mockImplementation(() => Promise.resolve(null))
+    // Reset store state
+    store.id = ''
   })
 
   afterEach(() => {
     jest.resetAllMocks()
+    // Reset store state after each test
+    store.id = ''
   })
 
   describe('success cases', () => {
@@ -206,6 +214,121 @@ describe('main.ts', () => {
         '[Analysis Processing Status] Failed to poll status for run_id: run-12345. The analysis may still be running on the server.'
       )
       expect(core.setFailed).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('finalizeRun behavior', () => {
+    it('should call finalizeRun with run_id in finally block on success', async () => {
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(core.info).toHaveBeenCalledWith(
+        'Finalizing run and fetching summary...'
+      )
+    })
+
+    it('should call finalizeRun in finally block even on error', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
+        return Promise.reject(new Error('Polling failed'))
+      })
+
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+    })
+
+    it('should not call finalizeRun when no run_id exists', async () => {
+      submitRun.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          message: 'Success but no run_id',
+          run_id: null
+        })
+      )
+
+      await run()
+
+      expect(finalizeRun).not.toHaveBeenCalled()
+    })
+
+    it('should use summary from finalizeRun when polling returns no summary', async () => {
+      const finalizeSummary = {
+        total_vulnerabilities: 10,
+        true_positives: 8,
+        false_positives: 2,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 5,
+        remediation_failed: 3,
+        pr_urls: [],
+        pr_count: 0
+      }
+      pollStatusUntilComplete
+        .mockClear()
+        .mockImplementationOnce(() =>
+          Promise.resolve({ status: 'completed', processTracking: null })
+        )
+      finalizeRun
+        .mockClear()
+        .mockImplementationOnce(() => Promise.resolve(finalizeSummary))
+
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+    })
+
+    it('should not override existing summary from polling with finalizeRun summary', async () => {
+      const pollingSummary = {
+        total_vulnerabilities: 20,
+        true_positives: 15,
+        false_positives: 5,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 10,
+        remediation_failed: 5,
+        pr_urls: [],
+        pr_count: 0
+      }
+      const finalizeSummary = {
+        total_vulnerabilities: 10,
+        true_positives: 8,
+        false_positives: 2,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 5,
+        remediation_failed: 3,
+        pr_urls: [],
+        pr_count: 0
+      }
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'completed',
+          processTracking: null,
+          summary: pollingSummary
+        })
+      )
+      finalizeRun
+        .mockClear()
+        .mockImplementationOnce(() => Promise.resolve(finalizeSummary))
+
+      await run()
+
+      // finalizeRun should still be called
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+    })
+
+    it('should continue execution when finalizeRun returns null', async () => {
+      finalizeRun
+        .mockClear()
+        .mockImplementationOnce(() => Promise.resolve(null))
+
+      await run()
+
+      // Should complete successfully even when finalizeRun returns null
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'message',
+        'Processing completed successfully.'
+      )
     })
   })
 })

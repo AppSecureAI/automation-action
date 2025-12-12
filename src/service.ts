@@ -8,7 +8,8 @@ import axios from 'axios'
 import {
   RunResponseSchema,
   ResponseStatusSchema,
-  StepListSchema
+  StepListSchema,
+  RunSummarySchema
 } from './schemas.js'
 import { getIdToken } from './github.js'
 import {
@@ -26,10 +27,11 @@ import {
 import {
   SubmitRunOutput,
   StructuredErrorDetail,
-  PlanErrorCode
+  PlanErrorCode,
+  RunSummary
 } from './types.js'
 import store from './store.js'
-import { logSteps, logProcessTracking } from './utils.js'
+import { logSteps, logProcessTracking, logSummary } from './utils.js'
 import { LogLabels } from './constants.js'
 
 const API_TIMEOUT = 8 * 60 * 1000
@@ -389,4 +391,66 @@ export async function pollStatusUntilComplete(
     `Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server.`
   )
   return null
+}
+
+/**
+ * Finalize a run and retrieve the summary.
+ * This triggers on-demand summary computation on the backend and returns the results.
+ * Used to ensure summary data is available when the action exits (timeout, completion, or failure).
+ *
+ * @param runId The run ID to finalize
+ * @returns The run summary if available, null otherwise
+ */
+export async function finalizeRun(runId: string): Promise<RunSummary | null> {
+  const apiUrl = getApiUrl()
+  const token = await getIdToken(apiUrl)
+  const url = `${apiUrl}/api-product/submit/finalize/${runId}`
+  const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`
+
+  core.debug(`Calling finalize API: POST ${url}`)
+
+  const setup = {
+    headers: token
+      ? {
+          Authorization: `Bearer ${token}`
+        }
+      : undefined,
+    timeout: 30000
+  }
+
+  try {
+    const response = await axios.post(url, {}, setup)
+    const parsed = RunSummarySchema.safeParse(response.data)
+
+    if (!parsed.success) {
+      core.warning(
+        `${prefixLabel}: Received unexpected response format from finalize API`
+      )
+      core.debug(`Parse error: ${parsed.error.message}`)
+      return null
+    }
+
+    const summary = parsed.data
+    core.info(`${prefixLabel}: Summary computed successfully`)
+    logSummary(summary)
+    return summary
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNABORTED') {
+        core.warning(`${prefixLabel}: Request timed out`)
+      } else if (error.response?.status === 404) {
+        core.warning(
+          `${prefixLabel}: Run not found or finalize endpoint not available`
+        )
+      } else {
+        core.warning(
+          `${prefixLabel}: Could not compute summary: ${error.message}`
+        )
+      }
+    } else {
+      core.warning(`${prefixLabel}: Could not compute summary`)
+      core.debug(`Original error: ${error}`)
+    }
+    return null
+  }
 }

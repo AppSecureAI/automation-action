@@ -9,3 +9,5 @@ export const submitRun = jest.fn<typeof import('../src/service.js').submitRun>()
 export const getStatus = jest.fn<typeof import('../src/service.js').getStatus>()
 export const pollStatusUntilComplete =
   jest.fn<typeof import('../src/service.js').pollStatusUntilComplete>()
+export const finalizeRun =
+  jest.fn<typeof import('../src/service.js').finalizeRun>()

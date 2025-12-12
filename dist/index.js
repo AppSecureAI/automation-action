@@ -27312,7 +27312,9 @@ class FileReadError extends Error {
 const LogLabels = {
     FILE_READ: 'Analysis File',
     RUN_SUBMIT: 'Submit Analysis for Processing',
-    RUN_STATUS: 'Analysis Processing Status'
+    RUN_STATUS: 'Analysis Processing Status',
+    RUN_FINALIZE: 'FINALIZE',
+    RUN_SUMMARY: 'SUMMARY'
 };
 
 // src/file.ts
@@ -56365,6 +56367,26 @@ function formatFinalResults(summary, runId, durationMs) {
     lines.push('└─────────────────────────────────────────────────────────────');
     return lines.join('\n');
 }
+/**
+ * Log run summary to console with formatted output.
+ * Used when finalizing a run to display summary metrics.
+ * @param summary The run summary with metrics
+ */
+function logSummary(summary) {
+    const prefixLabel = `[${LogLabels.RUN_SUMMARY}]`;
+    coreExports.info(`${prefixLabel}: === Run Summary ===`);
+    coreExports.info(`${prefixLabel}: Total vulnerabilities: ${summary.total_vulnerabilities}`);
+    coreExports.info(`${prefixLabel}: True positives: ${summary.true_positives}`);
+    coreExports.info(`${prefixLabel}: False positives: ${summary.false_positives}`);
+    coreExports.info(`${prefixLabel}: PRs created: ${summary.pr_count}`);
+    if (summary.pr_urls.length > 0) {
+        coreExports.info(`${prefixLabel}: PR URLs:`);
+        for (const url of summary.pr_urls) {
+            coreExports.info(`${prefixLabel}:   - ${url}`);
+        }
+    }
+    coreExports.info(`${prefixLabel}: ===================`);
+}
 
 // src/service.ts
 // Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
@@ -56654,6 +56676,60 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
     coreExports.warning(`Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server.`);
     return null;
 }
+/**
+ * Finalize a run and retrieve the summary.
+ * This triggers on-demand summary computation on the backend and returns the results.
+ * Used to ensure summary data is available when the action exits (timeout, completion, or failure).
+ *
+ * @param runId The run ID to finalize
+ * @returns The run summary if available, null otherwise
+ */
+async function finalizeRun(runId) {
+    const apiUrl = getApiUrl();
+    const token = await getIdToken(apiUrl);
+    const url = `${apiUrl}/api-product/submit/finalize/${runId}`;
+    const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
+    coreExports.debug(`Calling finalize API: POST ${url}`);
+    const setup = {
+        headers: token
+            ? {
+                Authorization: `Bearer ${token}`
+            }
+            : undefined,
+        timeout: 30000
+    };
+    try {
+        const response = await axios.post(url, {}, setup);
+        const parsed = RunSummarySchema.safeParse(response.data);
+        if (!parsed.success) {
+            coreExports.warning(`${prefixLabel}: Received unexpected response format from finalize API`);
+            coreExports.debug(`Parse error: ${parsed.error.message}`);
+            return null;
+        }
+        const summary = parsed.data;
+        coreExports.info(`${prefixLabel}: Summary computed successfully`);
+        logSummary(summary);
+        return summary;
+    }
+    catch (error) {
+        if (axios.isAxiosError(error)) {
+            if (error.code === 'ECONNABORTED') {
+                coreExports.warning(`${prefixLabel}: Request timed out`);
+            }
+            else if (error.response?.status === 404) {
+                coreExports.warning(`${prefixLabel}: Run not found or finalize endpoint not available`);
+            }
+            else {
+                coreExports.warning(`${prefixLabel}: Could not compute summary: ${error.message}`);
+            }
+        }
+        else {
+            coreExports.warning(`${prefixLabel}: Could not compute summary`);
+            coreExports.debug(`Original error: ${error}`);
+        }
+        return null;
+    }
+}
 
 // src/main.ts
 // Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
@@ -56692,6 +56768,7 @@ async function run() {
     let finalProcessTracking = null;
     let finalSummary = null;
     const startTime = Date.now();
+    let success = false;
     try {
         coreExports.info('======== Getting static analysis results for further processing. ========');
         // Log configuration in collapsible group only if debug is enabled
@@ -56752,14 +56829,7 @@ async function run() {
                 coreExports.warning(`[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`);
             }
         }
-        // Write job summary for successful completion
-        const durationMs = Date.now() - startTime;
-        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, true);
-        // Final summary
-        coreExports.startGroup('Final Results');
-        const finalResultsOutput = formatFinalResults(finalSummary, store.id, durationMs);
-        coreExports.info(finalResultsOutput);
-        coreExports.endGroup();
+        success = true;
         coreExports.setOutput('message', 'Processing completed successfully.');
     }
     catch (error) {
@@ -56788,11 +56858,28 @@ async function run() {
         else if (typeof error === 'string') {
             errorMessage = error;
         }
-        // Write job summary for failed completion
-        const durationMs = Date.now() - startTime;
-        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, false);
         coreExports.error(errorMessage);
         coreExports.setFailed(errorMessage);
+    }
+    finally {
+        // Always try to finalize and get summary when we have a run ID
+        // This ensures summary data is available even on timeout or failure
+        if (store.id) {
+            coreExports.info('Finalizing run and fetching summary...');
+            const finalizeSummary = await finalizeRun(store.id);
+            // Use finalize summary if we don't already have one from polling
+            if (finalizeSummary && !finalSummary) {
+                finalSummary = finalizeSummary;
+            }
+        }
+        // Write job summary
+        const durationMs = Date.now() - startTime;
+        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, success);
+        // Final summary
+        coreExports.startGroup('Final Results');
+        const finalResultsOutput = formatFinalResults(finalSummary, store.id, durationMs);
+        coreExports.info(finalResultsOutput);
+        coreExports.endGroup();
     }
 }
 

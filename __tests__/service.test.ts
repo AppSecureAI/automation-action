@@ -6,7 +6,11 @@ import store from '../src/store'
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 import axios from '../__fixtures__/axios'
-import { logSteps, logProcessTracking } from '../__fixtures__/utils.js'
+import {
+  logSteps,
+  logProcessTracking,
+  logSummary
+} from '../__fixtures__/utils.js'
 
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('@actions/github', github)
@@ -50,10 +54,11 @@ jest.mock('../src/github', () => ({
 
 jest.unstable_mockModule('../src/utils', () => ({
   logSteps,
-  logProcessTracking
+  logProcessTracking,
+  logSummary
 }))
 
-const { submitRun, getStatus, pollStatusUntilComplete } =
+const { submitRun, getStatus, pollStatusUntilComplete, finalizeRun } =
   await import('../src/service')
 
 describe('service.ts', () => {
@@ -74,6 +79,7 @@ describe('service.ts', () => {
     store.finalLogPrinted = {}
     logSteps.mockClear()
     logProcessTracking.mockClear()
+    logSummary.mockClear()
   })
 
   afterEach(() => {
@@ -540,5 +546,124 @@ describe('service.ts', () => {
     expect(core.debug).toHaveBeenCalledWith(
       'Original status error: [object Object]'
     )
+  })
+
+  describe('finalizeRun', () => {
+    it('returns summary on successful finalize call', async () => {
+      const mockSummary = {
+        total_vulnerabilities: 10,
+        true_positives: 8,
+        false_positives: 2,
+        cwe_breakdown: { 'CWE-79': 5 },
+        severity_breakdown: { high: 3, medium: 7 },
+        remediation_success: 5,
+        remediation_failed: 3,
+        pr_urls: ['https://github.com/org/repo/pull/1'],
+        pr_count: 1
+      }
+      axios.post.mockResolvedValue({ data: mockSummary })
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toEqual(mockSummary)
+      expect(core.debug).toHaveBeenCalledWith(
+        'Calling finalize API: POST https://some-url/api-product/submit/finalize/test-run-id'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        '[FINALIZE]: Summary computed successfully'
+      )
+      expect(logSummary).toHaveBeenCalledWith(mockSummary)
+    })
+
+    it('returns null and logs warning on invalid response format', async () => {
+      // Response with wrong types - total_vulnerabilities should be a number, not a string
+      axios.post.mockResolvedValue({
+        data: { total_vulnerabilities: 'not-a-number' }
+      })
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toBeNull()
+      expect(core.warning).toHaveBeenCalledWith(
+        '[FINALIZE]: Received unexpected response format from finalize API'
+      )
+    })
+
+    it('returns null and logs warning on timeout', async () => {
+      const timeoutError = new Error('timeout of 30000ms exceeded')
+      Object.assign(timeoutError, { code: 'ECONNABORTED', isAxiosError: true })
+      axios.post.mockRejectedValue(timeoutError)
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toBeNull()
+      expect(core.warning).toHaveBeenCalledWith('[FINALIZE]: Request timed out')
+    })
+
+    it('returns null and logs warning on 404 error', async () => {
+      const notFoundError = new Error('Not Found')
+      Object.assign(notFoundError, {
+        response: { status: 404 },
+        isAxiosError: true
+      })
+      axios.post.mockRejectedValue(notFoundError)
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toBeNull()
+      expect(core.warning).toHaveBeenCalledWith(
+        '[FINALIZE]: Run not found or finalize endpoint not available'
+      )
+    })
+
+    it('returns null and logs warning on other API errors', async () => {
+      const apiError = new Error('Internal Server Error')
+      Object.assign(apiError, { isAxiosError: true })
+      axios.post.mockRejectedValue(apiError)
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toBeNull()
+      expect(core.warning).toHaveBeenCalledWith(
+        '[FINALIZE]: Could not compute summary: Internal Server Error'
+      )
+    })
+
+    it('returns null and logs warning on non-axios errors', async () => {
+      axios.post.mockRejectedValue(new Error('Network error'))
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toBeNull()
+      expect(core.warning).toHaveBeenCalledWith(
+        '[FINALIZE]: Could not compute summary'
+      )
+      expect(core.debug).toHaveBeenCalledWith(
+        'Original error: Error: Network error'
+      )
+    })
+
+    it('applies default values from schema for missing fields', async () => {
+      axios.post.mockResolvedValue({
+        data: {
+          total_vulnerabilities: 5
+          // All other fields should use defaults
+        }
+      })
+
+      const result = await finalizeRun('test-run-id')
+
+      expect(result).toEqual({
+        total_vulnerabilities: 5,
+        true_positives: 0,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0
+      })
+    })
   })
 })

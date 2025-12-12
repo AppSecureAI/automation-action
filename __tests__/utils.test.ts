@@ -16,7 +16,8 @@ const {
   formatRemediationResults,
   formatPrLinks,
   formatFinalResults,
-  formatDuration
+  formatDuration,
+  logSummary
 } = await import('../src/utils')
 
 /**
@@ -432,6 +433,90 @@ describe('utils.ts', () => {
       }
       const result = formatFinalResults(summary, null, 5000)
       expect(result).toContain('Run ID: N/A')
+    })
+  })
+
+  describe('logSummary', () => {
+    it('logs summary with all fields', () => {
+      const summary = {
+        total_vulnerabilities: 100,
+        true_positives: 80,
+        false_positives: 20,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [
+          'https://github.com/org/repo/pull/1',
+          'https://github.com/org/repo/pull/2'
+        ],
+        pr_count: 2
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: === Run Summary ===')
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Total vulnerabilities: 100'
+      )
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: True positives: 80')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: False positives: 20')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: PRs created: 2')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: PR URLs:')
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]:   - https://github.com/org/repo/pull/1'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]:   - https://github.com/org/repo/pull/2'
+      )
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: ===================')
+    })
+
+    it('does not log PR URLs section when no PRs exist', () => {
+      const summary = {
+        total_vulnerabilities: 50,
+        true_positives: 40,
+        false_positives: 10,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: === Run Summary ===')
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Total vulnerabilities: 50'
+      )
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: PRs created: 0')
+      expect(core.info).not.toHaveBeenCalledWith('[SUMMARY]: PR URLs:')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: ===================')
+    })
+
+    it('logs zero values correctly', () => {
+      const summary = {
+        total_vulnerabilities: 0,
+        true_positives: 0,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Total vulnerabilities: 0'
+      )
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: True positives: 0')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: False positives: 0')
+      expect(core.info).toHaveBeenCalledWith('[SUMMARY]: PRs created: 0')
     })
   })
 })

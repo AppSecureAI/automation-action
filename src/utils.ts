@@ -10,6 +10,7 @@ import {
   type RunProcessTracking,
   type RunSummary
 } from './types.js'
+import { LogLabels } from './constants.js'
 
 /**
  * Mapping of internal stage names to user-friendly display names
@@ -638,4 +639,30 @@ export function formatFinalResults(
   lines.push('└─────────────────────────────────────────────────────────────')
 
   return lines.join('\n')
+}
+
+/**
+ * Log run summary to console with formatted output.
+ * Used when finalizing a run to display summary metrics.
+ * @param summary The run summary with metrics
+ */
+export function logSummary(summary: RunSummary): void {
+  const prefixLabel = `[${LogLabels.RUN_SUMMARY}]`
+
+  core.info(`${prefixLabel}: === Run Summary ===`)
+  core.info(
+    `${prefixLabel}: Total vulnerabilities: ${summary.total_vulnerabilities}`
+  )
+  core.info(`${prefixLabel}: True positives: ${summary.true_positives}`)
+  core.info(`${prefixLabel}: False positives: ${summary.false_positives}`)
+  core.info(`${prefixLabel}: PRs created: ${summary.pr_count}`)
+
+  if (summary.pr_urls.length > 0) {
+    core.info(`${prefixLabel}: PR URLs:`)
+    for (const url of summary.pr_urls) {
+      core.info(`${prefixLabel}:   - ${url}`)
+    }
+  }
+
+  core.info(`${prefixLabel}: ===================`)
 }
