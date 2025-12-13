@@ -404,7 +404,7 @@ export async function pollStatusUntilComplete(
 export async function finalizeRun(runId: string): Promise<RunSummary | null> {
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
-  const url = `${apiUrl}/api-product/submit/finalize/${runId}`
+  const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`
   const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`
 
   core.debug(`Calling finalize API: POST ${url}`)

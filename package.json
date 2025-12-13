@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "author": "AppSecAI",
   "type": "module",
   "private": true,

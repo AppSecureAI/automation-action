@@ -567,7 +567,7 @@ describe('service.ts', () => {
 
       expect(result).toEqual(mockSummary)
       expect(core.debug).toHaveBeenCalledWith(
-        'Calling finalize API: POST https://some-url/api-product/submit/finalize/test-run-id'
+        'Calling finalize API: POST https://some-url/api-product/runs/test-run-id/compute-summary'
       )
       expect(core.info).toHaveBeenCalledWith(
         '[FINALIZE]: Summary computed successfully'

@@ -56687,7 +56687,7 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
 async function finalizeRun(runId) {
     const apiUrl = getApiUrl();
     const token = await getIdToken(apiUrl);
-    const url = `${apiUrl}/api-product/submit/finalize/${runId}`;
+    const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`;
     const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
     coreExports.debug(`Calling finalize API: POST ${url}`);
     const setup = {
