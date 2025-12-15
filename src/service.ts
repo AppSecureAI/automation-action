@@ -394,14 +394,42 @@ export async function pollStatusUntilComplete(
 }
 
 /**
+ * Configuration options for finalizeRun retry behavior.
+ */
+export interface FinalizeRunOptions {
+  /** Expected number of PRs to be present in the summary. If provided, will retry until count matches. */
+  expectedPrCount?: number
+  /** Maximum number of retry attempts (default: 3) */
+  maxRetries?: number
+  /** Delay between retries in milliseconds (default: 2000) */
+  retryDelay?: number
+}
+
+/**
+ * Delay execution for the specified number of milliseconds.
+ * Extracted for testability.
+ */
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
  * Finalize a run and retrieve the summary.
  * This triggers on-demand summary computation on the backend and returns the results.
  * Used to ensure summary data is available when the action exits (timeout, completion, or failure).
  *
+ * When expectedPrCount is provided, the function will retry if the summary's pr_count
+ * is less than expected, giving time for all PRs to be persisted to the database.
+ *
  * @param runId The run ID to finalize
+ * @param options Optional configuration for retry behavior
  * @returns The run summary if available, null otherwise
  */
-export async function finalizeRun(runId: string): Promise<RunSummary | null> {
+export async function finalizeRun(
+  runId: string,
+  options: FinalizeRunOptions = {}
+): Promise<RunSummary | null> {
+  const { expectedPrCount, maxRetries = 3, retryDelay = 2000 } = options
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
   const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`
@@ -418,39 +446,84 @@ export async function finalizeRun(runId: string): Promise<RunSummary | null> {
     timeout: 30000
   }
 
-  try {
-    const response = await axios.post(url, {}, setup)
-    const parsed = RunSummarySchema.safeParse(response.data)
+  let lastSummary: RunSummary | null = null
 
-    if (!parsed.success) {
-      core.warning(
-        `${prefixLabel}: Received unexpected response format from finalize API`
-      )
-      core.debug(`Parse error: ${parsed.error.message}`)
-      return null
-    }
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    core.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`)
 
-    const summary = parsed.data
-    core.info(`${prefixLabel}: Summary computed successfully`)
-    logSummary(summary)
-    return summary
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNABORTED') {
-        core.warning(`${prefixLabel}: Request timed out`)
-      } else if (error.response?.status === 404) {
+    try {
+      const response = await axios.post(url, {}, setup)
+      const parsed = RunSummarySchema.safeParse(response.data)
+
+      if (!parsed.success) {
         core.warning(
-          `${prefixLabel}: Run not found or finalize endpoint not available`
+          `${prefixLabel}: Received unexpected response format from finalize API`
         )
-      } else {
-        core.warning(
-          `${prefixLabel}: Could not compute summary: ${error.message}`
-        )
+        core.debug(`Parse error: ${parsed.error.message}`)
+        // Continue retrying on parse errors
+        if (attempt < maxRetries) {
+          await delay(retryDelay)
+          continue
+        }
+        return lastSummary
       }
-    } else {
-      core.warning(`${prefixLabel}: Could not compute summary`)
-      core.debug(`Original error: ${error}`)
+
+      const summary = parsed.data
+      lastSummary = summary
+
+      // If we have an expected count, verify it matches
+      if (expectedPrCount !== undefined && summary.pr_count < expectedPrCount) {
+        core.info(
+          `${prefixLabel}: Summary shows ${summary.pr_count} PRs, expected ${expectedPrCount}. ` +
+            `Retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`
+        )
+        if (attempt < maxRetries) {
+          await delay(retryDelay)
+          continue
+        }
+        // Last attempt - return best available summary
+        core.warning(
+          `${prefixLabel}: Could not get complete summary after ${maxRetries} attempts. ` +
+            `Returning summary with ${summary.pr_count} PRs (expected ${expectedPrCount}).`
+        )
+        logSummary(summary)
+        return summary
+      }
+
+      // Success - count matches or no expected count provided
+      core.info(`${prefixLabel}: Summary computed successfully`)
+      logSummary(summary)
+      return summary
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          core.warning(`${prefixLabel}: Request timed out`)
+        } else if (error.response?.status === 404) {
+          core.warning(
+            `${prefixLabel}: Run not found or finalize endpoint not available`
+          )
+          // Don't retry on 404 - the endpoint isn't available
+          return lastSummary
+        } else {
+          core.warning(
+            `${prefixLabel}: Could not compute summary: ${error.message}`
+          )
+        }
+      } else {
+        core.warning(`${prefixLabel}: Could not compute summary`)
+        core.debug(`Original error: ${error}`)
+      }
+
+      // Retry on transient errors
+      if (attempt < maxRetries) {
+        core.debug(`${prefixLabel}: Retrying after error...`)
+        await delay(retryDelay)
+        continue
+      }
+
+      return lastSummary
     }
-    return null
   }
+
+  return lastSummary
 }

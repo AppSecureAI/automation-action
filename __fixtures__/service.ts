@@ -11,3 +11,4 @@ export const pollStatusUntilComplete =
   jest.fn<typeof import('../src/service.js').pollStatusUntilComplete>()
 export const finalizeRun =
   jest.fn<typeof import('../src/service.js').finalizeRun>()
+export const delay = jest.fn<typeof import('../src/service.js').delay>()

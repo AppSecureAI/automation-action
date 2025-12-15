@@ -58,8 +58,12 @@ jest.unstable_mockModule('../src/utils', () => ({
   logSummary
 }))
 
-const { submitRun, getStatus, pollStatusUntilComplete, finalizeRun } =
-  await import('../src/service')
+const serviceModule = await import('../src/service')
+const { submitRun, getStatus, pollStatusUntilComplete, finalizeRun, delay } =
+  serviceModule
+
+// Note: We keep the serviceModule import to access named exports
+// The delay function is used in tests that use fake timers
 
 describe('service.ts', () => {
   beforeEach(() => {
@@ -664,6 +668,326 @@ describe('service.ts', () => {
         pr_urls: [],
         pr_count: 0
       })
+    })
+
+    describe('retry logic with expectedPrCount', () => {
+      // Use very short retry delays for testing to avoid actual waits
+      const testRetryDelay = 10 // 10ms instead of 2000ms
+
+      it('retries when pr_count is less than expectedPrCount', async () => {
+        const incompleteSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: ['https://github.com/org/repo/pull/1'],
+          pr_count: 7
+        }
+        const completeSummary = {
+          ...incompleteSummary,
+          pr_urls: [
+            ...incompleteSummary.pr_urls,
+            'https://github.com/org/repo/pull/2'
+          ],
+          pr_count: 8
+        }
+
+        axios.post
+          .mockResolvedValueOnce({ data: incompleteSummary })
+          .mockResolvedValueOnce({ data: completeSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(completeSummary)
+        expect(axios.post).toHaveBeenCalledTimes(2)
+        expect(core.info).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Summary shows 7 PRs, expected 8. Retrying in'
+          )
+        )
+      })
+
+      it('returns best summary after max retries when count never matches', async () => {
+        const incompleteSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: ['https://github.com/org/repo/pull/1'],
+          pr_count: 7
+        }
+
+        axios.post.mockResolvedValue({ data: incompleteSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          maxRetries: 3,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(incompleteSummary)
+        expect(axios.post).toHaveBeenCalledTimes(3)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Could not get complete summary after 3 attempts'
+          )
+        )
+      })
+
+      it('succeeds immediately when pr_count matches expectedPrCount', async () => {
+        const completeSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: ['https://github.com/org/repo/pull/1'],
+          pr_count: 8
+        }
+
+        axios.post.mockResolvedValue({ data: completeSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(completeSummary)
+        expect(axios.post).toHaveBeenCalledTimes(1)
+        expect(core.info).toHaveBeenCalledWith(
+          '[FINALIZE]: Summary computed successfully'
+        )
+      })
+
+      it('succeeds when pr_count exceeds expectedPrCount', async () => {
+        const completeSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [
+            'https://github.com/org/repo/pull/1',
+            'https://github.com/org/repo/pull/2'
+          ],
+          pr_count: 9 // More PRs than expected
+        }
+
+        axios.post.mockResolvedValue({ data: completeSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(completeSummary)
+        expect(axios.post).toHaveBeenCalledTimes(1)
+      })
+
+      it('uses custom retry options', async () => {
+        const summary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0
+        }
+
+        axios.post.mockResolvedValue({ data: summary })
+
+        await finalizeRun('test-run-id', {
+          expectedPrCount: 5,
+          maxRetries: 5,
+          retryDelay: testRetryDelay
+        })
+
+        expect(axios.post).toHaveBeenCalledTimes(5)
+      })
+
+      it('retries on transient API errors', async () => {
+        const apiError = new Error('Internal Server Error')
+        Object.assign(apiError, { isAxiosError: true })
+
+        const completeSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 8
+        }
+
+        axios.post
+          .mockRejectedValueOnce(apiError)
+          .mockResolvedValueOnce({ data: completeSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(completeSummary)
+        expect(axios.post).toHaveBeenCalledTimes(2)
+        expect(core.warning).toHaveBeenCalledWith(
+          '[FINALIZE]: Could not compute summary: Internal Server Error'
+        )
+      })
+
+      it('does not retry on 404 errors', async () => {
+        const notFoundError = new Error('Not Found')
+        Object.assign(notFoundError, {
+          response: { status: 404 },
+          isAxiosError: true
+        })
+
+        axios.post.mockRejectedValue(notFoundError)
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          maxRetries: 3,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toBeNull()
+        expect(axios.post).toHaveBeenCalledTimes(1) // No retries
+      })
+
+      it('retries on parse errors', async () => {
+        const invalidResponse = {
+          data: { total_vulnerabilities: 'not-a-number' }
+        }
+        const validSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 8
+        }
+
+        axios.post
+          .mockResolvedValueOnce(invalidResponse)
+          .mockResolvedValueOnce({ data: validSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          maxRetries: 2,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(validSummary)
+        expect(axios.post).toHaveBeenCalledTimes(2)
+        expect(core.warning).toHaveBeenCalledWith(
+          '[FINALIZE]: Received unexpected response format from finalize API'
+        )
+      })
+
+      it('returns last valid summary when all retries fail with parse errors', async () => {
+        const invalidResponse = {
+          data: { total_vulnerabilities: 'not-a-number' }
+        }
+
+        axios.post.mockResolvedValue(invalidResponse)
+
+        const result = await finalizeRun('test-run-id', {
+          maxRetries: 2,
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toBeNull() // No valid summary was ever obtained
+        expect(axios.post).toHaveBeenCalledTimes(2)
+      })
+
+      it('returns last valid summary after errors exhaust retries', async () => {
+        const validSummary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 5
+        }
+        const apiError = new Error('Server Error')
+        Object.assign(apiError, { isAxiosError: true })
+
+        axios.post
+          .mockResolvedValueOnce({ data: validSummary })
+          .mockRejectedValueOnce(apiError)
+          .mockRejectedValueOnce(apiError)
+
+        const result = await finalizeRun('test-run-id', {
+          expectedPrCount: 8,
+          maxRetries: 3,
+          retryDelay: testRetryDelay
+        })
+
+        // Returns the last valid summary even though count doesn't match
+        expect(result).toEqual(validSummary)
+        expect(axios.post).toHaveBeenCalledTimes(3)
+      })
+
+      it('skips validation when expectedPrCount is undefined', async () => {
+        const summary = {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 8,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0
+        }
+
+        axios.post.mockResolvedValue({ data: summary })
+
+        // No expectedPrCount provided - should not retry
+        const result = await finalizeRun('test-run-id')
+
+        expect(result).toEqual(summary)
+        expect(axios.post).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
+
+  describe('delay function', () => {
+    it('resolves after the specified time', async () => {
+      jest.useFakeTimers()
+
+      const promise = delay(1000)
+
+      // Fast-forward time
+      jest.advanceTimersByTime(1000)
+
+      // Ensure the promise resolves
+      await expect(promise).resolves.toBeUndefined()
+
+      jest.useRealTimers()
     })
   })
 })

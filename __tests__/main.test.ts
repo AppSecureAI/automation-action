@@ -218,10 +218,12 @@ describe('main.ts', () => {
   })
 
   describe('finalizeRun behavior', () => {
-    it('should call finalizeRun with run_id in finally block on success', async () => {
+    it('should call finalizeRun with run_id and options in finally block on success', async () => {
       await run()
 
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
       expect(core.info).toHaveBeenCalledWith(
         'Finalizing run and fetching summary...'
       )
@@ -234,7 +236,9 @@ describe('main.ts', () => {
 
       await run()
 
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
     })
 
     it('should not call finalizeRun when no run_id exists', async () => {
@@ -273,7 +277,9 @@ describe('main.ts', () => {
 
       await run()
 
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
     })
 
     it('should not override existing summary from polling with finalizeRun summary', async () => {
@@ -313,7 +319,9 @@ describe('main.ts', () => {
       await run()
 
       // finalizeRun should still be called
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
     })
 
     it('should continue execution when finalizeRun returns null', async () => {
@@ -324,11 +332,68 @@ describe('main.ts', () => {
       await run()
 
       // Should complete successfully even when finalizeRun returns null
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345')
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
       expect(core.setOutput).toHaveBeenCalledWith(
         'message',
         'Processing completed successfully.'
       )
+    })
+
+    it('should pass expectedPrCount from push_status.success_count', async () => {
+      const processTracking = {
+        push_status: {
+          status: 'completed',
+          progress_percentage: 100,
+          total_items: 8,
+          processed_items: 8,
+          success_count: 8,
+          error_count: 0,
+          false_positive_count: 0
+        }
+      }
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'completed',
+          processTracking,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: 8
+      })
+    })
+
+    it('should handle missing push_status gracefully', async () => {
+      const processTracking = {
+        triage_status: {
+          status: 'completed',
+          progress_percentage: 100,
+          total_items: 10,
+          processed_items: 10,
+          success_count: 8,
+          error_count: 0,
+          false_positive_count: 2
+        }
+        // No push_status
+      }
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'completed',
+          processTracking,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
     })
   })
 })

@@ -181,7 +181,11 @@ export async function run(): Promise<void> {
     // This ensures summary data is available even on timeout or failure
     if (store.id) {
       core.info('Finalizing run and fetching summary...')
-      const finalizeSummary = await finalizeRun(store.id)
+
+      // Get expected PR count from push_status.success_count to verify summary completeness
+      // This addresses the race condition where summary may be computed before all PRs are persisted
+      const expectedPrCount = finalProcessTracking?.push_status?.success_count
+      const finalizeSummary = await finalizeRun(store.id, { expectedPrCount })
 
       // Use finalize summary if we don't already have one from polling
       if (finalizeSummary && !finalSummary) {

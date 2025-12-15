@@ -56677,14 +56677,26 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
     return null;
 }
 /**
+ * Delay execution for the specified number of milliseconds.
+ * Extracted for testability.
+ */
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
  * Finalize a run and retrieve the summary.
  * This triggers on-demand summary computation on the backend and returns the results.
  * Used to ensure summary data is available when the action exits (timeout, completion, or failure).
  *
+ * When expectedPrCount is provided, the function will retry if the summary's pr_count
+ * is less than expected, giving time for all PRs to be persisted to the database.
+ *
  * @param runId The run ID to finalize
+ * @param options Optional configuration for retry behavior
  * @returns The run summary if available, null otherwise
  */
-async function finalizeRun(runId) {
+async function finalizeRun(runId, options = {}) {
+    const { expectedPrCount, maxRetries = 3, retryDelay = 2000 } = options;
     const apiUrl = getApiUrl();
     const token = await getIdToken(apiUrl);
     const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`;
@@ -56698,37 +56710,71 @@ async function finalizeRun(runId) {
             : undefined,
         timeout: 30000
     };
-    try {
-        const response = await axios.post(url, {}, setup);
-        const parsed = RunSummarySchema.safeParse(response.data);
-        if (!parsed.success) {
-            coreExports.warning(`${prefixLabel}: Received unexpected response format from finalize API`);
-            coreExports.debug(`Parse error: ${parsed.error.message}`);
-            return null;
-        }
-        const summary = parsed.data;
-        coreExports.info(`${prefixLabel}: Summary computed successfully`);
-        logSummary(summary);
-        return summary;
-    }
-    catch (error) {
-        if (axios.isAxiosError(error)) {
-            if (error.code === 'ECONNABORTED') {
-                coreExports.warning(`${prefixLabel}: Request timed out`);
+    let lastSummary = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        coreExports.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`);
+        try {
+            const response = await axios.post(url, {}, setup);
+            const parsed = RunSummarySchema.safeParse(response.data);
+            if (!parsed.success) {
+                coreExports.warning(`${prefixLabel}: Received unexpected response format from finalize API`);
+                coreExports.debug(`Parse error: ${parsed.error.message}`);
+                // Continue retrying on parse errors
+                if (attempt < maxRetries) {
+                    await delay(retryDelay);
+                    continue;
+                }
+                return lastSummary;
             }
-            else if (error.response?.status === 404) {
-                coreExports.warning(`${prefixLabel}: Run not found or finalize endpoint not available`);
+            const summary = parsed.data;
+            lastSummary = summary;
+            // If we have an expected count, verify it matches
+            if (expectedPrCount !== undefined && summary.pr_count < expectedPrCount) {
+                coreExports.info(`${prefixLabel}: Summary shows ${summary.pr_count} PRs, expected ${expectedPrCount}. ` +
+                    `Retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`);
+                if (attempt < maxRetries) {
+                    await delay(retryDelay);
+                    continue;
+                }
+                // Last attempt - return best available summary
+                coreExports.warning(`${prefixLabel}: Could not get complete summary after ${maxRetries} attempts. ` +
+                    `Returning summary with ${summary.pr_count} PRs (expected ${expectedPrCount}).`);
+                logSummary(summary);
+                return summary;
+            }
+            // Success - count matches or no expected count provided
+            coreExports.info(`${prefixLabel}: Summary computed successfully`);
+            logSummary(summary);
+            return summary;
+        }
+        catch (error) {
+            if (axios.isAxiosError(error)) {
+                if (error.code === 'ECONNABORTED') {
+                    coreExports.warning(`${prefixLabel}: Request timed out`);
+                }
+                else if (error.response?.status === 404) {
+                    coreExports.warning(`${prefixLabel}: Run not found or finalize endpoint not available`);
+                    // Don't retry on 404 - the endpoint isn't available
+                    return lastSummary;
+                }
+                else {
+                    coreExports.warning(`${prefixLabel}: Could not compute summary: ${error.message}`);
+                }
             }
             else {
-                coreExports.warning(`${prefixLabel}: Could not compute summary: ${error.message}`);
+                coreExports.warning(`${prefixLabel}: Could not compute summary`);
+                coreExports.debug(`Original error: ${error}`);
             }
+            // Retry on transient errors
+            if (attempt < maxRetries) {
+                coreExports.debug(`${prefixLabel}: Retrying after error...`);
+                await delay(retryDelay);
+                continue;
+            }
+            return lastSummary;
         }
-        else {
-            coreExports.warning(`${prefixLabel}: Could not compute summary`);
-            coreExports.debug(`Original error: ${error}`);
-        }
-        return null;
     }
+    return lastSummary;
 }
 
 // src/main.ts
@@ -56866,7 +56912,10 @@ async function run() {
         // This ensures summary data is available even on timeout or failure
         if (store.id) {
             coreExports.info('Finalizing run and fetching summary...');
-            const finalizeSummary = await finalizeRun(store.id);
+            // Get expected PR count from push_status.success_count to verify summary completeness
+            // This addresses the race condition where summary may be computed before all PRs are persisted
+            const expectedPrCount = finalProcessTracking?.push_status?.success_count;
+            const finalizeSummary = await finalizeRun(store.id, { expectedPrCount });
             // Use finalize summary if we don't already have one from polling
             if (finalizeSummary && !finalSummary) {
                 finalSummary = finalizeSummary;
