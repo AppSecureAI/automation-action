@@ -187,11 +187,38 @@ export async function getStatus(id: string) {
       const results = parsedResponse.data.results
       const processTracking = parsedResponse.data.process_tracking
       const summary = parsedResponse.data.summary
+      const runStatus = parsedResponse.data.run_status
       let totalVulns = 0
 
       // Log process tracking information if available (Issue #181)
       if (processTracking) {
         logProcessTracking(processTracking, prefixLabel)
+      }
+
+      // Check run-level status first (canonical source of truth)
+      // The run's top-level status is the authoritative indicator of run state
+      if (runStatus === 'failed') {
+        const errorMsg =
+          processTracking?.overall_status?.error_message ||
+          processTracking?.find_status?.error_message ||
+          'Run failed'
+        core.error(`${prefixLabel}: Run failed - ${errorMsg}`)
+        return { status: 'failed', error: errorMsg, processTracking, summary }
+      }
+
+      if (runStatus === 'completed') {
+        core.info(`${prefixLabel}: Run completed successfully`)
+        return { status: 'completed', processTracking, summary }
+      }
+
+      if (runStatus === 'cancelled') {
+        core.warning(`${prefixLabel}: Run was cancelled`)
+        return {
+          status: 'failed',
+          error: 'Run was cancelled',
+          processTracking,
+          summary
+        }
       }
 
       if (results) {
@@ -244,7 +271,8 @@ export async function getStatus(id: string) {
       }
       core.info('======= ***** =======')
 
-      // Determine completion status from overall_status if available
+      // Fallback: Check overall_status for backward compatibility with older API responses
+      // that may not include run_status
       const overallStatus = processTracking?.overall_status?.status
       if (overallStatus === 'completed') {
         core.info(`${prefixLabel}: Processing completed successfully`)
@@ -254,6 +282,49 @@ export async function getStatus(id: string) {
           processTracking?.overall_status?.error_message || 'Processing failed'
         core.error(`${prefixLabel}: Processing failed - ${errorMsg}`)
         return { status: 'failed', error: errorMsg, processTracking, summary }
+      }
+
+      // Fallback: Check for individual stage failures (Issue #233)
+      // This provides granular error messages when run_status isn't available
+      if (processTracking) {
+        // Check find stage failure
+        if (processTracking.find_status?.status === 'failed') {
+          const errorMsg =
+            processTracking.find_status.error_message ||
+            'Vulnerability import failed'
+          core.error(`${prefixLabel}: Find stage failed - ${errorMsg}`)
+          return { status: 'failed', error: errorMsg, processTracking, summary }
+        }
+
+        // Check triage stage failure
+        if (processTracking.triage_status?.status === 'failed') {
+          const errorMsg =
+            processTracking.triage_status.error_message ||
+            'Triage analysis failed'
+          core.error(`${prefixLabel}: Triage stage failed - ${errorMsg}`)
+          return { status: 'failed', error: errorMsg, processTracking, summary }
+        }
+
+        // Check remediation loop failure
+        if (
+          processTracking.remediation_validation_loop_status?.status ===
+          'failed'
+        ) {
+          const errorMsg =
+            processTracking.remediation_validation_loop_status.error_message ||
+            'Remediation failed'
+          core.error(`${prefixLabel}: Remediation stage failed - ${errorMsg}`)
+          return { status: 'failed', error: errorMsg, processTracking, summary }
+        }
+
+        // Check push stage failure
+        if (processTracking.push_status?.status === 'failed') {
+          const errorMsg =
+            processTracking.push_status.error_message ||
+            'Pull request creation failed'
+          core.error(`${prefixLabel}: Push stage failed - ${errorMsg}`)
+          return { status: 'failed', error: errorMsg, processTracking, summary }
+        }
       }
 
       // Fallback: Check process_tracking stage statuses when overall_status isn't set

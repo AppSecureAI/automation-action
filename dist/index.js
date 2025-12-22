@@ -51654,6 +51654,7 @@ const RunProcessTrackingSchema = objectType({
 const ResponseStatusSchema = objectType({
     message: stringType(),
     description: stringType().nullable().optional(),
+    run_status: stringType().nullable().optional(),
     results: SolverResultsSchema.nullable(),
     process_tracking: RunProcessTrackingSchema.nullable().optional(),
     summary: RunSummarySchema.nullable().optional()
@@ -56518,10 +56519,33 @@ async function getStatus(id) {
         const results = parsedResponse.data.results;
         const processTracking = parsedResponse.data.process_tracking;
         const summary = parsedResponse.data.summary;
+        const runStatus = parsedResponse.data.run_status;
         let totalVulns = 0;
         // Log process tracking information if available (Issue #181)
         if (processTracking) {
             logProcessTracking(processTracking, prefixLabel);
+        }
+        // Check run-level status first (canonical source of truth)
+        // The run's top-level status is the authoritative indicator of run state
+        if (runStatus === 'failed') {
+            const errorMsg = processTracking?.overall_status?.error_message ||
+                processTracking?.find_status?.error_message ||
+                'Run failed';
+            coreExports.error(`${prefixLabel}: Run failed - ${errorMsg}`);
+            return { status: 'failed', error: errorMsg, processTracking, summary };
+        }
+        if (runStatus === 'completed') {
+            coreExports.info(`${prefixLabel}: Run completed successfully`);
+            return { status: 'completed', processTracking, summary };
+        }
+        if (runStatus === 'cancelled') {
+            coreExports.warning(`${prefixLabel}: Run was cancelled`);
+            return {
+                status: 'failed',
+                error: 'Run was cancelled',
+                processTracking,
+                summary
+            };
         }
         if (results) {
             if (results.find && typeof results.find.count === 'number') {
@@ -56560,7 +56584,8 @@ async function getStatus(id) {
             coreExports.info('.......');
         }
         coreExports.info('======= ***** =======');
-        // Determine completion status from overall_status if available
+        // Fallback: Check overall_status for backward compatibility with older API responses
+        // that may not include run_status
         const overallStatus = processTracking?.overall_status?.status;
         if (overallStatus === 'completed') {
             coreExports.info(`${prefixLabel}: Processing completed successfully`);
@@ -56570,6 +56595,39 @@ async function getStatus(id) {
             const errorMsg = processTracking?.overall_status?.error_message || 'Processing failed';
             coreExports.error(`${prefixLabel}: Processing failed - ${errorMsg}`);
             return { status: 'failed', error: errorMsg, processTracking, summary };
+        }
+        // Fallback: Check for individual stage failures (Issue #233)
+        // This provides granular error messages when run_status isn't available
+        if (processTracking) {
+            // Check find stage failure
+            if (processTracking.find_status?.status === 'failed') {
+                const errorMsg = processTracking.find_status.error_message ||
+                    'Vulnerability import failed';
+                coreExports.error(`${prefixLabel}: Find stage failed - ${errorMsg}`);
+                return { status: 'failed', error: errorMsg, processTracking, summary };
+            }
+            // Check triage stage failure
+            if (processTracking.triage_status?.status === 'failed') {
+                const errorMsg = processTracking.triage_status.error_message ||
+                    'Triage analysis failed';
+                coreExports.error(`${prefixLabel}: Triage stage failed - ${errorMsg}`);
+                return { status: 'failed', error: errorMsg, processTracking, summary };
+            }
+            // Check remediation loop failure
+            if (processTracking.remediation_validation_loop_status?.status ===
+                'failed') {
+                const errorMsg = processTracking.remediation_validation_loop_status.error_message ||
+                    'Remediation failed';
+                coreExports.error(`${prefixLabel}: Remediation stage failed - ${errorMsg}`);
+                return { status: 'failed', error: errorMsg, processTracking, summary };
+            }
+            // Check push stage failure
+            if (processTracking.push_status?.status === 'failed') {
+                const errorMsg = processTracking.push_status.error_message ||
+                    'Pull request creation failed';
+                coreExports.error(`${prefixLabel}: Push stage failed - ${errorMsg}`);
+                return { status: 'failed', error: errorMsg, processTracking, summary };
+            }
         }
         // Fallback: Check process_tracking stage statuses when overall_status isn't set
         // This handles cases where processing is done but overall_status wasn't updated

@@ -477,6 +477,366 @@ describe('service.ts', () => {
     )
   })
 
+  // Tests for stage failure detection (Issue #233)
+  it('returns failed status when find stage fails', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: {
+          find: { count: 0, extras: {} },
+          triage: { count: 0, extras: {} },
+          remediate: { count: 0, extras: {} },
+          validate: { count: 0, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: {
+            status: 'failed',
+            error_message: 'Could not parse SARIF file',
+            progress_percentage: 0
+          },
+          triage_status: { status: 'not_started', progress_percentage: 0 }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Could not parse SARIF file'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Find stage failed - Could not parse SARIF file'
+    )
+  })
+
+  it('returns failed status when find stage fails without error message', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: null,
+        process_tracking: {
+          find_status: {
+            status: 'failed',
+            progress_percentage: 0
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Vulnerability import failed'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Find stage failed - Vulnerability import failed'
+    )
+  })
+
+  it('returns failed status when triage stage fails', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: {
+          find: { count: 10, extras: {} },
+          triage: { count: 5, extras: {} },
+          remediate: { count: 0, extras: {} },
+          validate: { count: 0, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: {
+            status: 'failed',
+            error_message: 'Triage analysis encountered an error',
+            progress_percentage: 50
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Triage analysis encountered an error'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Triage stage failed - Triage analysis encountered an error'
+    )
+  })
+
+  it('returns failed status when remediation loop fails', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: {
+          find: { count: 10, extras: {} },
+          triage: { count: 10, extras: {} },
+          remediate: { count: 5, extras: {} },
+          validate: { count: 0, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'completed', progress_percentage: 100 },
+          remediation_validation_loop_status: {
+            status: 'failed',
+            error_message: 'Remediation exceeded maximum attempts',
+            progress_percentage: 50
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Remediation exceeded maximum attempts'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Remediation stage failed - Remediation exceeded maximum attempts'
+    )
+  })
+
+  it('returns failed status when push stage fails', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: {
+          find: { count: 10, extras: {} },
+          triage: { count: 10, extras: {} },
+          remediate: { count: 10, extras: {} },
+          validate: { count: 10, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'completed', progress_percentage: 100 },
+          remediation_validation_loop_status: {
+            status: 'completed',
+            progress_percentage: 100
+          },
+          push_status: {
+            status: 'failed',
+            error_message: 'Failed to create pull requests',
+            progress_percentage: 0
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Failed to create pull requests'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Push stage failed - Failed to create pull requests'
+    )
+  })
+
+  // Tests for run_status field (canonical source of truth)
+  it('returns failed status when run_status is failed', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        run_status: 'failed',
+        results: null,
+        process_tracking: {
+          find_status: {
+            status: 'failed',
+            error_message: 'Import failed'
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Import failed'
+      })
+    )
+    expect(core.error).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Run failed - Import failed'
+    )
+  })
+
+  it('returns completed status when run_status is completed', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Done',
+        description: 'Completed',
+        run_status: 'completed',
+        results: {
+          description: null,
+          find: { count: 5, extras: {} },
+          triage: null,
+          remediate: null,
+          validate: null,
+          push: null
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 }
+        },
+        summary: { total_vulnerabilities: 5, true_positives: 3 }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed'
+      })
+    )
+    expect(core.info).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Run completed successfully'
+    )
+  })
+
+  it('returns failed status when run_status is cancelled', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Cancelled',
+        description: 'Run was cancelled',
+        run_status: 'cancelled',
+        results: null,
+        process_tracking: null
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Run was cancelled'
+      })
+    )
+    expect(core.warning).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Run was cancelled'
+    )
+  })
+
+  it('run_status takes precedence over stage statuses', async () => {
+    // Even if stages show in_progress, run_status failed should return failed
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        run_status: 'failed',
+        results: {
+          description: null,
+          find: { count: 5, extras: {} },
+          triage: null,
+          remediate: null,
+          validate: null,
+          push: null
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'in_progress', progress_percentage: 50 }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed'
+      })
+    )
+  })
+
+  it('continues to check stages when run_status is in_progress', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        run_status: 'in_progress',
+        results: {
+          description: null,
+          find: { count: 5, extras: {} },
+          triage: null,
+          remediate: null,
+          validate: null,
+          push: null
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'in_progress', progress_percentage: 50 }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    // Should return progress since run_status is in_progress and stages are still running
+    expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
+  })
+
+  it('uses fallback error message when run_status failed but no error_message', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Failed',
+        run_status: 'failed',
+        results: null,
+        process_tracking: null
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'Run failed'
+      })
+    )
+  })
+
+  it('continues polling when all stages are in progress', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        results: {
+          find: { count: 10, extras: {} },
+          triage: { count: 5, extras: {} },
+          remediate: { count: 0, extras: {} },
+          validate: { count: 0, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'in_progress', progress_percentage: 50 },
+          remediation_validation_loop_status: {
+            status: 'not_started',
+            progress_percentage: 0
+          }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
+  })
+
   describe('pollStatusUntilComplete', () => {
     it('returns completed status when processing finishes', async () => {
       const mockGetStatus = () => Promise.resolve({ status: 'completed' })
@@ -493,6 +853,22 @@ describe('service.ts', () => {
       const result = await pollStatusUntilComplete(mockGetStatus, 2, 100)
 
       expect(result).toBeNull()
+    })
+
+    it('returns null when stage fails (Issue #233)', async () => {
+      const mockGetStatus = () =>
+        Promise.resolve({
+          status: 'failed',
+          error: 'Find stage failed - Could not parse SARIF file'
+        })
+      const result = await pollStatusUntilComplete(mockGetStatus, 2, 100)
+
+      expect(result).toBeNull()
+      expect(core.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Processing failed: Find stage failed - Could not parse SARIF file'
+        )
+      )
     })
 
     it('returns null when processing times out', async () => {

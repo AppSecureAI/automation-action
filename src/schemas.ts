@@ -94,6 +94,7 @@ export const RunProcessTrackingSchema = z.object({
 export const ResponseStatusSchema = z.object({
   message: z.string(),
   description: z.string().nullable().optional(),
+  run_status: z.string().nullable().optional(),
   results: SolverResultsSchema.nullable(),
   process_tracking: RunProcessTrackingSchema.nullable().optional(),
   summary: RunSummarySchema.nullable().optional()
