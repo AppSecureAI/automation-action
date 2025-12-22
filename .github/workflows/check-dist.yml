@@ -16,6 +16,7 @@ jobs:
   check-dist:
     name: Check dist/
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -40,9 +41,9 @@ jobs:
       - name: Compare Expected and Actual Directories
         id: diff
         run: |
-          if [ "$(git diff --ignore-space-at-eol --text dist/ | wc -l)" -gt "0" ]; then
+          if [ "$(git diff --ignore-space-at-eol --text -- dist/ | wc -l)" -gt "0" ]; then
             echo "::warning::Detected uncommitted changes after build"
-            echo "::warning::The dist/ directory was rebuilt unexpectedly"
+            echo "::warning::The dist/ directory was rebuilt unexpectedly. If this is unexpected, check sync workflow."
             echo "Differences:"
-            git diff --ignore-space-at-eol --text dist/
+            git diff --ignore-space-at-eol --text -- dist/
           fi

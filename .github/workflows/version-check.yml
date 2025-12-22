@@ -12,6 +12,7 @@ jobs:
   version-check:
     name: Verify Version Tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -29,6 +30,10 @@ jobs:
         id: package-version
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PACKAGE_VERSION" = "undefined" ] || [ -z "$PACKAGE_VERSION" ]; then
+            echo "::error::Failed to extract version from package.json"
+            exit 1
+          fi
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
           echo "Package version: $PACKAGE_VERSION"
 
