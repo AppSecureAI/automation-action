@@ -1,0 +1,51 @@
+name: Version Tag Check
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: Verify Version Tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: get-version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "Tag version: $TAG_VERSION"
+
+      - name: Extract version from package.json
+        id: package-version
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PACKAGE_VERSION" = "undefined" ] || [ -z "$PACKAGE_VERSION" ]; then
+            echo "::error::Failed to extract version from package.json"
+            exit 1
+          fi
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "Package version: $PACKAGE_VERSION"
+
+      - name: Compare versions
+        id: compare
+        run: |
+          TAG_VERSION="${{ steps.get-version.outputs.tag_version }}"
+          PACKAGE_VERSION="${{ steps.package-version.outputs.package_version }}"
+
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Version mismatch! Tag version ($TAG_VERSION) does not match package.json version ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+          echo "::notice::Version check passed! Tag and package.json both at version $TAG_VERSION"
