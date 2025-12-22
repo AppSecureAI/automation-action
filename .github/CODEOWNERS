@@ -1,0 +1,5 @@
+# CODEOWNERS file for automation-action repository
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default ownership for all files in the repository
+* @AppSecureAI/platform-team

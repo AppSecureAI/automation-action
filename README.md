@@ -75,7 +75,57 @@ uses: AppSecureAI/automation-action@v1.0.0  # Pin to specific version
 
 See the
 [Releases page](https://github.com/AppSecureAI/automation-action/releases) for
-all available versions.
+all available versions and changelogs.
+
+## Version Policy
+
+This action follows [Semantic Versioning](https://semver.org/) (SemVer) to
+ensure predictable updates and backwards compatibility.
+
+### Versioning Schema
+
+Given a version number `MAJOR.MINOR.PATCH` (e.g., `v1.2.3`):
+
+- **MAJOR** version: Incremented for incompatible API changes that may break
+  existing workflows
+- **MINOR** version: Incremented for new features added in a
+  backwards-compatible manner
+- **PATCH** version: Incremented for backwards-compatible bug fixes and minor
+  improvements
+
+### Version Tags
+
+We maintain multiple tag types for flexibility:
+
+- **Major version tags** (e.g., `@v1`): Automatically updated to include the
+  latest `v1.x.x` release
+  - **Recommended for most users**: Provides automatic updates while maintaining
+    compatibility
+  - Example: `uses: AppSecureAI/automation-action@v1`
+- **Specific version tags** (e.g., `@v1.0.6`): Pinned to an exact release
+  - **Recommended for strict reproducibility**: No automatic updates
+  - Example: `uses: AppSecureAI/automation-action@v1.0.6`
+- **Commit SHA** (e.g., `@8a14146`): Pinned to a specific commit
+  - **For maximum control**: Immutable reference
+  - Example: `uses: AppSecureAI/automation-action@8a14146`
+
+### Release Frequency
+
+- **Patch releases**: As needed for bug fixes and security updates
+- **Minor releases**: Periodically for new features
+- **Major releases**: Only when necessary for breaking changes
+
+### Changelog and Release Notes
+
+All releases are documented on the
+[Releases page](https://github.com/AppSecureAI/automation-action/releases) with:
+
+- Detailed changelog of what's new, fixed, or changed
+- Migration guides for major version upgrades
+- Known issues and workarounds (if applicable)
+
+We recommend subscribing to releases via GitHub's "Watch" feature to stay
+informed of updates.
 
 ## Examples
 
