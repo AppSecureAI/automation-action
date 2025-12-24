@@ -133,6 +133,12 @@ export async function submitRun(
             if (structuredDetail.status) {
               core.debug(`Plan status: ${structuredDetail.status}`)
             }
+            if (structuredDetail.owner) {
+              core.debug(`Owner: ${structuredDetail.owner}`)
+            }
+            if (structuredDetail.owner_type) {
+              core.debug(`Owner type: ${structuredDetail.owner_type}`)
+            }
           }
 
           // Handle step list if present (works with both formats)

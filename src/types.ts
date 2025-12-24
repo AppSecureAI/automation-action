@@ -45,20 +45,25 @@ export type ValidateMethod =
   (typeof ValidateMethod)[keyof typeof ValidateMethod]
 
 /**
- * Error codes returned by the Product API for plan-related errors.
+ * Error codes returned by the Medusa/Product API.
+ * Includes plan-related errors and account validation errors.
  */
 export const PlanErrorCode = {
+  // Plan-related errors
   PLAN_EXPIRED: 'PLAN_EXPIRED',
   NO_PLAN_ASSIGNED: 'NO_PLAN_ASSIGNED',
   PLAN_INACTIVE: 'PLAN_INACTIVE',
+  // Account validation errors
+  PERSONAL_ACCOUNT_NOT_SUPPORTED: 'PERSONAL_ACCOUNT_NOT_SUPPORTED',
+  // Fallback
   UNKNOWN: 'UNKNOWN'
 } as const
 
 export type PlanErrorCode = (typeof PlanErrorCode)[keyof typeof PlanErrorCode]
 
 /**
- * Structured error detail returned by the Product API for 403 errors.
- * Provides actionable information about plan-related failures.
+ * Structured error detail returned by the Medusa/Product API.
+ * Provides actionable information about failures.
  */
 export interface StructuredErrorDetail {
   /** Error code identifying the type of error */
@@ -75,6 +80,10 @@ export interface StructuredErrorDetail {
   status?: string
   /** Optional step list for processing steps */
   steps?: Array<{ name: string; status: string; detail: string }>
+  /** Repository owner name (for account validation errors) */
+  owner?: string
+  /** Owner type: "User" or "Organization" (for account validation errors) */
+  owner_type?: string
 }
 
 /**
