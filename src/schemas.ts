@@ -73,9 +73,11 @@ export const ProcessStatusSchema = z.object({
   error_message: z.string().nullish(), // API returns null, not undefined
   total_items: z.number().default(0),
   processed_items: z.number().default(0),
-  success_count: z.number().default(0),
-  error_count: z.number().default(0),
-  false_positive_count: z.number().default(0) // Items triaged as false positives (triage only)
+  success_count: z.number().default(0), // Successfully processed items (includes warnings)
+  error_count: z.number().default(0), // Actual processing exceptions
+  false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
+  self_validation_warning_count: z.number().default(0), // PRs created with validation warnings
+  self_validation_failure_count: z.number().default(0) // Validation failures preventing PR creation
 })
 
 export const RunProcessTrackingSchema = z.object({

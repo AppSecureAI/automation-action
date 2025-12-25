@@ -51635,9 +51635,11 @@ const ProcessStatusSchema = objectType({
     error_message: stringType().nullish(), // API returns null, not undefined
     total_items: numberType().default(0),
     processed_items: numberType().default(0),
-    success_count: numberType().default(0),
-    error_count: numberType().default(0),
-    false_positive_count: numberType().default(0) // Items triaged as false positives (triage only)
+    success_count: numberType().default(0), // Successfully processed items (includes warnings)
+    error_count: numberType().default(0), // Actual processing exceptions
+    false_positive_count: numberType().default(0), // Items triaged as false positives (triage only)
+    self_validation_warning_count: numberType().default(0), // PRs created with validation warnings
+    self_validation_failure_count: numberType().default(0) // Validation failures preventing PR creation
 });
 const RunProcessTrackingSchema = objectType({
     find_status: ProcessStatusSchema.optional(),
@@ -55692,9 +55694,11 @@ const ValidateMethod = {
     ADVANCED: 'advanced'
 };
 /**
- * Error codes returned by the Product API for plan-related errors.
+ * Error codes returned by the Medusa/Product API.
+ * Includes plan-related errors and account validation errors.
  */
 const PlanErrorCode = {
+    // Fallback
     UNKNOWN: 'UNKNOWN'
 };
 /**
@@ -55922,8 +55926,25 @@ function formatStageStatus(name, status, remediationLoopStatus) {
                 details.push(`${status.success_count} vulnerabilities found`);
             }
         }
+        else if (name === 'remediation_loop' ||
+            name === 'remediation_validation_loop') {
+            // For remediation loop, show success count and validation metrics
+            if (status.success_count > 0) {
+                details.push(`${status.success_count} fixes generated`);
+            }
+            // Show self-validation warning count (security passed but other checks failed)
+            const warningCount = status.self_validation_warning_count || 0;
+            if (warningCount > 0) {
+                details.push(`${warningCount} with warnings`);
+            }
+            // Show self-validation failure count (validation prevented PR creation)
+            const failureCount = status.self_validation_failure_count || 0;
+            if (failureCount > 0) {
+                details.push(`${failureCount} validation failures`);
+            }
+        }
         else if (status.success_count > 0) {
-            // For remediation and other stages
+            // For other stages
             details.push(`${status.success_count} fixes generated`);
         }
         if (status.error_count > 0) {
@@ -56051,6 +56072,28 @@ function formatSummaryDetails(name, status) {
     else if (name === 'find') {
         if (status.success_count > 0) {
             return `${status.success_count} vulnerabilities`;
+        }
+    }
+    else if (name === 'remediation_loop' ||
+        name === 'remediation_validation_loop') {
+        // For remediation loop, show detailed metrics
+        const parts = [];
+        if (status.success_count > 0) {
+            parts.push(`${status.success_count} fixed`);
+        }
+        const warningCount = status.self_validation_warning_count || 0;
+        if (warningCount > 0) {
+            parts.push(`${warningCount} warnings`);
+        }
+        const failureCount = status.self_validation_failure_count || 0;
+        if (failureCount > 0) {
+            parts.push(`${failureCount} val. failures`);
+        }
+        if (parts.length > 0) {
+            return parts.join(', ');
+        }
+        if (status.total_items > 0) {
+            return `${status.processed_items}/${status.total_items}`;
         }
     }
     else if (status.success_count > 0) {
@@ -56472,6 +56515,12 @@ async function submitRun(file, fileName) {
                     }
                     if (structuredDetail.status) {
                         coreExports.debug(`Plan status: ${structuredDetail.status}`);
+                    }
+                    if (structuredDetail.owner) {
+                        coreExports.debug(`Owner: ${structuredDetail.owner}`);
+                    }
+                    if (structuredDetail.owner_type) {
+                        coreExports.debug(`Owner type: ${structuredDetail.owner_type}`);
                     }
                 }
                 // Handle step list if present (works with both formats)

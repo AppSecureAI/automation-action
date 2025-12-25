@@ -104,8 +104,26 @@ export function formatStageStatus(
       if (status.success_count > 0) {
         details.push(`${status.success_count} vulnerabilities found`)
       }
+    } else if (
+      name === 'remediation_loop' ||
+      name === 'remediation_validation_loop'
+    ) {
+      // For remediation loop, show success count and validation metrics
+      if (status.success_count > 0) {
+        details.push(`${status.success_count} fixes generated`)
+      }
+      // Show self-validation warning count (security passed but other checks failed)
+      const warningCount = status.self_validation_warning_count || 0
+      if (warningCount > 0) {
+        details.push(`${warningCount} with warnings`)
+      }
+      // Show self-validation failure count (validation prevented PR creation)
+      const failureCount = status.self_validation_failure_count || 0
+      if (failureCount > 0) {
+        details.push(`${failureCount} validation failures`)
+      }
     } else if (status.success_count > 0) {
-      // For remediation and other stages
+      // For other stages
       details.push(`${status.success_count} fixes generated`)
     }
     if (status.error_count > 0) {
@@ -246,6 +264,29 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
   } else if (name === 'find') {
     if (status.success_count > 0) {
       return `${status.success_count} vulnerabilities`
+    }
+  } else if (
+    name === 'remediation_loop' ||
+    name === 'remediation_validation_loop'
+  ) {
+    // For remediation loop, show detailed metrics
+    const parts: string[] = []
+    if (status.success_count > 0) {
+      parts.push(`${status.success_count} fixed`)
+    }
+    const warningCount = status.self_validation_warning_count || 0
+    if (warningCount > 0) {
+      parts.push(`${warningCount} warnings`)
+    }
+    const failureCount = status.self_validation_failure_count || 0
+    if (failureCount > 0) {
+      parts.push(`${failureCount} val. failures`)
+    }
+    if (parts.length > 0) {
+      return parts.join(', ')
+    }
+    if (status.total_items > 0) {
+      return `${status.processed_items}/${status.total_items}`
     }
   } else if (status.success_count > 0) {
     return `${status.success_count} processed`
