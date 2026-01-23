@@ -39,6 +39,7 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.11.1",
+    "@actions/github": "^7.0.0",
     "@rollup/plugin-json": "^6.1.0",
     "axios": "^1.12.2",
     "zod": "^3.25.56"
@@ -77,6 +78,7 @@
     "@octokit/request": "^8.4.1",
     "@octokit/request-error": "^5.1.1",
     "@octokit/core": "^5.2.2",
-    "@octokit/graphql": "^7.1.1"
+    "@octokit/graphql": "^7.1.1",
+    "undici": "^6.23.0"
   }
 }

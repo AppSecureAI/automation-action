@@ -9,7 +9,9 @@ import {
   RunResponseSchema,
   ResponseStatusSchema,
   StepListSchema,
-  RunSummarySchema
+  RunSummarySchema,
+  QuotaErrorDetailSchema,
+  StructuredErrorDetailSchema
 } from './schemas.js'
 import { getIdToken } from './github.js'
 import {
@@ -28,13 +30,227 @@ import {
   SubmitRunOutput,
   StructuredErrorDetail,
   PlanErrorCode,
-  RunSummary
+  RunSummary,
+  ParsedApiError,
+  QuotaErrorDetail,
+  StatusResult
 } from './types.js'
 import store from './store.js'
 import { logSteps, logProcessTracking, logSummary } from './utils.js'
-import { LogLabels } from './constants.js'
+import {
+  LogLabels,
+  BILLING_URL,
+  SUPPORT_EMAIL,
+  STATUS_PAGE_URL
+} from './constants.js'
 
 const API_TIMEOUT = 8 * 60 * 1000
+
+/**
+ * Parse an axios error response into a structured ParsedApiError object.
+ * Extracts HTTP status code, error codes, and detailed information from the response body.
+ *
+ * @param error - The axios error object
+ * @returns ParsedApiError with extracted details, or null if not an axios error
+ */
+export function parseApiError(error: unknown): ParsedApiError | null {
+  if (!axios.isAxiosError(error)) {
+    return null
+  }
+
+  const statusCode = error.response?.status ?? 0
+  const responseData = error.response?.data
+
+  // Default error with status code
+  const parsedError: ParsedApiError = {
+    statusCode,
+    message: error.message || 'An unexpected error occurred',
+    rawError: error.message
+  }
+
+  if (!responseData) {
+    return parsedError
+  }
+
+  // Try to parse as quota error detail (for 429 responses)
+  if (statusCode === 429) {
+    const quotaParsed = QuotaErrorDetailSchema.safeParse(responseData)
+    if (quotaParsed.success) {
+      parsedError.quotaDetails = quotaParsed.data
+      parsedError.message =
+        quotaParsed.data.message ||
+        quotaParsed.data.error ||
+        parsedError.message
+      parsedError.errorCode = PlanErrorCode.QUOTA_EXCEEDED
+    }
+  }
+
+  // Try to parse as payment required error (for 402 responses)
+  if (statusCode === 402) {
+    parsedError.errorCode = PlanErrorCode.PAYMENT_REQUIRED
+    if (typeof responseData === 'object' && responseData.message) {
+      parsedError.message = responseData.message
+    } else if (typeof responseData === 'object' && responseData.detail) {
+      parsedError.message =
+        typeof responseData.detail === 'string'
+          ? responseData.detail
+          : responseData.detail.description || 'Payment required'
+    }
+  }
+
+  // Handle server errors (500)
+  if (statusCode === 500) {
+    parsedError.errorCode = PlanErrorCode.SERVER_ERROR
+    if (typeof responseData === 'object' && responseData.detail) {
+      parsedError.message =
+        typeof responseData.detail === 'string'
+          ? responseData.detail
+          : responseData.detail.description || 'Internal server error'
+    }
+  }
+
+  // Try to parse structured error detail from detail field
+  const detail = responseData.detail
+  if (typeof detail === 'object' && detail !== null) {
+    const structuredParsed = StructuredErrorDetailSchema.safeParse(detail)
+    if (structuredParsed.success) {
+      parsedError.structuredDetails = structuredParsed.data
+      if (structuredParsed.data.code) {
+        parsedError.errorCode = structuredParsed.data.code
+      }
+      if (structuredParsed.data.description) {
+        parsedError.message = structuredParsed.data.description
+      }
+    }
+  } else if (typeof detail === 'string') {
+    parsedError.message = detail
+  }
+
+  return parsedError
+}
+
+/**
+ * Format a user-friendly error message based on the parsed API error.
+ * Provides specific guidance for quota (429), payment (402), and server (500) errors.
+ *
+ * @param error - The parsed API error
+ * @param prefixLabel - Label prefix for the error message (e.g., "[Submit Analysis for Processing]")
+ * @returns Formatted error message string
+ */
+export function formatErrorMessage(
+  error: ParsedApiError,
+  prefixLabel: string
+): string {
+  const { statusCode, errorCode, message, quotaDetails, structuredDetails } =
+    error
+
+  // Handle quota exceeded (429)
+  if (statusCode === 429) {
+    return formatQuotaExceededError(quotaDetails, prefixLabel)
+  }
+
+  // Handle payment required (402)
+  if (statusCode === 402) {
+    return formatPaymentRequiredError(message, prefixLabel)
+  }
+
+  // Handle server error (500)
+  if (statusCode === 500) {
+    return formatServerError(message, prefixLabel)
+  }
+
+  // Handle structured errors with error codes
+  if (errorCode && structuredDetails) {
+    return formatStructuredError(errorCode, structuredDetails, prefixLabel)
+  }
+
+  // Default error format
+  return `${prefixLabel} ${message}`
+}
+
+/**
+ * Format a quota exceeded error message with usage details and upgrade guidance.
+ */
+function formatQuotaExceededError(
+  quotaDetails: QuotaErrorDetail | undefined,
+  prefixLabel: string
+): string {
+  const lines: string[] = []
+
+  lines.push(`${prefixLabel} QUOTA EXCEEDED`)
+  lines.push(
+    'Your organization has reached its run limit for this billing period.'
+  )
+  lines.push('')
+
+  if (quotaDetails) {
+    const used = quotaDetails.quota_used ?? 'N/A'
+    const limit = quotaDetails.quota_limit ?? 'N/A'
+    lines.push(`Current Usage: ${used} runs used / ${limit} runs available`)
+
+    if (quotaDetails.period_start && quotaDetails.period_end) {
+      lines.push(
+        `Period: ${quotaDetails.period_start} to ${quotaDetails.period_end}`
+      )
+    }
+    lines.push('')
+  }
+
+  lines.push('To resolve:')
+  lines.push(`- Upgrade your plan at ${BILLING_URL}`)
+  lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a payment required error message with billing guidance.
+ */
+function formatPaymentRequiredError(
+  message: string,
+  prefixLabel: string
+): string {
+  const lines: string[] = []
+
+  lines.push(`${prefixLabel} PAYMENT REQUIRED`)
+  lines.push(message || 'A payment is required to continue using this service.')
+  lines.push('')
+  lines.push('To resolve:')
+  lines.push(`- Update your payment method at ${BILLING_URL}`)
+  lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a server error message with retry guidance.
+ */
+function formatServerError(message: string, prefixLabel: string): string {
+  const lines: string[] = []
+
+  lines.push(`${prefixLabel} SERVER ERROR`)
+  lines.push(message || 'An internal server error occurred.')
+  lines.push('')
+  lines.push('To resolve:')
+  lines.push('- Wait a few minutes and retry your request')
+  lines.push(`- Check ${STATUS_PAGE_URL} for service status`)
+  lines.push(`- If the problem persists, contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a structured error message with error code context.
+ */
+function formatStructuredError(
+  errorCode: string,
+  details: StructuredErrorDetail,
+  prefixLabel: string
+): string {
+  const description =
+    details.description ?? 'An error occurred. Please try again.'
+  return `${prefixLabel} [${errorCode}] ${description}`
+}
 
 export async function submitRun(
   file: Buffer,
@@ -102,54 +318,79 @@ export async function submitRun(
     .catch((error) => {
       let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. Please try again later.`
 
-      if (axios.isAxiosError(error)) {
+      // Try to parse as structured API error for better messaging
+      const parsedError = parseApiError(error)
+
+      if (parsedError) {
+        // Handle special status codes with formatted messages
+        if ([429, 402, 500].includes(parsedError.statusCode)) {
+          errorMessage = formatErrorMessage(parsedError, prefixLabel)
+
+          // Log additional debug context for quota errors
+          if (parsedError.statusCode === 429 && parsedError.quotaDetails) {
+            const qd = parsedError.quotaDetails
+            core.debug(`Quota used: ${qd.quota_used}`)
+            core.debug(`Quota limit: ${qd.quota_limit}`)
+            if (qd.period_start) core.debug(`Period start: ${qd.period_start}`)
+            if (qd.period_end) core.debug(`Period end: ${qd.period_end}`)
+          }
+        } else if (axios.isAxiosError(error)) {
+          // Handle other axios errors
+          if (error.code === 'ECONNABORTED') {
+            errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
+          } else if (error.response?.data) {
+            const apiDetail = error.response.data.detail
+
+            // Handle both string and structured error detail formats
+            if (typeof apiDetail === 'string') {
+              // Simple string detail (legacy format)
+              errorMessage = `${prefixLabel} ${apiDetail}`
+            } else if (typeof apiDetail === 'object' && apiDetail !== null) {
+              // Structured detail with code and description (new format)
+              const structuredDetail = apiDetail as StructuredErrorDetail
+              const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN
+              const description =
+                structuredDetail.description ??
+                'An error occurred. Please try again.'
+
+              // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
+              errorMessage = `${prefixLabel} [${code}] ${description}`
+
+              // Log additional context for debugging if available
+              if (structuredDetail.organization_id) {
+                core.debug(
+                  `Organization ID: ${structuredDetail.organization_id}`
+                )
+              }
+              if (structuredDetail.expires_at) {
+                core.debug(`Plan expires at: ${structuredDetail.expires_at}`)
+              }
+              if (structuredDetail.status) {
+                core.debug(`Plan status: ${structuredDetail.status}`)
+              }
+              if (structuredDetail.owner) {
+                core.debug(`Owner: ${structuredDetail.owner}`)
+              }
+              if (structuredDetail.owner_type) {
+                core.debug(`Owner type: ${structuredDetail.owner_type}`)
+              }
+            }
+
+            // Handle step list if present (works with both formats)
+            if (apiDetail?.steps) {
+              const stepList = StepListSchema.safeParse(apiDetail.steps)
+              if (stepList.success) {
+                logSteps(stepList.data, LogLabels.RUN_SUBMIT)
+              }
+            }
+          } else {
+            errorMessage = `${prefixLabel} Call failed: ${error.message}`
+          }
+        }
+      } else if (axios.isAxiosError(error)) {
+        // Non-parsed axios error (e.g., timeout without response)
         if (error.code === 'ECONNABORTED') {
           errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
-        } else if (error.response?.data) {
-          const apiDetail = error.response.data.detail
-
-          // Handle both string and structured error detail formats
-          if (typeof apiDetail === 'string') {
-            // Simple string detail (legacy format)
-            errorMessage = `${prefixLabel} ${apiDetail}`
-          } else if (typeof apiDetail === 'object' && apiDetail !== null) {
-            // Structured detail with code and description (new format)
-            const structuredDetail = apiDetail as StructuredErrorDetail
-            const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN
-            const description =
-              structuredDetail.description ??
-              'An error occurred. Please try again.'
-
-            // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
-            errorMessage = `${prefixLabel} [${code}] ${description}`
-
-            // Log additional context for debugging if available
-            if (structuredDetail.organization_id) {
-              core.debug(`Organization ID: ${structuredDetail.organization_id}`)
-            }
-            if (structuredDetail.expires_at) {
-              core.debug(`Plan expires at: ${structuredDetail.expires_at}`)
-            }
-            if (structuredDetail.status) {
-              core.debug(`Plan status: ${structuredDetail.status}`)
-            }
-            if (structuredDetail.owner) {
-              core.debug(`Owner: ${structuredDetail.owner}`)
-            }
-            if (structuredDetail.owner_type) {
-              core.debug(`Owner type: ${structuredDetail.owner_type}`)
-            }
-          }
-
-          // Handle step list if present (works with both formats)
-          if (apiDetail?.steps) {
-            const stepList = StepListSchema.safeParse(apiDetail.steps)
-            if (stepList.success) {
-              logSteps(stepList.data, LogLabels.RUN_SUBMIT)
-            } else {
-              // Removed technical error details
-            }
-          }
         } else {
           errorMessage = `${prefixLabel} Call failed: ${error.message}`
         }
@@ -424,10 +665,10 @@ function formatElapsedTime(seconds: number): string {
 }
 
 export async function pollStatusUntilComplete(
-  getStatusFunc: () => Promise<{ status: string; [key: string]: any }>,
+  getStatusFunc: () => Promise<StatusResult>,
   maxRetries = 15,
   delay = 3000
-): Promise<any | null> {
+): Promise<StatusResult | null> {
   const startTime = Date.now()
 
   for (let retryCount = 0; retryCount < maxRetries; retryCount++) {
@@ -453,9 +694,11 @@ export async function pollStatusUntilComplete(
         core.endGroup()
         return null
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       core.debug(`Status check attempt failed. Retrying...`)
-      core.debug(`Original status error: ${error.message || error}`)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      core.debug(`Original status error: ${errorMessage}`)
     }
 
     core.debug(`Still processing, waiting ${delay / 1000} seconds...`)

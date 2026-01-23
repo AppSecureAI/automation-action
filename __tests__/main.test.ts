@@ -350,7 +350,10 @@ describe('main.ts', () => {
           processed_items: 8,
           success_count: 8,
           error_count: 0,
-          false_positive_count: 0
+          false_positive_count: 0,
+          self_validation_warning_count: 0,
+          self_validation_failure_count: 0,
+          additional_context_required_count: 0
         }
       }
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
@@ -377,7 +380,10 @@ describe('main.ts', () => {
           processed_items: 10,
           success_count: 8,
           error_count: 0,
-          false_positive_count: 2
+          false_positive_count: 2,
+          self_validation_warning_count: 0,
+          self_validation_failure_count: 0,
+          additional_context_required_count: 0
         }
         // No push_status
       }

@@ -210,7 +210,7 @@ describe('service.ts', () => {
       )
     })
 
-    // Test for API error with response but no data
+    // Test for API error with response but no data (500 error now shows formatted message)
     it('handles API error with response but no data in submitRun', async () => {
       axios.post.mockRejectedValue({
         response: { status: 500 }, // No data property
@@ -222,9 +222,12 @@ describe('service.ts', () => {
       const inputBuffer = Buffer.from(jsonData)
 
       await expect(submitRun(inputBuffer, 'file')).rejects.toThrow(
-        '[Submit Analysis for Processing] Call failed: Internal Server Error'
+        'SERVER ERROR'
       )
     })
+
+    // Note: 402 Payment Required tests are in error-formatting.test.ts
+    // PR #248 introduced new comprehensive error formatting with detailed user guidance
   })
 
   describe('getStatus', () => {

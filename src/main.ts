@@ -14,7 +14,7 @@ import {
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
 import { SubmitRunOutput, RunProcessTracking, RunSummary } from './types.js'
-import { LogLabels } from './constants.js'
+import { LogLabels, getConsoleBranding, PollingConfig } from './constants.js'
 import {
   getApiUrl,
   getMode,
@@ -53,13 +53,10 @@ export async function run(): Promise<void> {
   const file: string = core.getInput('file')
   const isDebug = getDebug()
 
-  // Polling configuration for status checks
-  // pollDelay: Wait time between status check attempts (30 seconds)
-  // intervalCheck: Display progress messages every 30 seconds during submission
-  // retries: Maximum number of polling attempts (50 retries × 30s = ~25 minutes total)
-  const pollDelay = 30000
-  const intervalCheck = 30000
-  const retries = 50
+  // Polling configuration for status checks (from constants.ts)
+  const pollDelay = PollingConfig.POLL_DELAY_MS
+  const intervalCheck = PollingConfig.INTERVAL_CHECK_MS
+  const retries = PollingConfig.MAX_RETRIES
 
   let fileBuffer: Buffer
   let submitOutput: SubmitRunOutput
@@ -69,6 +66,10 @@ export async function run(): Promise<void> {
   let success = false
 
   try {
+    // Display AppSecAI branding at run start
+    core.info('')
+    core.info(getConsoleBranding())
+    core.info('')
     core.info(
       '======== Getting static analysis results for further processing. ========'
     )
@@ -130,11 +131,13 @@ export async function run(): Promise<void> {
           pollDelay
         )
         // Capture final process tracking and summary for job summary
+        // Type assertions are safe here because Zod schema validation ensures complete data
         if (pollResult?.processTracking) {
-          finalProcessTracking = pollResult.processTracking
+          finalProcessTracking =
+            pollResult.processTracking as RunProcessTracking
         }
         if (pollResult?.summary) {
-          finalSummary = pollResult.summary
+          finalSummary = pollResult.summary as RunSummary
         }
       } catch (pollError) {
         // This is a "soft" failure. Log a warning but let the process complete
@@ -208,7 +211,8 @@ export async function run(): Promise<void> {
     const finalResultsOutput = formatFinalResults(
       finalSummary,
       store.id,
-      durationMs
+      durationMs,
+      finalProcessTracking
     )
     core.info(finalResultsOutput)
     core.endGroup()

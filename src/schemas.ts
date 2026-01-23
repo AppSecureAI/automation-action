@@ -13,6 +13,34 @@ export const StepSchema = z.object({
 
 export const StepListSchema = z.array(StepSchema)
 
+/**
+ * Schema for quota usage information.
+ * Validates the quota_info object returned in 402 responses.
+ */
+export const QuotaInfoSchema = z.object({
+  used: z.number(),
+  limit: z.number(),
+  resource: z.string()
+})
+
+/**
+ * Schema for structured error details returned by the API.
+ * Used to validate error responses and extract actionable information.
+ */
+export const StructuredErrorDetailSchema = z.object({
+  code: z.string().optional(),
+  description: z.string().optional(),
+  organization_id: z.string().optional(),
+  assignment_id: z.string().optional(),
+  expires_at: z.string().optional(),
+  period_end: z.string().optional(),
+  status: z.string().optional(),
+  steps: StepListSchema.optional(),
+  owner: z.string().optional(),
+  owner_type: z.string().optional(),
+  quota_info: QuotaInfoSchema.optional()
+})
+
 export const RunSummarySchema = z.object({
   total_vulnerabilities: z.number().default(0),
   true_positives: z.number().default(0),
@@ -77,7 +105,8 @@ export const ProcessStatusSchema = z.object({
   error_count: z.number().default(0), // Actual processing exceptions
   false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
   self_validation_warning_count: z.number().default(0), // PRs created with validation warnings
-  self_validation_failure_count: z.number().default(0) // Validation failures preventing PR creation
+  self_validation_failure_count: z.number().default(0), // Validation failures preventing PR creation
+  additional_context_required_count: z.number().default(0) // PRs with 'Additional Context Required' prefix
 })
 
 export const RunProcessTrackingSchema = z.object({
@@ -100,4 +129,17 @@ export const ResponseStatusSchema = z.object({
   results: SolverResultsSchema.nullable(),
   process_tracking: RunProcessTrackingSchema.nullable().optional(),
   summary: RunSummarySchema.nullable().optional()
+})
+
+/**
+ * Schema for quota-related error details (HTTP 429).
+ * Validates the structured error response from the API.
+ */
+export const QuotaErrorDetailSchema = z.object({
+  error: z.string().optional(),
+  message: z.string().optional(),
+  quota_used: z.number().optional(),
+  quota_limit: z.number().optional(),
+  period_start: z.string().optional(),
+  period_end: z.string().optional()
 })

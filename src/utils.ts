@@ -10,7 +10,11 @@ import {
   type RunProcessTracking,
   type RunSummary
 } from './types.js'
-import { LogLabels } from './constants.js'
+import {
+  LogLabels,
+  getMarkdownBranding,
+  getConsoleBranding
+} from './constants.js'
 
 /**
  * Mapping of internal stage names to user-friendly display names
@@ -111,6 +115,11 @@ export function formatStageStatus(
       // For remediation loop, show success count and validation metrics
       if (status.success_count > 0) {
         details.push(`${status.success_count} fixes generated`)
+      }
+      // Show additional context required count (multi-step CWE PRs)
+      const contextCount = status.additional_context_required_count || 0
+      if (contextCount > 0) {
+        details.push(`${contextCount} need additional context`)
       }
       // Show self-validation warning count (security passed but other checks failed)
       const warningCount = status.self_validation_warning_count || 0
@@ -274,6 +283,10 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
     if (status.success_count > 0) {
       parts.push(`${status.success_count} fixed`)
     }
+    const contextCount = status.additional_context_required_count || 0
+    if (contextCount > 0) {
+      parts.push(`${contextCount} need context`)
+    }
     const warningCount = status.self_validation_warning_count || 0
     if (warningCount > 0) {
       parts.push(`${warningCount} warnings`)
@@ -315,6 +328,9 @@ export async function writeJobSummary(
   success: boolean
 ): Promise<void> {
   const durationStr = formatDuration(durationMs)
+
+  // Add branding at the top
+  core.summary.addRaw(getMarkdownBranding() + '\n\n', true)
 
   // Start building the summary
   core.summary.addHeading('AppSecAI Results', 2)
@@ -566,9 +582,14 @@ export function formatSeverityDistribution(
 }
 
 /**
- * Format remediation results with success/failure counts
+ * Format remediation results with success/failure counts and validation metrics
+ * @param summary The run summary with metrics
+ * @param remediationStatus Optional ProcessStatus from remediation loop for detailed metrics
  */
-export function formatRemediationResults(summary: RunSummary): string {
+export function formatRemediationResults(
+  summary: RunSummary,
+  remediationStatus?: ProcessStatus
+): string {
   const total = summary.remediation_success + summary.remediation_failed
   if (total === 0) {
     return 'No remediation attempts'
@@ -578,11 +599,35 @@ export function formatRemediationResults(summary: RunSummary): string {
     1
   )
 
-  return [
+  const lines: string[] = [
     `Total Attempts: ${total}`,
-    `├─ Successful: ${summary.remediation_success} (${successPercent}%)`,
-    `└─ Failed: ${summary.remediation_failed}`
-  ].join('\n')
+    `├─ Successful: ${summary.remediation_success} (${successPercent}%)`
+  ]
+
+  // Add detailed metrics from remediation status if available
+  if (remediationStatus) {
+    const contextCount =
+      remediationStatus.additional_context_required_count || 0
+    const warningCount = remediationStatus.self_validation_warning_count || 0
+    const failureCount = remediationStatus.self_validation_failure_count || 0
+
+    // Only show if at least one of these counts is > 0
+    if (contextCount > 0 || warningCount > 0 || failureCount > 0) {
+      if (contextCount > 0) {
+        lines.push(`├─ Need Additional Context: ${contextCount}`)
+      }
+      if (warningCount > 0) {
+        lines.push(`├─ With Warnings: ${warningCount}`)
+      }
+      if (failureCount > 0) {
+        lines.push(`├─ Validation Failures: ${failureCount}`)
+      }
+    }
+  }
+
+  lines.push(`└─ Failed: ${summary.remediation_failed}`)
+
+  return lines.join('\n')
 }
 
 /**
@@ -609,21 +654,27 @@ export function formatPrLinks(prUrls: string[]): string {
  * @param summary The run summary with metrics
  * @param runId The run ID
  * @param durationMs Duration in milliseconds
+ * @param tracking Optional process tracking for detailed remediation metrics
  * @returns Formatted output string
  */
 export function formatFinalResults(
   summary: RunSummary | null,
   runId: string | null,
-  durationMs: number
+  durationMs: number,
+  tracking?: RunProcessTracking | null
 ): string {
   const lines: string[] = []
   const durationStr = formatDuration(durationMs)
 
+  // Add branding at the top
+  lines.push('')
+  lines.push(getConsoleBranding())
+  lines.push('')
   lines.push(
     '╔═══════════════════════════════════════════════════════════════╗'
   )
   lines.push(
-    '║              AppSecAI - Final Results                         ║'
+    '║                      Final Results                            ║'
   )
   lines.push(
     '╚═══════════════════════════════════════════════════════════════╝'
@@ -665,7 +716,10 @@ export function formatFinalResults(
   // Remediation Results
   if (summary.remediation_success + summary.remediation_failed > 0) {
     lines.push('├─ Remediation Results')
-    const remLines = formatRemediationResults(summary).split('\n')
+    const remediationStatus = tracking?.remediation_validation_loop_status
+    const remLines = formatRemediationResults(summary, remediationStatus).split(
+      '\n'
+    )
     remLines.forEach((line) => lines.push(`│  ${line}`))
     lines.push('│')
   }

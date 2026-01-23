@@ -46,7 +46,7 @@ export type ValidateMethod =
 
 /**
  * Error codes returned by the Medusa/Product API.
- * Includes plan-related errors and account validation errors.
+ * Includes plan-related errors, quota errors, and account validation errors.
  */
 export const PlanErrorCode = {
   // Plan-related errors
@@ -55,11 +55,28 @@ export const PlanErrorCode = {
   PLAN_INACTIVE: 'PLAN_INACTIVE',
   // Account validation errors
   PERSONAL_ACCOUNT_NOT_SUPPORTED: 'PERSONAL_ACCOUNT_NOT_SUPPORTED',
+  // Quota-related errors
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+  PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',
+  // Server errors
+  SERVER_ERROR: 'SERVER_ERROR',
   // Fallback
   UNKNOWN: 'UNKNOWN'
 } as const
 
 export type PlanErrorCode = (typeof PlanErrorCode)[keyof typeof PlanErrorCode]
+
+/**
+ * Quota usage information returned when quota is exceeded.
+ */
+export interface QuotaInfo {
+  /** Number of resources (runs) already used */
+  used: number
+  /** Maximum allowed resources (runs) for the current period */
+  limit: number
+  /** Type of resource being tracked (e.g., "runs") */
+  resource: string
+}
 
 /**
  * Structured error detail returned by the Medusa/Product API.
@@ -76,6 +93,8 @@ export interface StructuredErrorDetail {
   assignment_id?: string
   /** Expiration timestamp for expired plans (ISO 8601 format) */
   expires_at?: string
+  /** End of the current billing period (ISO 8601 format) */
+  period_end?: string
   /** Current status of the plan assignment */
   status?: string
   /** Optional step list for processing steps */
@@ -84,6 +103,46 @@ export interface StructuredErrorDetail {
   owner?: string
   /** Owner type: "User" or "Organization" (for account validation errors) */
   owner_type?: string
+  /** Quota usage information (for quota exceeded errors) */
+  quota_info?: QuotaInfo
+}
+
+/**
+ * Quota-specific error detail returned by the API for HTTP 429 errors.
+ * Contains usage information and billing period details.
+ */
+export interface QuotaErrorDetail {
+  /** Error type identifier */
+  error?: string
+  /** Human-readable error message */
+  message?: string
+  /** Number of runs used in the current period */
+  quota_used?: number
+  /** Maximum runs allowed in the current period */
+  quota_limit?: number
+  /** Start of the current billing period (YYYY-MM-DD format) */
+  period_start?: string
+  /** End of the current billing period (YYYY-MM-DD format) */
+  period_end?: string
+}
+
+/**
+ * Parsed API error with HTTP status code and extracted details.
+ * Used for formatting user-friendly error messages.
+ */
+export interface ParsedApiError {
+  /** HTTP status code from the response */
+  statusCode: number
+  /** Error code from the response body (if available) */
+  errorCode?: string
+  /** Error message from the response body */
+  message: string
+  /** Quota-specific details (for 429 errors) */
+  quotaDetails?: QuotaErrorDetail
+  /** Structured error details (for plan-related errors) */
+  structuredDetails?: StructuredErrorDetail
+  /** Raw error message from axios */
+  rawError?: string
 }
 
 /**
@@ -138,6 +197,8 @@ export interface ProcessStatus {
   self_validation_warning_count: number
   /** Validation failures preventing PR creation. Defaults to 0. */
   self_validation_failure_count: number
+  /** PRs created with 'Additional Context Required' prefix (multi-step CWE). Defaults to 0. */
+  additional_context_required_count: number
 }
 
 /**
@@ -190,4 +251,19 @@ export interface RunSummary {
   pr_urls: string[]
   /** Total number of pull requests created */
   pr_count: number
+}
+
+/**
+ * Result from status polling.
+ * Contains the processing status and optional tracking/summary data.
+ */
+export interface StatusResult {
+  /** Processing status: 'completed', 'failed', or 'in_progress' */
+  status: string
+  /** Error message if status is 'failed' */
+  error?: string
+  /** Process tracking information for all stages (null when not available from API) */
+  processTracking?: Partial<RunProcessTracking> | null
+  /** Summary of run results (null when not available from API) */
+  summary?: Partial<RunSummary> | null
 }
