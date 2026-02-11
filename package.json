@@ -41,7 +41,7 @@
     "@actions/core": "^1.11.1",
     "@actions/github": "^7.0.0",
     "@rollup/plugin-json": "^6.1.0",
-    "axios": "^1.12.2",
+    "axios": "^1.13.5",
     "zod": "^3.25.56"
   },
   "devDependencies": {
