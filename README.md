@@ -12,6 +12,16 @@ This GitHub Action provides automated security vulnerability triage,
 remediation, and validation powered by AI. Submit SARIF or JSON security scan
 results to the AppSecAI platform for intelligent analysis of your source code.
 
+## Repository Model
+
+`automation-action` is the public mirror for this action.
+
+- Canonical source-of-truth repo: `AppSecureAI/submit-run-action`
+- Public mirror repo: `AppSecureAI/automation-action`
+
+Version bumps and release source changes should be made in `submit-run-action`,
+then synchronized to this repository.
+
 ## Quick Start
 
 ```yaml
