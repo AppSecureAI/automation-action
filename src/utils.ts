@@ -15,6 +15,8 @@ import {
   getMarkdownBranding,
   getConsoleBranding
 } from './constants.js'
+import { parsePrUrl } from './titles.js'
+import type { GroupingConfig } from './types.js'
 
 /**
  * Mapping of internal stage names to user-friendly display names
@@ -43,6 +45,23 @@ const STATUS_ICONS = {
   pending: '⏸️',
   failed: '❌',
   initiated: '🔄'
+}
+
+/**
+ * Get the Dashboard URL based on the API URL.
+ * Defaults to the integration environment URL unless prod API is detected.
+ */
+export function getDashboardUrl(apiUrl: string): string {
+  // Check if it's the production API
+  if (
+    apiUrl.includes('api.appsecai.io') ||
+    apiUrl.includes('api.cloud.appsecai.io')
+  ) {
+    return 'https://portal.cloud.appsecai.io/'
+  }
+
+  // Default to integration for all other cases (including localhost/dev)
+  return 'https://app.intg.appsecai.net/'
 }
 
 /**
@@ -121,15 +140,17 @@ export function formatStageStatus(
       if (contextCount > 0) {
         details.push(`${contextCount} need additional context`)
       }
-      // Show self-validation warning count (security passed but other checks failed)
+      // Show self-validation warning count (security passed but functional/quality checks failed)
       const warningCount = status.self_validation_warning_count || 0
       if (warningCount > 0) {
-        details.push(`${warningCount} with warnings`)
+        details.push(
+          `${warningCount} issues created (security passed, functional/quality checks failed)`
+        )
       }
-      // Show self-validation failure count (validation prevented PR creation)
+      // Show self-validation failure count (validation failed - issue created instead of PR)
       const failureCount = status.self_validation_failure_count || 0
       if (failureCount > 0) {
-        details.push(`${failureCount} validation failures`)
+        details.push(`${failureCount} skipped (security not resolved)`)
       }
     } else if (status.success_count > 0) {
       // For other stages
@@ -289,11 +310,13 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
     }
     const warningCount = status.self_validation_warning_count || 0
     if (warningCount > 0) {
-      parts.push(`${warningCount} warnings`)
+      parts.push(
+        `${warningCount} issues (security passed, functional/quality checks failed)`
+      )
     }
     const failureCount = status.self_validation_failure_count || 0
     if (failureCount > 0) {
-      parts.push(`${failureCount} val. failures`)
+      parts.push(`${failureCount} skipped (security not resolved)`)
     }
     if (parts.length > 0) {
       return parts.join(', ')
@@ -319,13 +342,19 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
  * @param runId The run ID
  * @param durationMs Duration in milliseconds
  * @param success Whether the run completed successfully
+ * @param prTitles Optional map of PR URL to title
+ * @param dashboardUrl Optional dashboard URL to display
+ * @param groupingConfig Optional grouping configuration to display
  */
 export async function writeJobSummary(
   tracking: RunProcessTracking | null | undefined,
   summary: RunSummary | null,
   runId: string | null,
   durationMs: number,
-  success: boolean
+  success: boolean,
+  prTitles?: Map<string, string>,
+  dashboardUrl?: string,
+  groupingConfig?: GroupingConfig
 ): Promise<void> {
   const durationStr = formatDuration(durationMs)
 
@@ -424,6 +453,40 @@ export async function writeJobSummary(
       ])
     }
 
+    // Issues - display context-aware metrics
+    if ((summary.issue_count ?? 0) > 0) {
+      const validationWarningCount = summary.issues_validation_warning ?? 0
+      const multistepCweCount = summary.issues_multistep_cwe ?? 0
+
+      if (validationWarningCount > 0) {
+        metricsData.push([
+          {
+            data: 'Issues Created (Security Passed, Functional/Quality Checks Failed)'
+          },
+          { data: validationWarningCount.toString() }
+        ])
+      }
+
+      if (multistepCweCount > 0) {
+        metricsData.push([
+          {
+            data: 'Issues Created (Validation Passed, Additional Steps Required)'
+          },
+          { data: multistepCweCount.toString() }
+        ])
+      }
+
+      // Fallback for backwards compatibility
+      if (validationWarningCount === 0 && multistepCweCount === 0) {
+        metricsData.push([
+          {
+            data: 'Issues Created (Security Passed, Functional/Quality Checks Failed)'
+          },
+          { data: (summary.issue_count ?? 0).toString() }
+        ])
+      }
+    }
+
     core.summary.addTable(metricsData)
 
     // Add CWE breakdown if available
@@ -472,19 +535,100 @@ export async function writeJobSummary(
       core.summary.addTable(sevData)
     }
 
-    // Add PR links if available (show all PRs without truncation)
+    // Add PR links if available (show as table with titles)
     if (summary.pr_urls.length > 0) {
-      core.summary.addHeading('Pull Requests', 4)
+      core.summary.addHeading('Pull Requests & Issues', 4)
+
+      const prTableData: Array<Array<{ data: string; header?: boolean }>> = [
+        [
+          { data: 'Type', header: true },
+          { data: 'ID', header: true },
+          { data: 'Title', header: true }
+        ]
+      ]
+
       for (const prUrl of summary.pr_urls) {
-        core.summary.addRaw(`- ${prUrl}\n`, true)
+        const title = prTitles?.get(prUrl) || ''
+        const parsed = parsePrUrl(prUrl)
+        let type = 'PR'
+        let idDisplay = prUrl
+
+        if (parsed) {
+          if (prUrl.includes('/issues/')) type = 'Issue'
+          idDisplay = `<a href="${prUrl}">#${parsed.number}</a>`
+        } else {
+          idDisplay = `<a href="${prUrl}">Link</a>`
+        }
+
+        prTableData.push([{ data: type }, { data: idDisplay }, { data: title }])
+      }
+      core.summary.addTable(prTableData)
+    }
+
+    // Add Issue links if available (from failed validations)
+    if ((summary.issue_urls ?? []).length > 0) {
+      core.summary.addHeading('GitHub Issues', 4)
+      for (const issueUrl of summary.issue_urls ?? []) {
+        core.summary.addRaw(`- ${issueUrl}\n`, true)
       }
     }
+  }
+
+  // Add grouping configuration if enabled
+  if (groupingConfig?.enabled) {
+    core.summary.addHeading('Grouping Configuration', 3)
+
+    const strategyDisplayNames: Record<string, string> = {
+      cwe_category: 'CWE Category',
+      file_proximity: 'File Proximity',
+      module: 'Module',
+      smart: 'Smart (AI-powered)'
+    }
+
+    const stageDisplayNames: Record<string, string> = {
+      pre_push: 'Pre-Push',
+      pre_remediation: 'Pre-Remediation'
+    }
+
+    const groupingData: Array<Array<{ data: string; header?: boolean }>> = [
+      [
+        { data: 'Setting', header: true },
+        { data: 'Value', header: true }
+      ],
+      [
+        { data: 'Strategy' },
+        {
+          data:
+            strategyDisplayNames[groupingConfig.strategy] ||
+            groupingConfig.strategy
+        }
+      ],
+      [
+        { data: 'Max Vulnerabilities Per PR' },
+        { data: groupingConfig.maxVulnerabilitiesPerPr.toString() }
+      ],
+      [
+        { data: 'Stage' },
+        {
+          data: stageDisplayNames[groupingConfig.stage] || groupingConfig.stage
+        }
+      ]
+    ]
+
+    core.summary.addTable(groupingData)
   }
 
   // Add run metadata
   core.summary.addRaw('\n---\n\n', true)
   core.summary.addRaw(`**Run ID:** \`${runId || 'N/A'}\`\n\n`, true)
   core.summary.addRaw(`**Duration:** ${durationStr}\n`, true)
+
+  // Add dashboard link if available
+  if (dashboardUrl) {
+    core.summary.addRaw('\n', true)
+    core.summary.addLink('View detailed results on the dashboard', dashboardUrl)
+    core.summary.addRaw('\n', true)
+  }
 
   // Write the summary
   await core.summary.write()
@@ -617,10 +761,12 @@ export function formatRemediationResults(
         lines.push(`├─ Need Additional Context: ${contextCount}`)
       }
       if (warningCount > 0) {
-        lines.push(`├─ With Warnings: ${warningCount}`)
+        lines.push(
+          `├─ Issues Created: ${warningCount} (security passed, functional/quality checks failed)`
+        )
       }
       if (failureCount > 0) {
-        lines.push(`├─ Validation Failures: ${failureCount}`)
+        lines.push(`├─ Skipped (Security Not Resolved): ${failureCount}`)
       }
     }
   }
@@ -632,8 +778,13 @@ export function formatRemediationResults(
 
 /**
  * Format PR links (show all PRs without truncation)
+ * @param prUrls List of PR URLs
+ * @param prTitles Optional map of PR URL to title
  */
-export function formatPrLinks(prUrls: string[]): string {
+export function formatPrLinks(
+  prUrls: string[],
+  prTitles?: Map<string, string>
+): string {
   if (prUrls.length === 0) {
     return 'No pull requests created'
   }
@@ -643,7 +794,33 @@ export function formatPrLinks(prUrls: string[]): string {
   for (let i = 0; i < prUrls.length; i++) {
     const isLast = i === prUrls.length - 1
     const prefix = isLast ? '└─' : '├─'
-    lines.push(`${prefix} ${prUrls[i]}`)
+    const url = prUrls[i]
+    const title = prTitles?.get(url)
+
+    if (title) {
+      lines.push(`${prefix} ${url} (${title})`)
+    } else {
+      lines.push(`${prefix} ${url}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * Format GitHub Issue links (created from failed validations)
+ */
+export function formatIssueLinks(issueUrls: string[]): string {
+  if (issueUrls.length === 0) {
+    return 'No issues created'
+  }
+
+  const lines: string[] = []
+
+  for (let i = 0; i < issueUrls.length; i++) {
+    const isLast = i === issueUrls.length - 1
+    const prefix = isLast ? '└─' : '├─'
+    lines.push(`${prefix} ${issueUrls[i]}`)
   }
 
   return lines.join('\n')
@@ -655,13 +832,19 @@ export function formatPrLinks(prUrls: string[]): string {
  * @param runId The run ID
  * @param durationMs Duration in milliseconds
  * @param tracking Optional process tracking for detailed remediation metrics
+ * @param prTitles Optional map of PR URL to title
+ * @param dashboardUrl Optional dashboard URL to display at bottom
+ * @param groupingConfig Optional grouping configuration to display
  * @returns Formatted output string
  */
 export function formatFinalResults(
   summary: RunSummary | null,
   runId: string | null,
   durationMs: number,
-  tracking?: RunProcessTracking | null
+  tracking?: RunProcessTracking | null,
+  prTitles?: Map<string, string>,
+  dashboardUrl?: string,
+  groupingConfig?: GroupingConfig
 ): string {
   const lines: string[] = []
   const durationStr = formatDuration(durationMs)
@@ -727,11 +910,36 @@ export function formatFinalResults(
   // Pull Requests
   if (summary.pr_count > 0) {
     lines.push(`├─ Pull Requests (${summary.pr_count})`)
-    const prLines = formatPrLinks(summary.pr_urls).split('\n')
+    const prLines = formatPrLinks(summary.pr_urls, prTitles).split('\n')
     prLines.forEach((line) => lines.push(`│  ${line}`))
+    lines.push('│')
+  }
+
+  // GitHub Issues (created from failed validations)
+  if ((summary.issue_count ?? 0) > 0) {
+    lines.push(`├─ GitHub Issues (${summary.issue_count})`)
+    const issueLines = formatIssueLinks(summary.issue_urls ?? []).split('\n')
+    issueLines.forEach((line) => lines.push(`│  ${line}`))
+    lines.push('│')
+  }
+
+  // Grouping Configuration
+  if (groupingConfig?.enabled) {
+    lines.push('├─ Grouping Configuration')
+    lines.push(`│  Strategy: ${groupingConfig.strategy}`)
+    lines.push(
+      `│  Max Vulnerabilities Per PR: ${groupingConfig.maxVulnerabilitiesPerPr}`
+    )
+    lines.push(`│  Stage: ${groupingConfig.stage}`)
   }
 
   lines.push('└─────────────────────────────────────────────────────────────')
+
+  if (dashboardUrl) {
+    lines.push('')
+    lines.push(`View detailed results on the dashboard: ${dashboardUrl}`)
+    lines.push('')
+  }
 
   return lines.join('\n')
 }
@@ -740,8 +948,14 @@ export function formatFinalResults(
  * Log run summary to console with formatted output.
  * Used when finalizing a run to display summary metrics.
  * @param summary The run summary with metrics
+ * @param prTitles Optional map of PR URL to title
+ * @param dashboardUrl Optional dashboard URL to display
  */
-export function logSummary(summary: RunSummary): void {
+export function logSummary(
+  summary: RunSummary,
+  prTitles?: Map<string, string>,
+  dashboardUrl?: string
+): void {
   const prefixLabel = `[${LogLabels.RUN_SUMMARY}]`
 
   core.info(`${prefixLabel}: === Run Summary ===`)
@@ -750,13 +964,60 @@ export function logSummary(summary: RunSummary): void {
   )
   core.info(`${prefixLabel}: True positives: ${summary.true_positives}`)
   core.info(`${prefixLabel}: False positives: ${summary.false_positives}`)
+  core.info(
+    `${prefixLabel}: Remediation: ${summary.remediation_success} successful, ${summary.remediation_failed} failed`
+  )
   core.info(`${prefixLabel}: PRs created: ${summary.pr_count}`)
 
   if (summary.pr_urls.length > 0) {
     core.info(`${prefixLabel}: PR URLs:`)
     for (const url of summary.pr_urls) {
+      const title = prTitles?.get(url)
+      if (title) {
+        core.info(`${prefixLabel}:   - ${url} (${title})`)
+      } else {
+        core.info(`${prefixLabel}:   - ${url}`)
+      }
+    }
+  }
+
+  if ((summary.issue_count ?? 0) > 0) {
+    const validationWarningCount = summary.issues_validation_warning ?? 0
+    const multistepCweCount = summary.issues_multistep_cwe ?? 0
+
+    // Display specific messages for each issue type
+    if (validationWarningCount > 0) {
+      core.info(
+        `${prefixLabel}: Issues created: ${validationWarningCount} (security passed, functional/quality checks failed)`
+      )
+    }
+
+    if (multistepCweCount > 0) {
+      core.info(
+        `${prefixLabel}: Issues created: ${multistepCweCount} (validation passed, additional steps required)`
+      )
+    }
+
+    // Fallback for backwards compatibility: if new fields not present, use old behavior
+    if (validationWarningCount === 0 && multistepCweCount === 0) {
+      core.info(
+        `${prefixLabel}: Issues created: ${summary.issue_count} (security passed, functional/quality checks failed)`
+      )
+    }
+
+    for (const url of summary.issue_urls ?? []) {
       core.info(`${prefixLabel}:   - ${url}`)
     }
+  }
+
+  if ((summary.skipped_count ?? 0) > 0) {
+    core.info(
+      `${prefixLabel}: Skipped: ${summary.skipped_count} (security not resolved)`
+    )
+  }
+
+  if (dashboardUrl) {
+    core.info(`${prefixLabel}: Dashboard: ${dashboardUrl}`)
   }
 
   core.info(`${prefixLabel}: ===================`)

@@ -24,7 +24,14 @@ import {
   getUseValidateCc,
   getValidateMethod,
   getUseRemediateLoopCc,
-  getAutoCreatePrs
+  getAutoCreatePrs,
+  getCreateIssuesForIncompleteRemediations,
+  getCommentModificationMode,
+  getGroupingEnabled,
+  getGroupingStrategy,
+  getMaxVulnerabilitiesPerPr,
+  getGroupingStage,
+  getUpdateContext
 } from './input.js'
 import {
   SubmitRunOutput,
@@ -41,10 +48,56 @@ import {
   LogLabels,
   BILLING_URL,
   SUPPORT_EMAIL,
-  STATUS_PAGE_URL
+  STATUS_PAGE_URL,
+  PollingConfig
 } from './constants.js'
 
 const API_TIMEOUT = 8 * 60 * 1000
+
+/**
+ * Check whether an axios error is retriable (transient network or server error).
+ * Retries on network errors (timeout, connection reset) and HTTP 5xx responses.
+ * Does NOT retry on 4xx or successful responses with error payloads.
+ */
+function isRetriableError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false
+  // Network errors without a response (timeout, connection reset, DNS)
+  if (!error.response) return true
+  // Server errors from load balancer / upstream
+  const status = error.response.status
+  return status >= 500
+}
+
+/**
+ * Execute an async function with exponential backoff retry on transient errors.
+ *
+ * @param fn - The async function to execute
+ * @param maxRetries - Maximum number of retry attempts (default: 3)
+ * @param baseDelayMs - Base delay in ms before exponential backoff (default: 1000)
+ * @returns The result of the function
+ */
+export async function fetchWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 1000
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      if (attempt === maxRetries || !isRetriableError(error)) {
+        throw error
+      }
+      const delayMs = baseDelayMs * Math.pow(2, attempt)
+      core.debug(
+        `Retriable error on attempt ${attempt + 1}/${maxRetries + 1}, retrying in ${delayMs}ms...`
+      )
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+  // Unreachable, but TypeScript needs it
+  throw new Error('fetchWithRetry: unreachable')
+}
 
 /**
  * Parse an axios error response into a structured ParsedApiError object.
@@ -279,6 +332,34 @@ export async function submitRun(
   // Add PR creation flag
   formData.append('auto_create_prs', String(getAutoCreatePrs()))
 
+  // Add flag for creating issues instead of PRs for incomplete remediations
+  formData.append(
+    'create_issues_for_incomplete_remediations',
+    String(getCreateIssuesForIncompleteRemediations())
+  )
+
+  // Add comment modification mode
+  formData.append('comment_modification_mode', getCommentModificationMode())
+
+  // Add grouping configuration parameters
+  const groupingEnabled = getGroupingEnabled()
+  formData.append('grouping_enabled', String(groupingEnabled))
+  if (groupingEnabled) {
+    formData.append('grouping_strategy', getGroupingStrategy())
+    formData.append(
+      'max_vulnerabilities_per_pr',
+      String(getMaxVulnerabilitiesPerPr())
+    )
+    formData.append('grouping_stage', getGroupingStage())
+  }
+
+  // Add update-context flag to trigger fresh security context extraction
+  const updateContext = getUpdateContext()
+  formData.append('update_context', String(updateContext))
+  if (updateContext) {
+    core.info('Security context update requested')
+  }
+
   core.debug('Calling submit API: POST /api-product/submit')
 
   const setup = {
@@ -417,11 +498,10 @@ export async function getStatus(id: string) {
           Authorization: `Bearer ${token}`
         }
       : undefined,
-    timeout: 8000
+    timeout: PollingConfig.STATUS_TIMEOUT_MS
   }
 
-  return axios
-    .get(url, setup)
+  return fetchWithRetry(() => axios.get(url, setup), 2, 500)
     .then((response) => {
       const parsedResponse = ResponseStatusSchema.safeParse(response.data)
 
@@ -638,7 +718,7 @@ export async function getStatus(id: string) {
       }
 
       return {
-        status: 'failed',
+        status: 'network_error',
         error: 'Status check failed',
         processTracking: undefined
       }
@@ -664,12 +744,15 @@ function formatElapsedTime(seconds: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
+export const MAX_CONSECUTIVE_NETWORK_ERRORS = 3
+
 export async function pollStatusUntilComplete(
   getStatusFunc: () => Promise<StatusResult>,
   maxRetries = 15,
   delay = 3000
 ): Promise<StatusResult | null> {
   const startTime = Date.now()
+  let consecutiveNetworkErrors = 0
 
   for (let retryCount = 0; retryCount < maxRetries; retryCount++) {
     const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
@@ -693,6 +776,23 @@ export async function pollStatusUntilComplete(
         )
         core.endGroup()
         return null
+      } else if (statusData.status === 'network_error') {
+        consecutiveNetworkErrors++
+        core.warning(
+          `Status check network error (${consecutiveNetworkErrors}/${MAX_CONSECUTIVE_NETWORK_ERRORS}). ` +
+            `Server may still be processing. Retrying...`
+        )
+        if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
+          core.error(
+            `Status check failed after ${MAX_CONSECUTIVE_NETWORK_ERRORS} consecutive network errors. ` +
+              `The server may be unreachable.`
+          )
+          core.endGroup()
+          return null
+        }
+      } else {
+        // Successful non-terminal response resets the counter
+        consecutiveNetworkErrors = 0
       }
     } catch (error: unknown) {
       core.debug(`Status check attempt failed. Retrying...`)
@@ -708,7 +808,8 @@ export async function pollStatusUntilComplete(
   }
 
   core.warning(
-    `Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server.`
+    `Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server. ` +
+      `Monitor your repository for new pull requests and check the AppSecAI dashboard for run status and results.`
   )
   return null
 }

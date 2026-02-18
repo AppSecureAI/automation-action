@@ -5,7 +5,19 @@
 
 export type RepoInfo = { repo: string; owner: string }
 
-export type SubmitRunOutput = { message: string; run_id: string | null }
+/**
+ * Valid values for context_updated field in API responses.
+ * - true: Context was successfully updated
+ * - false: Context was not requested or not updated
+ * - 'rate-limited': Context update was requested but rate limited
+ */
+export type ContextUpdatedStatus = boolean | 'rate-limited'
+
+export type SubmitRunOutput = {
+  message: string
+  run_id: string | null
+  context_updated?: ContextUpdatedStatus
+}
 
 export const ProcessingModeExternal = {
   INDIVIDUAL: 'individual',
@@ -43,6 +55,61 @@ export const ValidateMethod = {
 
 export type ValidateMethod =
   (typeof ValidateMethod)[keyof typeof ValidateMethod]
+
+export const CommentModificationMode = {
+  BASIC: 'basic',
+  VERBOSE: 'verbose'
+} as const
+
+export type CommentModificationMode =
+  (typeof CommentModificationMode)[keyof typeof CommentModificationMode]
+
+/**
+ * Valid grouping strategy values for vulnerability grouping.
+ * Determines how vulnerabilities are grouped together for remediation.
+ *
+ * - cwe_category: Group by CWE category (default)
+ * - file_proximity: Group by file proximity in the codebase
+ * - module: Group by code module or package
+ * - smart: AI-powered smart grouping based on multiple factors
+ */
+export const GroupingStrategy = {
+  CWE_CATEGORY: 'cwe_category',
+  FILE_PROXIMITY: 'file_proximity',
+  MODULE: 'module',
+  SMART: 'smart'
+} as const
+
+export type GroupingStrategy =
+  (typeof GroupingStrategy)[keyof typeof GroupingStrategy]
+
+/**
+ * Valid grouping stage values that control when grouping occurs in the pipeline.
+ *
+ * - pre_push: Group vulnerabilities before the push stage (default)
+ * - pre_remediation: Group vulnerabilities before remediation begins
+ */
+export const GroupingStage = {
+  PRE_PUSH: 'pre_push',
+  PRE_REMEDIATION: 'pre_remediation'
+} as const
+
+export type GroupingStage = (typeof GroupingStage)[keyof typeof GroupingStage]
+
+/**
+ * Grouping configuration parameters for vulnerability grouping.
+ * These parameters control how vulnerabilities are grouped for processing.
+ */
+export interface GroupingConfig {
+  /** Whether grouping is enabled */
+  enabled: boolean
+  /** Strategy used for grouping vulnerabilities */
+  strategy: GroupingStrategy
+  /** Maximum number of vulnerabilities per pull request */
+  maxVulnerabilitiesPerPr: number
+  /** Stage at which grouping occurs in the pipeline */
+  stage: GroupingStage
+}
 
 /**
  * Error codes returned by the Medusa/Product API.
@@ -193,9 +260,9 @@ export interface ProcessStatus {
   error_count: number
   /** Items triaged as false positives (triage only). Defaults to 0. */
   false_positive_count: number
-  /** PRs created with validation warnings (security passed, others failed). Defaults to 0. */
+  /** Issues created with validation warnings (security passed, other checks failed). Defaults to 0. */
   self_validation_warning_count: number
-  /** Validation failures preventing PR creation. Defaults to 0. */
+  /** Skipped vulnerabilities (security not resolved). Defaults to 0. */
   self_validation_failure_count: number
   /** PRs created with 'Additional Context Required' prefix (multi-step CWE). Defaults to 0. */
   additional_context_required_count: number
@@ -251,6 +318,16 @@ export interface RunSummary {
   pr_urls: string[]
   /** Total number of pull requests created */
   pr_count: number
+  /** List of GitHub Issue URLs created for validation warnings */
+  issue_urls?: string[]
+  /** Total number of GitHub Issues created */
+  issue_count?: number
+  /** Number of vulnerabilities skipped (security not resolved) */
+  skipped_count?: number
+  /** Number of issues created due to validation failures (security passed, functional/quality checks failed) */
+  issues_validation_warning?: number
+  /** Number of issues created due to multi-step CWEs (validation passed, additional steps required) */
+  issues_multistep_cwe?: number
 }
 
 /**
@@ -258,7 +335,7 @@ export interface RunSummary {
  * Contains the processing status and optional tracking/summary data.
  */
 export interface StatusResult {
-  /** Processing status: 'completed', 'failed', or 'in_progress' */
+  /** Processing status: 'completed', 'failed', 'in_progress', or 'network_error' */
   status: string
   /** Error message if status is 'failed' */
   error?: string

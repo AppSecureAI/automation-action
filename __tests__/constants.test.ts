@@ -98,15 +98,15 @@ describe('constants.ts', () => {
     })
 
     it('exports max retries count', () => {
-      expect(PollingConfig.MAX_RETRIES).toBe(50)
+      expect(PollingConfig.MAX_RETRIES).toBe(100)
     })
 
-    it('has configuration for approximately 25 minutes of polling', () => {
-      // 50 retries × 30 seconds = 1500 seconds = 25 minutes
+    it('has configuration for approximately 50 minutes of polling', () => {
+      // 100 retries × 30 seconds = 3000 seconds = 50 minutes
       const totalPollingTimeMs =
         PollingConfig.MAX_RETRIES * PollingConfig.POLL_DELAY_MS
       const totalPollingMinutes = totalPollingTimeMs / 1000 / 60
-      expect(totalPollingMinutes).toBe(25)
+      expect(totalPollingMinutes).toBe(50)
     })
   })
 })

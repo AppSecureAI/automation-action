@@ -50,15 +50,32 @@ export const RunSummarySchema = z.object({
   remediation_success: z.number().default(0),
   remediation_failed: z.number().default(0),
   pr_urls: z.array(z.string()).default([]),
-  pr_count: z.number().default(0)
+  pr_count: z.number().default(0),
+  issue_urls: z.array(z.string()).default([]),
+  issue_count: z.number().default(0),
+  skipped_count: z.number().default(0),
+  issues_validation_warning: z.number().optional(),
+  issues_multistep_cwe: z.number().optional()
 })
+
+/**
+ * Valid values for context_updated field.
+ * - true: Context was successfully updated
+ * - false: Context was not requested or not updated
+ * - 'rate-limited': Context update was requested but rate limited
+ */
+export const ContextUpdatedSchema = z.union([
+  z.boolean(),
+  z.literal('rate-limited')
+])
 
 export const RunResponseSchema = z.object({
   message: z.string(),
   description: z.string().nullish(),
   steps: StepListSchema,
   run_id: z.string().nullable(),
-  summary: RunSummarySchema.nullable().optional()
+  summary: RunSummarySchema.nullable().optional(),
+  context_updated: ContextUpdatedSchema.optional()
 })
 
 export const SolverResultSchema = z.object({
@@ -104,8 +121,8 @@ export const ProcessStatusSchema = z.object({
   success_count: z.number().default(0), // Successfully processed items (includes warnings)
   error_count: z.number().default(0), // Actual processing exceptions
   false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
-  self_validation_warning_count: z.number().default(0), // PRs created with validation warnings
-  self_validation_failure_count: z.number().default(0), // Validation failures preventing PR creation
+  self_validation_warning_count: z.number().default(0), // Issues created (validation warnings - security passed, other checks failed)
+  self_validation_failure_count: z.number().default(0), // Skipped (security not resolved)
   additional_context_required_count: z.number().default(0) // PRs with 'Additional Context Required' prefix
 })
 

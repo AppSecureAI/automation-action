@@ -530,6 +530,127 @@ describe('utils.ts', () => {
     })
   })
 
+  describe('logSummary - context-aware issue messaging', () => {
+    const createBaseSummary = () => ({
+      total_vulnerabilities: 50,
+      true_positives: 40,
+      false_positives: 10,
+      cwe_breakdown: {},
+      severity_breakdown: {},
+      remediation_success: 30,
+      remediation_failed: 10,
+      pr_urls: [],
+      pr_count: 0,
+      issue_urls: ['https://github.com/org/repo/issues/1'],
+      issue_count: 1
+    })
+
+    it('displays correct message for validation warnings only', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 3,
+        issues_validation_warning: 3,
+        issues_multistep_cwe: 0
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 3 (security passed, functional/quality checks failed)'
+      )
+      expect(core.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('additional steps required')
+      )
+    })
+
+    it('displays correct message for multi-step CWEs only', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 5,
+        issues_validation_warning: 0,
+        issues_multistep_cwe: 5
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 5 (validation passed, additional steps required)'
+      )
+      expect(core.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('functional/quality checks failed')
+      )
+    })
+
+    it('displays both messages when both issue types are present', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 8,
+        issues_validation_warning: 3,
+        issues_multistep_cwe: 5
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 3 (security passed, functional/quality checks failed)'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 5 (validation passed, additional steps required)'
+      )
+    })
+
+    it('falls back to old message when new fields are not present (backwards compatibility)', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 6
+        // issues_validation_warning and issues_multistep_cwe not present
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 6 (security passed, functional/quality checks failed)'
+      )
+    })
+
+    it('falls back to old message when new fields are zero', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 4,
+        issues_validation_warning: 0,
+        issues_multistep_cwe: 0
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]: Issues created: 4 (security passed, functional/quality checks failed)'
+      )
+    })
+
+    it('lists issue URLs after displaying messages', () => {
+      const summary = {
+        ...createBaseSummary(),
+        issue_count: 2,
+        issue_urls: [
+          'https://github.com/org/repo/issues/1',
+          'https://github.com/org/repo/issues/2'
+        ],
+        issues_validation_warning: 1,
+        issues_multistep_cwe: 1
+      }
+
+      logSummary(summary)
+
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]:   - https://github.com/org/repo/issues/1'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        '[SUMMARY]:   - https://github.com/org/repo/issues/2'
+      )
+    })
+  })
+
   describe('formatStageStatus - additional_context_required_count', () => {
     const createBaseStatus = () => ({
       status: 'completed',
@@ -578,8 +699,10 @@ describe('utils.ts', () => {
       const result = formatStageStatus('remediation_loop', status)
       expect(result).toContain('5 fixes generated')
       expect(result).toContain('2 need additional context')
-      expect(result).toContain('1 with warnings')
-      expect(result).toContain('1 validation failures')
+      expect(result).toContain(
+        '1 issues created (security passed, functional/quality checks failed)'
+      )
+      expect(result).toContain('1 skipped (security not resolved)')
     })
 
     it('does not show additional context count when zero', () => {
@@ -649,8 +772,10 @@ describe('utils.ts', () => {
       }
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain('Need Additional Context: 2')
-      expect(result).toContain('With Warnings: 5')
-      expect(result).toContain('Validation Failures: 3')
+      expect(result).toContain(
+        'Issues Created: 5 (security passed, functional/quality checks failed)'
+      )
+      expect(result).toContain('Skipped (Security Not Resolved): 3')
     })
 
     it('works without remediationStatus parameter', () => {
@@ -659,8 +784,8 @@ describe('utils.ts', () => {
       expect(result).toContain('Successful: 75 (75.0%)')
       expect(result).toContain('Failed: 25')
       expect(result).not.toContain('Need Additional Context')
-      expect(result).not.toContain('With Warnings')
-      expect(result).not.toContain('Validation Failures')
+      expect(result).not.toContain('Issues Created:')
+      expect(result).not.toContain('Skipped (Security Not Resolved)')
     })
 
     it('omits validation metrics when all zero', () => {
@@ -668,8 +793,8 @@ describe('utils.ts', () => {
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain('Successful: 75 (75.0%)')
       expect(result).not.toContain('Need Additional Context')
-      expect(result).not.toContain('With Warnings')
-      expect(result).not.toContain('Validation Failures')
+      expect(result).not.toContain('Issues Created:')
+      expect(result).not.toContain('Skipped (Security Not Resolved)')
     })
 
     it('only shows non-zero validation metrics', () => {
@@ -679,9 +804,11 @@ describe('utils.ts', () => {
         // additional_context_required_count and self_validation_failure_count are 0
       }
       const result = formatRemediationResults(baseSummary, remediationStatus)
-      expect(result).toContain('With Warnings: 2')
+      expect(result).toContain(
+        'Issues Created: 2 (security passed, functional/quality checks failed)'
+      )
       expect(result).not.toContain('Need Additional Context')
-      expect(result).not.toContain('Validation Failures')
+      expect(result).not.toContain('Skipped (Security Not Resolved)')
     })
   })
 
@@ -726,8 +853,10 @@ describe('utils.ts', () => {
       const result = formatFinalResults(baseSummary, 'run-123', 60000, tracking)
       expect(result).toContain('Remediation Results')
       expect(result).toContain('Need Additional Context: 5')
-      expect(result).toContain('With Warnings: 3')
-      expect(result).toContain('Validation Failures: 2')
+      expect(result).toContain(
+        'Issues Created: 3 (security passed, functional/quality checks failed)'
+      )
+      expect(result).toContain('Skipped (Security Not Resolved): 2')
     })
 
     it('works without tracking parameter', () => {
@@ -893,12 +1022,23 @@ describe('utils.ts', () => {
 
       await writeJobSummary(null, summary, 'run-123', 60000, true)
 
-      expect(core.summary.addHeading).toHaveBeenCalledWith('Pull Requests', 4)
-      const addRawCalls = (core.summary.addRaw as jest.Mock).mock.calls
-      const prCall = addRawCalls.find((call: unknown[]) =>
-        String(call[0]).includes('github.com/org/repo/pull/1')
+      expect(core.summary.addHeading).toHaveBeenCalledWith(
+        'Pull Requests & Issues',
+        4
       )
-      expect(prCall).toBeDefined()
+      expect(core.summary.addTable).toHaveBeenCalled()
+      // Check that PR table contains the link
+      const tableCalls = (core.summary.addTable as jest.Mock).mock.calls
+      // We expect the PR table to be the last one added (or at least present)
+      const prTable = tableCalls.find(
+        (call: unknown[]) =>
+          (call[0] as any)[0][0].data === 'Type' &&
+          (call[0] as any)[0][1].data === 'ID'
+      )
+      expect(prTable).toBeDefined()
+      const prRows = prTable![0] as any[]
+      // Row 0 is header, Row 1 is the PR
+      expect(JSON.stringify(prRows[1])).toContain('github.com/org/repo/pull/1')
     })
 
     it('writes run metadata at the end', async () => {
@@ -956,7 +1096,7 @@ describe('utils.ts', () => {
       await writeJobSummary(null, summary, 'run-123', 60000, true)
 
       expect(core.summary.addHeading).not.toHaveBeenCalledWith(
-        'Pull Requests',
+        'Pull Requests & Issues',
         4
       )
     })
@@ -1002,6 +1142,105 @@ describe('utils.ts', () => {
         2
       )
       expect(core.summary.write).toHaveBeenCalled()
+    })
+
+    it('displays validation warning issues in metrics table', async () => {
+      const summary = createSummary({
+        issue_count: 3,
+        issues_validation_warning: 3,
+        issues_multistep_cwe: 0
+      })
+
+      await writeJobSummary(null, summary, 'run-123', 60000, true)
+
+      const tableCalls = (core.summary.addTable as jest.Mock).mock.calls
+      const metricsTable = tableCalls.find(
+        (call: unknown[]) => (call[0] as any)[0][0].data === 'Metric'
+      )
+      expect(metricsTable).toBeDefined()
+      const tableRows = metricsTable![0] as any[]
+      const validationRow = tableRows.find(
+        (row: any) =>
+          row[0]?.data?.includes('Functional/Quality Checks Failed') &&
+          row[1]?.data === '3'
+      )
+      expect(validationRow).toBeDefined()
+    })
+
+    it('displays multi-step CWE issues in metrics table', async () => {
+      const summary = createSummary({
+        issue_count: 5,
+        issues_validation_warning: 0,
+        issues_multistep_cwe: 5
+      })
+
+      await writeJobSummary(null, summary, 'run-123', 60000, true)
+
+      const tableCalls = (core.summary.addTable as jest.Mock).mock.calls
+      const metricsTable = tableCalls.find(
+        (call: unknown[]) => (call[0] as any)[0][0].data === 'Metric'
+      )
+      expect(metricsTable).toBeDefined()
+      const tableRows = metricsTable![0] as any[]
+      const multistepRow = tableRows.find(
+        (row: any) =>
+          row[0]?.data?.includes('Additional Steps Required') &&
+          row[1]?.data === '5'
+      )
+      expect(multistepRow).toBeDefined()
+    })
+
+    it('displays both issue types when both are present', async () => {
+      const summary = createSummary({
+        issue_count: 8,
+        issues_validation_warning: 3,
+        issues_multistep_cwe: 5
+      })
+
+      await writeJobSummary(null, summary, 'run-123', 60000, true)
+
+      const tableCalls = (core.summary.addTable as jest.Mock).mock.calls
+      const metricsTable = tableCalls.find(
+        (call: unknown[]) => (call[0] as any)[0][0].data === 'Metric'
+      )
+      expect(metricsTable).toBeDefined()
+      const tableRows = metricsTable![0] as any[]
+
+      const validationRow = tableRows.find(
+        (row: any) =>
+          row[0]?.data?.includes('Functional/Quality Checks Failed') &&
+          row[1]?.data === '3'
+      )
+      expect(validationRow).toBeDefined()
+
+      const multistepRow = tableRows.find(
+        (row: any) =>
+          row[0]?.data?.includes('Additional Steps Required') &&
+          row[1]?.data === '5'
+      )
+      expect(multistepRow).toBeDefined()
+    })
+
+    it('falls back to old issue message when new fields are not present', async () => {
+      const summary = createSummary({
+        issue_count: 6
+        // issues_validation_warning and issues_multistep_cwe not present
+      })
+
+      await writeJobSummary(null, summary, 'run-123', 60000, true)
+
+      const tableCalls = (core.summary.addTable as jest.Mock).mock.calls
+      const metricsTable = tableCalls.find(
+        (call: unknown[]) => (call[0] as any)[0][0].data === 'Metric'
+      )
+      expect(metricsTable).toBeDefined()
+      const tableRows = metricsTable![0] as any[]
+      const issueRow = tableRows.find(
+        (row: any) =>
+          row[0]?.data?.includes('Functional/Quality Checks Failed') &&
+          row[1]?.data === '6'
+      )
+      expect(issueRow).toBeDefined()
     })
   })
 })

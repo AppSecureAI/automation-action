@@ -25,9 +25,21 @@ const {
   getValidateMethod,
   getUseRemediateLoopCc,
   getAutoCreatePrs,
-  getDebug
+  getDebug,
+  getCreateIssuesForIncompleteRemediations,
+  getCommentModificationMode,
+  getGroupingEnabled,
+  getGroupingStrategy,
+  getMaxVulnerabilitiesPerPr,
+  getGroupingStage,
+  getUpdateContext
 } = await import('../src/input.js')
-const { ProcessingModeExternal } = await import('../src/types.js')
+const {
+  ProcessingModeExternal,
+  CommentModificationMode,
+  GroupingStrategy,
+  GroupingStage
+} = await import('../src/types.js')
 
 describe('input.ts', () => {
   const originalEnv = process.env
@@ -53,6 +65,13 @@ describe('input.ts', () => {
       'INPUT_VALIDATE_METHOD',
       'INPUT_USE_REMEDIATE_LOOP_CC',
       'INPUT_AUTO_CREATE_PRS',
+      'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
+      'INPUT_COMMENT_MODIFICATION_MODE',
+      'INPUT_GROUPING_ENABLED',
+      'INPUT_GROUPING_STRATEGY',
+      'INPUT_MAX_VULNERABILITIES_PER_PR',
+      'INPUT_GROUPING_STAGE',
+      'INPUT_UPDATE_CONTEXT',
       'PROCESSING_MODE',
       'USE_TRIAGE_CC',
       'TRIAGE_METHOD',
@@ -61,7 +80,14 @@ describe('input.ts', () => {
       'USE_VALIDATE_CC',
       'VALIDATE_METHOD',
       'USE_REMEDIATE_LOOP_CC',
-      'AUTO_CREATE_PRS'
+      'AUTO_CREATE_PRS',
+      'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
+      'COMMENT_MODIFICATION_MODE',
+      'GROUPING_ENABLED',
+      'GROUPING_STRATEGY',
+      'MAX_VULNERABILITIES_PER_PR',
+      'GROUPING_STAGE',
+      'UPDATE_CONTEXT'
     ]
     configEnvVars.forEach((key) => {
       delete process.env[key]
@@ -414,6 +440,311 @@ describe('input.ts', () => {
         process.env.INPUT_DEBUG = 'true'
         core.getInput.mockReturnValue('false')
         expect(getDebug()).toBe(true)
+      })
+    })
+
+    describe('getCreateIssuesForIncompleteRemediations', () => {
+      it('returns true when value is true', () => {
+        process.env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'true'
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(true)
+      })
+
+      it('returns false when value is false', () => {
+        process.env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'false'
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
+      })
+
+      it('returns true by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(true)
+      })
+
+      it('returns true and warns for invalid value', () => {
+        process.env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'invalid'
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(true)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Invalid create-issues-for-incomplete-remediations value'
+          )
+        )
+      })
+
+      it('prefers CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS workflow env var', () => {
+        process.env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'false'
+        core.getInput.mockReturnValue('true')
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
+      })
+
+      it('prefers INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS environment variable', () => {
+        process.env.INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'false'
+        core.getInput.mockReturnValue('true')
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
+      })
+    })
+
+    describe('getCommentModificationMode', () => {
+      it('returns basic when value is basic', () => {
+        process.env.COMMENT_MODIFICATION_MODE = 'basic'
+        expect(getCommentModificationMode()).toBe(CommentModificationMode.BASIC)
+      })
+
+      it('returns verbose when value is verbose', () => {
+        process.env.COMMENT_MODIFICATION_MODE = 'verbose'
+        expect(getCommentModificationMode()).toBe(
+          CommentModificationMode.VERBOSE
+        )
+      })
+
+      it('returns basic by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getCommentModificationMode()).toBe(CommentModificationMode.BASIC)
+      })
+
+      it('returns basic and warns for invalid value', () => {
+        process.env.COMMENT_MODIFICATION_MODE = 'invalid'
+        expect(getCommentModificationMode()).toBe(CommentModificationMode.BASIC)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid comment-modification-mode')
+        )
+      })
+
+      it('prefers COMMENT_MODIFICATION_MODE workflow env var', () => {
+        process.env.COMMENT_MODIFICATION_MODE = 'verbose'
+        core.getInput.mockReturnValue('basic')
+        expect(getCommentModificationMode()).toBe(
+          CommentModificationMode.VERBOSE
+        )
+      })
+
+      it('prefers INPUT_COMMENT_MODIFICATION_MODE environment variable', () => {
+        process.env.INPUT_COMMENT_MODIFICATION_MODE = 'verbose'
+        core.getInput.mockReturnValue('basic')
+        expect(getCommentModificationMode()).toBe(
+          CommentModificationMode.VERBOSE
+        )
+      })
+    })
+
+    describe('getGroupingEnabled', () => {
+      it('returns true when grouping-enabled is true', () => {
+        process.env.GROUPING_ENABLED = 'true'
+        expect(getGroupingEnabled()).toBe(true)
+      })
+
+      it('returns false when grouping-enabled is false', () => {
+        process.env.GROUPING_ENABLED = 'false'
+        expect(getGroupingEnabled()).toBe(false)
+      })
+
+      it('returns false by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getGroupingEnabled()).toBe(false)
+      })
+
+      it('returns false and warns for invalid value', () => {
+        process.env.GROUPING_ENABLED = 'invalid'
+        expect(getGroupingEnabled()).toBe(false)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid grouping-enabled value')
+        )
+      })
+
+      it('prefers GROUPING_ENABLED workflow env var', () => {
+        process.env.GROUPING_ENABLED = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getGroupingEnabled()).toBe(true)
+      })
+
+      it('prefers INPUT_GROUPING_ENABLED environment variable', () => {
+        process.env.INPUT_GROUPING_ENABLED = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getGroupingEnabled()).toBe(true)
+      })
+    })
+
+    describe('getGroupingStrategy', () => {
+      it('returns cwe_category when value is cwe_category', () => {
+        process.env.GROUPING_STRATEGY = 'cwe_category'
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.CWE_CATEGORY)
+      })
+
+      it('returns file_proximity when value is file_proximity', () => {
+        process.env.GROUPING_STRATEGY = 'file_proximity'
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.FILE_PROXIMITY)
+      })
+
+      it('returns module when value is module', () => {
+        process.env.GROUPING_STRATEGY = 'module'
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.MODULE)
+      })
+
+      it('returns smart when value is smart', () => {
+        process.env.GROUPING_STRATEGY = 'smart'
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.SMART)
+      })
+
+      it('returns cwe_category by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.CWE_CATEGORY)
+      })
+
+      it('returns cwe_category and warns for invalid value', () => {
+        process.env.GROUPING_STRATEGY = 'invalid_strategy'
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.CWE_CATEGORY)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid grouping-strategy')
+        )
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('cwe_category')
+        )
+      })
+
+      it('prefers GROUPING_STRATEGY workflow env var', () => {
+        process.env.GROUPING_STRATEGY = 'smart'
+        core.getInput.mockReturnValue('cwe_category')
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.SMART)
+      })
+
+      it('prefers INPUT_GROUPING_STRATEGY environment variable', () => {
+        process.env.INPUT_GROUPING_STRATEGY = 'module'
+        core.getInput.mockReturnValue('cwe_category')
+        expect(getGroupingStrategy()).toBe(GroupingStrategy.MODULE)
+      })
+    })
+
+    describe('getMaxVulnerabilitiesPerPr', () => {
+      it('returns parsed integer value', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '5'
+        expect(getMaxVulnerabilitiesPerPr()).toBe(5)
+      })
+
+      it('returns 10 by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getMaxVulnerabilitiesPerPr()).toBe(10)
+      })
+
+      it('returns 10 and warns for non-numeric value', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = 'abc'
+        expect(getMaxVulnerabilitiesPerPr()).toBe(10)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid max-vulnerabilities-per-pr value')
+        )
+      })
+
+      it('returns 10 and warns for zero', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '0'
+        expect(getMaxVulnerabilitiesPerPr()).toBe(10)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Must be a positive integer')
+        )
+      })
+
+      it('returns 10 and warns for negative value', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '-5'
+        expect(getMaxVulnerabilitiesPerPr()).toBe(10)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Must be a positive integer')
+        )
+      })
+
+      it('handles large valid values', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '100'
+        expect(getMaxVulnerabilitiesPerPr()).toBe(100)
+      })
+
+      it('returns 10 and warns for float value', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '3.5'
+        // parseInt will parse '3.5' as 3, which is valid
+        expect(getMaxVulnerabilitiesPerPr()).toBe(3)
+      })
+
+      it('prefers MAX_VULNERABILITIES_PER_PR workflow env var', () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '20'
+        core.getInput.mockReturnValue('5')
+        expect(getMaxVulnerabilitiesPerPr()).toBe(20)
+      })
+
+      it('prefers INPUT_MAX_VULNERABILITIES_PER_PR environment variable', () => {
+        process.env.INPUT_MAX_VULNERABILITIES_PER_PR = '15'
+        core.getInput.mockReturnValue('5')
+        expect(getMaxVulnerabilitiesPerPr()).toBe(15)
+      })
+    })
+
+    describe('getGroupingStage', () => {
+      it('returns pre_push when value is pre_push', () => {
+        process.env.GROUPING_STAGE = 'pre_push'
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_PUSH)
+      })
+
+      it('returns pre_remediation when value is pre_remediation', () => {
+        process.env.GROUPING_STAGE = 'pre_remediation'
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_REMEDIATION)
+      })
+
+      it('returns pre_push by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_PUSH)
+      })
+
+      it('returns pre_push and warns for invalid value', () => {
+        process.env.GROUPING_STAGE = 'invalid_stage'
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_PUSH)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid grouping-stage')
+        )
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('pre_push')
+        )
+      })
+
+      it('prefers GROUPING_STAGE workflow env var', () => {
+        process.env.GROUPING_STAGE = 'pre_remediation'
+        core.getInput.mockReturnValue('pre_push')
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_REMEDIATION)
+      })
+
+      it('prefers INPUT_GROUPING_STAGE environment variable', () => {
+        process.env.INPUT_GROUPING_STAGE = 'pre_remediation'
+        core.getInput.mockReturnValue('pre_push')
+        expect(getGroupingStage()).toBe(GroupingStage.PRE_REMEDIATION)
+      })
+    })
+
+    describe('getUpdateContext', () => {
+      it('returns true when update-context is true', () => {
+        process.env.UPDATE_CONTEXT = 'true'
+        expect(getUpdateContext()).toBe(true)
+      })
+
+      it('returns false when update-context is false', () => {
+        process.env.UPDATE_CONTEXT = 'false'
+        expect(getUpdateContext()).toBe(false)
+      })
+
+      it('returns false by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getUpdateContext()).toBe(false)
+      })
+
+      it('returns false and warns for invalid value', () => {
+        process.env.UPDATE_CONTEXT = 'invalid'
+        expect(getUpdateContext()).toBe(false)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid update-context value')
+        )
+      })
+
+      it('prefers UPDATE_CONTEXT workflow env var', () => {
+        process.env.UPDATE_CONTEXT = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getUpdateContext()).toBe(true)
+      })
+
+      it('prefers INPUT_UPDATE_CONTEXT environment variable', () => {
+        process.env.INPUT_UPDATE_CONTEXT = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getUpdateContext()).toBe(true)
       })
     })
   })

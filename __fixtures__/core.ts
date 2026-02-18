@@ -22,6 +22,7 @@ const summaryMock = {
   addHeading: jest.fn().mockReturnThis(),
   addTable: jest.fn().mockReturnThis(),
   addRaw: jest.fn().mockReturnThis(),
+  addLink: jest.fn().mockReturnThis(),
   write: jest
     .fn<() => Promise<typeof core.summary>>()
     .mockResolvedValue({} as typeof core.summary)

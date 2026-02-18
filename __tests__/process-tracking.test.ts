@@ -206,7 +206,9 @@ describe('formatStageStatus', () => {
           self_validation_failure_count: 0,
           additional_context_required_count: 0
         })
-      ).toBe('✅ Remediation: Completed (6 fixes generated, 2 with warnings)')
+      ).toBe(
+        '✅ Remediation: Completed (6 fixes generated, 2 issues created (security passed, functional/quality checks failed))'
+      )
     })
 
     it('shows fixes generated with validation failures for remediation stage', () => {
@@ -224,7 +226,7 @@ describe('formatStageStatus', () => {
           additional_context_required_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (7 fixes generated, 3 validation failures)'
+        '✅ Remediation: Completed (7 fixes generated, 3 skipped (security not resolved))'
       )
     })
 
@@ -243,7 +245,7 @@ describe('formatStageStatus', () => {
           additional_context_required_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (8 fixes generated, 2 with warnings, 1 validation failures, 1 errors)'
+        '✅ Remediation: Completed (8 fixes generated, 2 issues created (security passed, functional/quality checks failed), 1 skipped (security not resolved), 1 errors)'
       )
     })
 

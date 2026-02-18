@@ -11,9 +11,16 @@ import {
   submitRun,
   finalizeRun
 } from './service.js'
+import { fetchPrTitles } from './titles.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
-import { SubmitRunOutput, RunProcessTracking, RunSummary } from './types.js'
+import { VERSION } from './version.js'
+import {
+  SubmitRunOutput,
+  RunProcessTracking,
+  RunSummary,
+  GroupingConfig
+} from './types.js'
 import { LogLabels, getConsoleBranding, PollingConfig } from './constants.js'
 import {
   getApiUrl,
@@ -26,9 +33,20 @@ import {
   getValidateMethod,
   getUseRemediateLoopCc,
   getAutoCreatePrs,
-  getDebug
+  getDebug,
+  getToken,
+  getGroupingEnabled,
+  getGroupingStrategy,
+  getMaxVulnerabilitiesPerPr,
+  getGroupingStage,
+  getUpdateContext
 } from './input.js'
-import { writeJobSummary, formatFinalResults } from './utils.js'
+import {
+  writeJobSummary,
+  formatFinalResults,
+  getDashboardUrl
+} from './utils.js'
+import { fetchAndLogServerVersion } from './version-service.js'
 
 /**
  * Log all input configuration in a collapsible group
@@ -46,10 +64,25 @@ function logConfiguration(file: string): void {
   core.info(`Validate Method: ${getValidateMethod()}`)
   core.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`)
   core.info(`Auto Create PRs: ${getAutoCreatePrs()}`)
+  const groupingEnabled = getGroupingEnabled()
+  core.info(`Grouping Enabled: ${groupingEnabled}`)
+  if (groupingEnabled) {
+    core.info(`Grouping Strategy: ${getGroupingStrategy()}`)
+    core.info(`Max Vulnerabilities Per PR: ${getMaxVulnerabilitiesPerPr()}`)
+    core.info(`Grouping Stage: ${getGroupingStage()}`)
+  }
+  core.info(`Update Context: ${getUpdateContext()}`)
   core.endGroup()
 }
 
 export async function run(): Promise<void> {
+  core.info(`submit-run-action v${VERSION}`)
+
+  // Fetch and log server version information (non-blocking to avoid startup latency)
+  fetchAndLogServerVersion(getApiUrl()).catch(() => {
+    // Silently ignore - version check is purely informational
+  })
+
   const file: string = core.getInput('file')
   const isDebug = getDebug()
 
@@ -70,6 +103,7 @@ export async function run(): Promise<void> {
     core.info('')
     core.info(getConsoleBranding())
     core.info('')
+    core.info(`submit-run-action v${VERSION}`)
     core.info(
       '======== Getting static analysis results for further processing. ========'
     )
@@ -104,11 +138,14 @@ export async function run(): Promise<void> {
     } catch (error) {
       core.debug(`Error submit run ${error}`)
       core.endGroup()
+      const submitErrorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'Failed to submit analysis results for processing. Please try again later.'
       // Re-throw to be caught by the outer block
-      throw new SubmitRunError(
-        `Failed to submit analysis results for processing. Please try again later.`,
-        error
-      )
+      throw new SubmitRunError(submitErrorMessage, error)
     } finally {
       if (intervalId) {
         clearInterval(intervalId)
@@ -198,12 +235,44 @@ export async function run(): Promise<void> {
 
     // Write job summary
     const durationMs = Date.now() - startTime
+
+    // Fetch PR titles if we have a summary with PRs
+    let prTitles: Map<string, string> | undefined
+    if (finalSummary && finalSummary.pr_urls.length > 0) {
+      try {
+        const token = getToken()
+        if (token) {
+          prTitles = await fetchPrTitles(finalSummary.pr_urls, token)
+        }
+      } catch (error) {
+        core.debug(`Failed to fetch PR titles: ${error}`)
+      }
+    }
+
+    // Get dashboard URL
+    const dashboardUrl = getDashboardUrl(getApiUrl())
+
+    // Build grouping config for summary display
+    const groupingEnabled = getGroupingEnabled()
+    let groupingConfig: GroupingConfig | undefined
+    if (groupingEnabled) {
+      groupingConfig = {
+        enabled: true,
+        strategy: getGroupingStrategy(),
+        maxVulnerabilitiesPerPr: getMaxVulnerabilitiesPerPr(),
+        stage: getGroupingStage()
+      }
+    }
+
     await writeJobSummary(
       finalProcessTracking,
       finalSummary,
       store.id,
       durationMs,
-      success
+      success,
+      prTitles,
+      dashboardUrl,
+      groupingConfig
     )
 
     // Final summary
@@ -212,7 +281,10 @@ export async function run(): Promise<void> {
       finalSummary,
       store.id,
       durationMs,
-      finalProcessTracking
+      finalProcessTracking,
+      prTitles,
+      dashboardUrl,
+      groupingConfig
     )
     core.info(finalResultsOutput)
     core.endGroup()

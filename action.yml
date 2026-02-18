@@ -15,11 +15,19 @@ inputs:
     description: The SARIF or JSON file containing security scan results
     required: true
 
+  update-context:
+    description: Trigger fresh security context extraction before the scan
+    required: false
+    default: 'false'
+
 # Define your outputs here.
 outputs:
   message:
     description: Processed message
     value: ${{ steps.run-action.outputs.message }}
+  context-updated:
+    description: Whether context was updated (true/false/rate-limited)
+    value: ${{ steps.run-action.outputs.context-updated }}
 
 runs:
   using: composite
@@ -41,4 +49,15 @@ runs:
         INPUT_VALIDATE_METHOD: ${{ env.VALIDATE_METHOD || 'baseline' }}
         INPUT_USE_REMEDIATE_LOOP_CC: ${{ env.USE_REMEDIATE_LOOP_CC || 'true' }}
         INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'true' }}
+        INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS:
+          ${{ env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS || 'true' }}
+        INPUT_COMMENT_MODIFICATION_MODE:
+          ${{ env.COMMENT_MODIFICATION_MODE || 'basic' }}
+        INPUT_GROUPING_ENABLED: ${{ env.GROUPING_ENABLED || 'false' }}
+        INPUT_GROUPING_STRATEGY: ${{ env.GROUPING_STRATEGY || 'cwe_category' }}
+        INPUT_MAX_VULNERABILITIES_PER_PR:
+          ${{ env.MAX_VULNERABILITIES_PER_PR || '10' }}
+        INPUT_GROUPING_STAGE: ${{ env.GROUPING_STAGE || 'pre_push' }}
+        INPUT_UPDATE_CONTEXT:
+          ${{ inputs.update-context || env.UPDATE_CONTEXT || 'false' }}
       run: node ${{ github.action_path }}/dist/index.js

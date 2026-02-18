@@ -27,6 +27,13 @@ const mockGetUseValidateCc = jest.fn()
 const mockGetValidateMethod = jest.fn()
 const mockGetUseRemediateLoopCc = jest.fn()
 const mockGetAutoCreatePrs = jest.fn()
+const mockGetCreateIssuesForIncompleteRemediations = jest.fn()
+const mockGetCommentModificationMode = jest.fn()
+const mockGetGroupingEnabled = jest.fn()
+const mockGetGroupingStrategy = jest.fn()
+const mockGetMaxVulnerabilitiesPerPr = jest.fn()
+const mockGetGroupingStage = jest.fn()
+const mockGetUpdateContext = jest.fn()
 
 jest.mock('../src/input', () => ({
   getApiUrl: mockGetApiUrl,
@@ -38,7 +45,15 @@ jest.mock('../src/input', () => ({
   getUseValidateCc: mockGetUseValidateCc,
   getValidateMethod: mockGetValidateMethod,
   getUseRemediateLoopCc: mockGetUseRemediateLoopCc,
-  getAutoCreatePrs: mockGetAutoCreatePrs
+  getAutoCreatePrs: mockGetAutoCreatePrs,
+  getCreateIssuesForIncompleteRemediations:
+    mockGetCreateIssuesForIncompleteRemediations,
+  getCommentModificationMode: mockGetCommentModificationMode,
+  getGroupingEnabled: mockGetGroupingEnabled,
+  getGroupingStrategy: mockGetGroupingStrategy,
+  getMaxVulnerabilitiesPerPr: mockGetMaxVulnerabilitiesPerPr,
+  getGroupingStage: mockGetGroupingStage,
+  getUpdateContext: mockGetUpdateContext
 }))
 jest.mock('../src/store', () => ({
   __esModule: true,
@@ -59,8 +74,15 @@ jest.unstable_mockModule('../src/utils', () => ({
 }))
 
 const serviceModule = await import('../src/service')
-const { submitRun, getStatus, pollStatusUntilComplete, finalizeRun, delay } =
-  serviceModule
+const {
+  submitRun,
+  getStatus,
+  pollStatusUntilComplete,
+  finalizeRun,
+  delay,
+  MAX_CONSECUTIVE_NETWORK_ERRORS,
+  fetchWithRetry
+} = serviceModule
 
 // Note: We keep the serviceModule import to access named exports
 // The delay function is used in tests that use fake timers
@@ -80,6 +102,13 @@ describe('service.ts', () => {
     mockGetValidateMethod.mockReturnValue('baseline')
     mockGetUseRemediateLoopCc.mockReturnValue('false')
     mockGetAutoCreatePrs.mockReturnValue('true')
+    mockGetCreateIssuesForIncompleteRemediations.mockReturnValue('true')
+    mockGetCommentModificationMode.mockReturnValue('basic')
+    mockGetGroupingEnabled.mockReturnValue(false)
+    mockGetGroupingStrategy.mockReturnValue('cwe_category')
+    mockGetMaxVulnerabilitiesPerPr.mockReturnValue(10)
+    mockGetGroupingStage.mockReturnValue('pre_push')
+    mockGetUpdateContext.mockReturnValue(false)
     store.finalLogPrinted = {}
     logSteps.mockClear()
     logProcessTracking.mockClear()
@@ -324,13 +353,14 @@ describe('service.ts', () => {
       )
     })
 
-    it('returns failed status on error', async () => {
+    it('returns network_error status on transient error instead of failed', async () => {
       axios.get.mockRejectedValue(new Error('API error'))
       const result = await getStatus('test-id')
 
       expect(result).toEqual({
-        status: 'failed',
-        error: 'Status check failed'
+        status: 'network_error',
+        error: 'Status check failed',
+        processTracking: undefined
       })
       expect(core.warning).toHaveBeenCalledWith(
         '[Analysis Processing Status]: An unexpected error occurred. Please try again later.'
@@ -338,7 +368,7 @@ describe('service.ts', () => {
     })
   })
 
-  it('handles timeout errors correctly', async () => {
+  it('handles timeout errors as network_error not failed', async () => {
     // 1. Create a mock error with the 'ECONNABORTED' code
     const timeoutError = new Error('timeout of 8000ms exceeded')
     Object.assign(timeoutError, { code: 'ECONNABORTED', isAxiosError: true })
@@ -346,20 +376,21 @@ describe('service.ts', () => {
     // 2. Configure the mock to return a rejected promise with the timeout error
     axios.get.mockRejectedValue(timeoutError)
 
-    // 3. Call the function and expect the correct return value
+    // 3. Call the function and expect network_error (not failed)
     const result = await getStatus('test-id')
 
-    // 4. Verify the result and logging behavior
+    // 4. Verify the result - network errors should not terminate polling
     expect(result).toEqual({
-      status: 'failed',
-      error: 'Status check failed'
+      status: 'network_error',
+      error: 'Status check failed',
+      processTracking: undefined
     })
     expect(core.warning).toHaveBeenCalledWith(
       '[Analysis Processing Status] Call failed: Request timed out. Please try again later.'
     )
   })
 
-  it('handles generic API errors correctly', async () => {
+  it('handles generic API errors as network_error not failed', async () => {
     // 1. Create a mock for a generic Axios error
     const genericError = new Error('API error message')
     Object.assign(genericError, { isAxiosError: true })
@@ -367,13 +398,14 @@ describe('service.ts', () => {
     // 2. Configure the mock to return a rejected promise
     axios.get.mockRejectedValue(genericError)
 
-    // 3. Call the function and expect the correct return value
+    // 3. Call the function and expect network_error (not failed)
     const result = await getStatus('test-id')
 
-    // 4. Verify the result and logging behavior
+    // 4. Verify the result - transient errors don't terminate polling
     expect(result).toEqual({
-      status: 'failed',
-      error: 'Status check failed'
+      status: 'network_error',
+      error: 'Status check failed',
+      processTracking: undefined
     })
     expect(core.warning).toHaveBeenCalledWith(
       '[Analysis Processing Status] Call failed: API error message'
@@ -443,7 +475,7 @@ describe('service.ts', () => {
     )
   })
 
-  it('handles API error with status code', async () => {
+  it('handles API error with status code as network_error', async () => {
     const errorWithStatus = new Error('API error')
     Object.assign(errorWithStatus, {
       isAxiosError: true,
@@ -454,23 +486,25 @@ describe('service.ts', () => {
     const result = await getStatus('test-id')
 
     expect(result).toEqual({
-      status: 'failed',
-      error: 'Status check failed'
+      status: 'network_error',
+      error: 'Status check failed',
+      processTracking: undefined
     })
     expect(core.warning).toHaveBeenCalledWith(
       '[Analysis Processing Status] Call failed with status code: 404. Please try again later.'
     )
   })
 
-  it('handles non-axios errors', async () => {
+  it('handles non-axios errors as network_error', async () => {
     const nonAxiosError = new Error('Non-axios error')
 
     axios.get.mockRejectedValue(nonAxiosError)
     const result = await getStatus('test-id')
 
     expect(result).toEqual({
-      status: 'failed',
-      error: 'Status check failed'
+      status: 'network_error',
+      error: 'Status check failed',
+      processTracking: undefined
     })
     expect(core.warning).toHaveBeenCalledWith(
       '[Analysis Processing Status]: An unexpected error occurred. Please try again later.'
@@ -891,6 +925,102 @@ describe('service.ts', () => {
 
       expect(result).toEqual({ status: 'completed' })
     })
+
+    it('continues polling on transient network errors (Issue #261)', async () => {
+      let callCount = 0
+      const mockGetStatus = () => {
+        callCount++
+        if (callCount <= 2) {
+          return Promise.resolve({
+            status: 'network_error',
+            error: 'Status check failed'
+          })
+        }
+        return Promise.resolve({ status: 'completed' })
+      }
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 10, 10)
+
+      expect(result).toEqual({ status: 'completed' })
+      expect(callCount).toBe(3)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Status check network error (1/')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Status check network error (2/')
+      )
+    })
+
+    it('terminates after MAX_CONSECUTIVE_NETWORK_ERRORS consecutive failures (Issue #261)', async () => {
+      const mockGetStatus = () =>
+        Promise.resolve({
+          status: 'network_error',
+          error: 'Status check failed'
+        })
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 10, 10)
+
+      expect(result).toBeNull()
+      expect(core.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Status check failed after ${MAX_CONSECUTIVE_NETWORK_ERRORS} consecutive network errors`
+        )
+      )
+    })
+
+    it('resets network error counter on successful status response (Issue #261)', async () => {
+      let callCount = 0
+      const mockGetStatus = () => {
+        callCount++
+        // First 2 calls: network errors
+        if (callCount <= 2) {
+          return Promise.resolve({
+            status: 'network_error',
+            error: 'Status check failed'
+          })
+        }
+        // Third call: success (progress) - resets counter
+        if (callCount === 3) {
+          return Promise.resolve({ status: 'progress' })
+        }
+        // Fourth and fifth calls: network errors again
+        if (callCount <= 5) {
+          return Promise.resolve({
+            status: 'network_error',
+            error: 'Status check failed'
+          })
+        }
+        // Sixth call: completed
+        return Promise.resolve({ status: 'completed' })
+      }
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 10, 10)
+
+      expect(result).toEqual({ status: 'completed' })
+      expect(callCount).toBe(6)
+    })
+
+    it('network errors do not count against maxRetries differently than progress (Issue #261)', async () => {
+      let callCount = 0
+      const mockGetStatus = () => {
+        callCount++
+        if (callCount < 5) {
+          return Promise.resolve({
+            status: 'network_error',
+            error: 'Status check failed'
+          })
+        }
+        return Promise.resolve({ status: 'completed' })
+      }
+
+      // maxRetries=5 allows 5 attempts, network errors on first 4, success on 5th
+      // But consecutive network error limit (3) will trigger first
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 10)
+
+      expect(result).toBeNull()
+      // Should have stopped at 3 consecutive network errors
+      expect(callCount).toBe(MAX_CONSECUTIVE_NETWORK_ERRORS)
+    })
   })
   it('handles errors during status checks and continues polling', async () => {
     let callCount = 0
@@ -942,7 +1072,10 @@ describe('service.ts', () => {
         remediation_success: 5,
         remediation_failed: 3,
         pr_urls: ['https://github.com/org/repo/pull/1'],
-        pr_count: 1
+        pr_count: 1,
+        issue_urls: [],
+        issue_count: 0,
+        skipped_count: 0
       }
       axios.post.mockResolvedValue({ data: mockSummary })
 
@@ -1045,7 +1178,10 @@ describe('service.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: [],
+        issue_count: 0,
+        skipped_count: 0
       })
     })
 
@@ -1063,7 +1199,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: ['https://github.com/org/repo/pull/1'],
-          pr_count: 7
+          pr_count: 7,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
         const completeSummary = {
           ...incompleteSummary,
@@ -1102,7 +1241,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: ['https://github.com/org/repo/pull/1'],
-          pr_count: 7
+          pr_count: 7,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post.mockResolvedValue({ data: incompleteSummary })
@@ -1132,7 +1274,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: ['https://github.com/org/repo/pull/1'],
-          pr_count: 8
+          pr_count: 8,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post.mockResolvedValue({ data: completeSummary })
@@ -1162,7 +1307,10 @@ describe('service.ts', () => {
             'https://github.com/org/repo/pull/1',
             'https://github.com/org/repo/pull/2'
           ],
-          pr_count: 9 // More PRs than expected
+          pr_count: 9, // More PRs than expected
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post.mockResolvedValue({ data: completeSummary })
@@ -1186,7 +1334,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: [],
-          pr_count: 0
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post.mockResolvedValue({ data: summary })
@@ -1213,7 +1364,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: [],
-          pr_count: 8
+          pr_count: 8,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post
@@ -1264,7 +1418,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: [],
-          pr_count: 8
+          pr_count: 8,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post
@@ -1309,7 +1466,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: [],
-          pr_count: 5
+          pr_count: 5,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
         const apiError = new Error('Server Error')
         Object.assign(apiError, { isAxiosError: true })
@@ -1340,7 +1500,10 @@ describe('service.ts', () => {
           remediation_success: 8,
           remediation_failed: 0,
           pr_urls: [],
-          pr_count: 0
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 0
         }
 
         axios.post.mockResolvedValue({ data: summary })
@@ -1367,6 +1530,81 @@ describe('service.ts', () => {
       await expect(promise).resolves.toBeUndefined()
 
       jest.useRealTimers()
+    })
+  })
+
+  describe('fetchWithRetry', () => {
+    it('returns result on first successful call', async () => {
+      const fn = jest.fn<() => Promise<string>>().mockResolvedValue('success')
+      const result = await fetchWithRetry(fn, 2, 10)
+      expect(result).toBe('success')
+      expect(fn).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries on retriable axios errors and succeeds', async () => {
+      const networkError = new Error('ECONNRESET')
+      Object.assign(networkError, { isAxiosError: true })
+
+      const fn = jest
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(networkError)
+        .mockResolvedValue('recovered')
+
+      const result = await fetchWithRetry(fn, 2, 10)
+      expect(result).toBe('recovered')
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('retries on 5xx server errors', async () => {
+      const serverError = new Error('Bad Gateway')
+      Object.assign(serverError, {
+        isAxiosError: true,
+        response: { status: 502 }
+      })
+
+      const fn = jest
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(serverError)
+        .mockResolvedValue('recovered')
+
+      const result = await fetchWithRetry(fn, 2, 10)
+      expect(result).toBe('recovered')
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not retry on 4xx client errors', async () => {
+      const clientError = new Error('Unauthorized')
+      Object.assign(clientError, {
+        isAxiosError: true,
+        response: { status: 401 }
+      })
+
+      const fn = jest.fn<() => Promise<string>>().mockRejectedValue(clientError)
+
+      await expect(fetchWithRetry(fn, 2, 10)).rejects.toThrow('Unauthorized')
+      expect(fn).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not retry on non-axios errors', async () => {
+      const fn = jest
+        .fn<() => Promise<string>>()
+        .mockRejectedValue(new Error('Parse error'))
+
+      await expect(fetchWithRetry(fn, 2, 10)).rejects.toThrow('Parse error')
+      expect(fn).toHaveBeenCalledTimes(1)
+    })
+
+    it('throws after exhausting all retries', async () => {
+      const networkError = new Error('ETIMEDOUT')
+      Object.assign(networkError, { isAxiosError: true })
+
+      const fn = jest
+        .fn<() => Promise<string>>()
+        .mockRejectedValue(networkError)
+
+      await expect(fetchWithRetry(fn, 2, 10)).rejects.toThrow('ETIMEDOUT')
+      // 1 initial attempt + 2 retries = 3 total
+      expect(fn).toHaveBeenCalledTimes(3)
     })
   })
 })

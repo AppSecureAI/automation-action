@@ -95,7 +95,7 @@ describe('main.ts', () => {
 
       expect(pollStatusUntilComplete).toHaveBeenCalledWith(
         expect.any(Function),
-        50,
+        100,
         30000
       )
     })
@@ -149,10 +149,7 @@ describe('main.ts', () => {
 
       await run()
 
-      expect(core.error).toHaveBeenNthCalledWith(
-        1,
-        'Failed to submit analysis results for processing. Please try again later.'
-      )
+      expect(core.error).toHaveBeenNthCalledWith(1, 'Reject!')
       expect(core.setFailed).toHaveBeenCalledWith(expect.any(String))
     })
 
@@ -165,10 +162,7 @@ describe('main.ts', () => {
 
       expect(core.error).toHaveBeenCalledTimes(1)
 
-      // Check that the mock calls include the two expected messages
-      expect(core.error).toHaveBeenCalledWith(
-        'Failed to submit analysis results for processing. Please try again later.'
-      )
+      expect(core.error).toHaveBeenCalledWith('Error instance!')
     })
 
     it('should handle unknown error from submitRun and call core.error with "Unknown Error"', async () => {

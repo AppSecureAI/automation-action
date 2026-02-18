@@ -8,7 +8,10 @@ import {
   ProcessingModeExternal,
   TriageMethod,
   RemediateMethod,
-  ValidateMethod
+  ValidateMethod,
+  CommentModificationMode,
+  GroupingStrategy,
+  GroupingStage
 } from './types.js'
 
 /**
@@ -205,6 +208,116 @@ export function getDebug(): boolean {
   if (value !== 'true' && value !== 'false') {
     core.warning(
       `Invalid debug value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
+}
+
+export function getCreateIssuesForIncompleteRemediations(): boolean {
+  const value =
+    getInputValue(
+      'create-issues-for-incomplete-remediations',
+      'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
+      'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS'
+    ) || 'true'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid create-issues-for-incomplete-remediations value "${value}". Must be "true" or "false". Using default: true`
+    )
+    return true
+  }
+  return value === 'true'
+}
+
+export function getCommentModificationMode(): CommentModificationMode {
+  const mode =
+    getInputValue(
+      'comment-modification-mode',
+      'INPUT_COMMENT_MODIFICATION_MODE',
+      'COMMENT_MODIFICATION_MODE'
+    ) || CommentModificationMode.BASIC
+  if (!(Object.values(CommentModificationMode) as string[]).includes(mode)) {
+    const allowedModes = Object.values(CommentModificationMode).join(', ')
+    core.warning(
+      `Invalid comment-modification-mode "${mode}". Allowed values: ${allowedModes}. Using default: basic`
+    )
+    return CommentModificationMode.BASIC
+  }
+  return mode as CommentModificationMode
+}
+
+export function getGroupingEnabled(): boolean {
+  const value =
+    getInputValue(
+      'grouping-enabled',
+      'INPUT_GROUPING_ENABLED',
+      'GROUPING_ENABLED'
+    ) || 'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid grouping-enabled value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
+}
+
+export function getGroupingStrategy(): GroupingStrategy {
+  const strategy =
+    getInputValue(
+      'grouping-strategy',
+      'INPUT_GROUPING_STRATEGY',
+      'GROUPING_STRATEGY'
+    ) || GroupingStrategy.CWE_CATEGORY
+  if (!(Object.values(GroupingStrategy) as string[]).includes(strategy)) {
+    const allowedStrategies = Object.values(GroupingStrategy).join(', ')
+    core.warning(
+      `Invalid grouping-strategy "${strategy}". Allowed values: ${allowedStrategies}. Using default: cwe_category`
+    )
+    return GroupingStrategy.CWE_CATEGORY
+  }
+  return strategy as GroupingStrategy
+}
+
+export function getMaxVulnerabilitiesPerPr(): number {
+  const value =
+    getInputValue(
+      'max-vulnerabilities-per-pr',
+      'INPUT_MAX_VULNERABILITIES_PER_PR',
+      'MAX_VULNERABILITIES_PER_PR'
+    ) || '10'
+  const parsed = parseInt(value, 10)
+  if (isNaN(parsed) || parsed < 1) {
+    core.warning(
+      `Invalid max-vulnerabilities-per-pr value "${value}". Must be a positive integer. Using default: 10`
+    )
+    return 10
+  }
+  return parsed
+}
+
+export function getGroupingStage(): GroupingStage {
+  const stage =
+    getInputValue('grouping-stage', 'INPUT_GROUPING_STAGE', 'GROUPING_STAGE') ||
+    GroupingStage.PRE_PUSH
+  if (!(Object.values(GroupingStage) as string[]).includes(stage)) {
+    const allowedStages = Object.values(GroupingStage).join(', ')
+    core.warning(
+      `Invalid grouping-stage "${stage}". Allowed values: ${allowedStages}. Using default: pre_push`
+    )
+    return GroupingStage.PRE_PUSH
+  }
+  return stage as GroupingStage
+}
+
+export function getUpdateContext(): boolean {
+  const value =
+    getInputValue('update-context', 'INPUT_UPDATE_CONTEXT', 'UPDATE_CONTEXT') ||
+    'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid update-context value "${value}". Must be "true" or "false". Using default: false`
     )
     return false
   }
