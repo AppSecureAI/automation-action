@@ -13,7 +13,8 @@ import {
 import {
   LogLabels,
   getMarkdownBranding,
-  getConsoleBranding
+  getConsoleBranding,
+  TroubleshootingGuidance
 } from './constants.js'
 import { parsePrUrl } from './titles.js'
 import type { GroupingConfig } from './types.js'
@@ -65,20 +66,69 @@ export function getDashboardUrl(apiUrl: string): string {
 }
 
 /**
- * Logs steps with appropriate logging level based on status
+ * Get troubleshooting guidance based on the step name
+ * @param stepName The name of the failed step
+ * @returns Array of troubleshooting suggestions
+ */
+function getTroubleshootingGuidance(stepName: string): readonly string[] {
+  const normalizedName = stepName.toLowerCase()
+
+  if (normalizedName.includes('sarif') || normalizedName.includes('upload sarif')) {
+    return TroubleshootingGuidance.SARIF_UPLOAD
+  }
+  if (normalizedName.includes('source code') || normalizedName.includes('upload code')) {
+    return TroubleshootingGuidance.CODE_UPLOAD
+  }
+  if (normalizedName.includes('auth') || normalizedName.includes('token') || normalizedName.includes('installation')) {
+    return TroubleshootingGuidance.AUTHENTICATION
+  }
+
+  return TroubleshootingGuidance.GENERIC
+}
+
+/**
+ * Check if a detail string is empty or contains no useful information
+ * @param detail The detail string to check
+ * @returns true if the detail is effectively empty
+ */
+function isEmptyDetail(detail: string | undefined | null): boolean {
+  if (!detail) return true
+  const trimmed = detail.trim()
+  return trimmed === '' || trimmed === '[]' || trimmed === 'null' || trimmed === 'undefined'
+}
+
+/**
+ * Logs steps with appropriate logging level based on status.
+ * For failed steps with empty details, provides actionable troubleshooting guidance.
  * @param steps Array of steps to log
  * @param apiContext Optional string to indicate which API call these steps are related to
  */
 export function logSteps(
   steps: Array<{ name: string; status: string; detail: string }>,
   apiContext?: string
-) {
+): void {
   steps.forEach((step) => {
-    const logFunction = step.status === 'completed' ? core.info : core.error
+    const isFailed = step.status !== 'completed'
+    const logFunction = isFailed ? core.error : core.info
     const prefix = apiContext ? `[${apiContext}] ` : ''
+
     logFunction(`${prefix}------ ${step.name} ------`)
     logFunction(`${prefix}status: [${step.status}]`)
-    logFunction(`${prefix}detail: [${step.detail}]`)
+
+    // Provide helpful guidance when detail is empty on a failed step
+    if (isFailed && isEmptyDetail(step.detail)) {
+      logFunction(`${prefix}detail: [No details provided by server]`)
+      logFunction(`${prefix}`)
+      logFunction(`${prefix}Troubleshooting steps:`)
+
+      const guidance = getTroubleshootingGuidance(step.name)
+      guidance.forEach((tip, index) => {
+        logFunction(`${prefix}  ${index + 1}. ${tip}`)
+      })
+    } else {
+      logFunction(`${prefix}detail: [${step.detail}]`)
+    }
+
     logFunction(`${prefix}------ ------`)
   })
 }

@@ -24,6 +24,36 @@ export const APPSECAI_WEBSITE_URL = 'https://www.appsecai.io/'
 export const BILLING_URL = 'https://app.appsecai.net/settings/billing'
 export const SUPPORT_EMAIL = 'support@appsecai.io'
 export const STATUS_PAGE_URL = 'https://status.appsecai.net'
+export const DOCS_URL = 'https://docs.appsecai.io'
+
+/**
+ * Troubleshooting guidance for common error scenarios
+ */
+export const TroubleshootingGuidance = {
+  SARIF_UPLOAD: [
+    'Verify your SARIF file is valid JSON and follows the SARIF 2.1.0 schema',
+    'Ensure the file size is under 50MB',
+    'Check that your organization has an active AppSecAI subscription',
+    `Check service status at ${STATUS_PAGE_URL}`,
+    `Contact support at ${SUPPORT_EMAIL} if the issue persists`
+  ],
+  CODE_UPLOAD: [
+    'Verify the repository is accessible with the provided credentials',
+    'Check that the branch exists and is not protected',
+    'Ensure the repository is not empty',
+    `Check service status at ${STATUS_PAGE_URL}`
+  ],
+  AUTHENTICATION: [
+    'Verify your GitHub App installation is active',
+    'Check that the repository has the AppSecAI GitHub App installed',
+    'Ensure your API credentials are valid and not expired'
+  ],
+  GENERIC: [
+    `Check service status at ${STATUS_PAGE_URL}`,
+    'Wait a few minutes and retry your request',
+    `Contact support at ${SUPPORT_EMAIL} if the issue persists`
+  ]
+} as const
 
 /**
  * Polling configuration for status checks

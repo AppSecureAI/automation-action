@@ -397,7 +397,11 @@ export async function submitRun(
       } as SubmitRunOutput
     })
     .catch((error) => {
-      let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. Please try again later.`
+      // Default message with actionable guidance
+      let errorMessage =
+        `${prefixLabel} Call failed: An unexpected error occurred. ` +
+        `Check ${STATUS_PAGE_URL} for service status. ` +
+        `If the issue persists, contact ${SUPPORT_EMAIL}.`
 
       // Try to parse as structured API error for better messaging
       const parsedError = parseApiError(error)
@@ -430,9 +434,22 @@ export async function submitRun(
               // Structured detail with code and description (new format)
               const structuredDetail = apiDetail as StructuredErrorDetail
               const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN
-              const description =
-                structuredDetail.description ??
-                'An error occurred. Please try again.'
+              const httpStatus = error.response?.status
+
+              // Provide actionable guidance when error details are missing
+              let description = structuredDetail.description
+              if (!description || description.trim() === '') {
+                if (code === PlanErrorCode.UNKNOWN) {
+                  // Build helpful message with HTTP status context
+                  const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
+                  description =
+                    `Request failed${statusInfo}. ` +
+                    `Check ${STATUS_PAGE_URL} for service status. ` +
+                    `If the issue persists, contact ${SUPPORT_EMAIL}.`
+                } else {
+                  description = 'An error occurred. Please try again.'
+                }
+              }
 
               // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
               errorMessage = `${prefixLabel} [${code}] ${description}`
@@ -465,15 +482,24 @@ export async function submitRun(
               }
             }
           } else {
-            errorMessage = `${prefixLabel} Call failed: ${error.message}`
+            // No response data - include status code if available
+            const httpStatus = error.response?.status
+            const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
+            errorMessage =
+              `${prefixLabel} Call failed${statusInfo}: ${error.message}. ` +
+              `Check ${STATUS_PAGE_URL} for service status.`
           }
         }
       } else if (axios.isAxiosError(error)) {
         // Non-parsed axios error (e.g., timeout without response)
         if (error.code === 'ECONNABORTED') {
-          errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
+          errorMessage =
+            `${prefixLabel} Call failed: Request timed out. ` +
+            `The server may be under heavy load. Please try again in a few minutes.`
         } else {
-          errorMessage = `${prefixLabel} Call failed: ${error.message}`
+          errorMessage =
+            `${prefixLabel} Call failed: ${error.message}. ` +
+            `Check ${STATUS_PAGE_URL} for service status.`
         }
       } else {
         core.debug(`Original error: ${error.toString()}`)
