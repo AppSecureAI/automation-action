@@ -20,6 +20,67 @@ inputs:
     required: false
     default: 'false'
 
+  regression-evidence-base-ref:
+    description: Base git ref for regression evidence diff calculation
+    required: false
+    default: ''
+
+  regression-evidence-base-sha:
+    description: Base git SHA for regression evidence diff calculation
+    required: false
+    default: ''
+
+  regression-evidence-head-ref:
+    description: Head git ref for regression evidence diff calculation
+    required: false
+    default: ''
+
+  regression-evidence-head-sha:
+    description: Head git SHA for regression evidence diff calculation
+    required: false
+    default: ''
+
+  regression-evidence-coverage-artifacts:
+    description:
+      Comma/newline separated coverage mapping artifact paths used for
+      line-to-test matching
+    required: false
+    default: ''
+
+  regression-evidence-test-commands:
+    description:
+      Newline-separated test commands to execute for impacted test validation
+      (supports {{tests}} template)
+    required: false
+    default: ''
+
+  regression-evidence-output-json-path:
+    description: Output path for generated regression evidence JSON
+    required: false
+    default: regression-evidence.json
+
+  regression-evidence-output-markdown-path:
+    description: Output path for generated regression evidence markdown summary
+    required: false
+    default: regression-evidence.md
+
+  regression-evidence-allow-partial:
+    description: Allow partial status when some changed lines are uncovered
+    required: false
+    default: 'true'
+
+  regression-evidence-fail-on-at-risk:
+    description: Fail the action when computed status is at_risk
+    required: false
+    default: 'false'
+
+  regression-evidence-publish-comment:
+    description:
+      Publish or update a single marker-based PR comment with regression
+      evidence summary
+    required: false
+    default: 'false'
+
 # Define your outputs here.
 outputs:
   message:
@@ -28,10 +89,24 @@ outputs:
   context-updated:
     description: Whether context was updated (true/false/rate-limited)
     value: ${{ steps.run-action.outputs.context-updated }}
+  regression-evidence-status:
+    description: Regression evidence status (verified|partial|at_risk)
+    value: ${{ steps.run-action.outputs.regression-evidence-status }}
+  regression-evidence-json-path:
+    description: Path to generated regression evidence JSON artifact
+    value: ${{ steps.run-action.outputs.regression-evidence-json-path }}
+  regression-evidence-markdown-path:
+    description: Path to generated regression evidence markdown artifact
+    value: ${{ steps.run-action.outputs.regression-evidence-markdown-path }}
 
 runs:
   using: composite
   steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22.14.0'
+
     - name: Run submit action
       id: run-action
       shell: bash
@@ -40,7 +115,14 @@ runs:
         INPUT_FILE: ${{ inputs.file }}
         INPUT_API_URL: https://gh.cloud.appsecai.io
         # Configuration from workflow environment variables (with defaults)
-        INPUT_PROCESSING_MODE: ${{ env.PROCESSING_MODE || 'individual' }}
+        # Canonical modes: individual_cc (default), group_cc, individual, regression_evidence
+        # Legacy aliases (deprecated, emit warning): group_only, group_with_remediation,
+        #   group_with_validation_consistency -> group_cc;
+        #   individual_without_push -> individual
+        # Push control: use AUTO_CREATE_PRS=false to suppress PR creation (all modes)
+        # Unsupported fields (ignored, emit warning): GROUPING_ENABLED, GROUPING_STRATEGY,
+        #   GROUPING_STAGE, UPDATE_CONTEXT
+        INPUT_PROCESSING_MODE: ${{ env.PROCESSING_MODE || 'individual_cc' }}
         INPUT_USE_TRIAGE_CC: ${{ env.USE_TRIAGE_CC || 'true' }}
         INPUT_TRIAGE_METHOD: ${{ env.TRIAGE_METHOD || 'ml_based' }}
         INPUT_USE_REMEDIATE_CC: ${{ env.USE_REMEDIATE_CC || 'false' }}
@@ -48,16 +130,51 @@ runs:
         INPUT_USE_VALIDATE_CC: ${{ env.USE_VALIDATE_CC || 'false' }}
         INPUT_VALIDATE_METHOD: ${{ env.VALIDATE_METHOD || 'baseline' }}
         INPUT_USE_REMEDIATE_LOOP_CC: ${{ env.USE_REMEDIATE_LOOP_CC || 'true' }}
-        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'true' }}
+        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'false' }}
         INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS:
-          ${{ env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS || 'true' }}
+          ${{ env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS || 'false' }}
         INPUT_COMMENT_MODIFICATION_MODE:
           ${{ env.COMMENT_MODIFICATION_MODE || 'basic' }}
+        INPUT_REGRESSION_EVIDENCE_PUBLISH_COMMENT:
+          ${{ inputs.regression-evidence-publish-comment ||
+          env.REGRESSION_EVIDENCE_PUBLISH_COMMENT || 'false' }}
         INPUT_GROUPING_ENABLED: ${{ env.GROUPING_ENABLED || 'false' }}
         INPUT_GROUPING_STRATEGY: ${{ env.GROUPING_STRATEGY || 'cwe_category' }}
         INPUT_MAX_VULNERABILITIES_PER_PR:
-          ${{ env.MAX_VULNERABILITIES_PER_PR || '10' }}
+          ${{ env.MAX_VULNERABILITIES_PER_PR || '' }}
         INPUT_GROUPING_STAGE: ${{ env.GROUPING_STAGE || 'pre_push' }}
         INPUT_UPDATE_CONTEXT:
           ${{ inputs.update-context || env.UPDATE_CONTEXT || 'false' }}
+        INPUT_REGRESSION_EVIDENCE_BASE_REF:
+          ${{ inputs.regression-evidence-base-ref ||
+          env.REGRESSION_EVIDENCE_BASE_REF || '' }}
+        INPUT_REGRESSION_EVIDENCE_BASE_SHA:
+          ${{ inputs.regression-evidence-base-sha ||
+          env.REGRESSION_EVIDENCE_BASE_SHA || '' }}
+        INPUT_REGRESSION_EVIDENCE_HEAD_REF:
+          ${{ inputs.regression-evidence-head-ref ||
+          env.REGRESSION_EVIDENCE_HEAD_REF || '' }}
+        INPUT_REGRESSION_EVIDENCE_HEAD_SHA:
+          ${{ inputs.regression-evidence-head-sha ||
+          env.REGRESSION_EVIDENCE_HEAD_SHA || '' }}
+        INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS:
+          ${{ inputs.regression-evidence-coverage-artifacts ||
+          env.REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS || '' }}
+        INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS:
+          ${{ inputs.regression-evidence-test-commands ||
+          env.REGRESSION_EVIDENCE_TEST_COMMANDS || '' }}
+        INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH:
+          ${{ inputs.regression-evidence-output-json-path ||
+          env.REGRESSION_EVIDENCE_OUTPUT_JSON_PATH || 'regression-evidence.json'
+          }}
+        INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH:
+          ${{ inputs.regression-evidence-output-markdown-path ||
+          env.REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH ||
+          'regression-evidence.md' }}
+        INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL:
+          ${{ inputs.regression-evidence-allow-partial ||
+          env.REGRESSION_EVIDENCE_ALLOW_PARTIAL || 'true' }}
+        INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK:
+          ${{ inputs.regression-evidence-fail-on-at-risk ||
+          env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK || 'false' }}
       run: node ${{ github.action_path }}/dist/index.js

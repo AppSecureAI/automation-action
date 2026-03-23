@@ -17,20 +17,12 @@ import { getIdToken } from './github.js'
 import {
   getApiUrl,
   getMode,
-  getUseTriageCc,
-  getTriageMethod,
-  getUseRemediateCc,
-  getRemediateMethod,
-  getUseValidateCc,
-  getValidateMethod,
-  getUseRemediateLoopCc,
   getAutoCreatePrs,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
-  getGroupingEnabled,
-  getGroupingStrategy,
   getMaxVulnerabilitiesPerPr,
-  getGroupingStage,
+  isMaxVulnerabilitiesPerPrConfigured,
+  getGroupingEnabled,
   getUpdateContext
 } from './input.js'
 import {
@@ -320,15 +312,6 @@ export async function submitRun(
   formData.append('file', new Blob([file]), fileName)
   formData.append('processing_mode', mode)
 
-  // Add AI solver variant parameters
-  formData.append('use_triage_cc', String(getUseTriageCc()))
-  formData.append('triage_method', getTriageMethod())
-  formData.append('use_remediate_cc', String(getUseRemediateCc()))
-  formData.append('remediate_method', getRemediateMethod())
-  formData.append('use_validate_cc', String(getUseValidateCc()))
-  formData.append('validate_method', getValidateMethod())
-  formData.append('use_remediate_loop_cc', String(getUseRemediateLoopCc()))
-
   // Add PR creation flag
   formData.append('auto_create_prs', String(getAutoCreatePrs()))
 
@@ -341,23 +324,28 @@ export async function submitRun(
   // Add comment modification mode
   formData.append('comment_modification_mode', getCommentModificationMode())
 
-  // Add grouping configuration parameters
-  const groupingEnabled = getGroupingEnabled()
-  formData.append('grouping_enabled', String(groupingEnabled))
-  if (groupingEnabled) {
-    formData.append('grouping_strategy', getGroupingStrategy())
+  // max_vulnerabilities_per_pr is supported by Hydra and is forwarded when configured.
+  if (isMaxVulnerabilitiesPerPrConfigured()) {
     formData.append(
       'max_vulnerabilities_per_pr',
       String(getMaxVulnerabilitiesPerPr())
     )
-    formData.append('grouping_stage', getGroupingStage())
   }
 
-  // Add update-context flag to trigger fresh security context extraction
-  const updateContext = getUpdateContext()
-  formData.append('update_context', String(updateContext))
-  if (updateContext) {
-    core.info('Security context update requested')
+  // Grouping fields (grouping_enabled, grouping_strategy, grouping_stage)
+  // are not sent: Hydra currently classifies them as unsupported submit fields
+  // for this channel.
+  if (getGroupingEnabled()) {
+    core.warning(
+      'grouping-enabled is set but grouping fields are not supported in the current submit contract and will be ignored.'
+    )
+  }
+
+  // update_context is not sent: unsupported by Hydra for this submit channel.
+  if (getUpdateContext()) {
+    core.warning(
+      'update-context is set but is not supported in the current submit contract and will be ignored.'
+    )
   }
 
   core.debug('Calling submit API: POST /api-product/submit')
@@ -397,7 +385,11 @@ export async function submitRun(
       } as SubmitRunOutput
     })
     .catch((error) => {
-      let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. Please try again later.`
+      // Default message with actionable guidance
+      let errorMessage =
+        `${prefixLabel} Call failed: An unexpected error occurred. ` +
+        `Check ${STATUS_PAGE_URL} for service status. ` +
+        `If the issue persists, contact ${SUPPORT_EMAIL}.`
 
       // Try to parse as structured API error for better messaging
       const parsedError = parseApiError(error)
@@ -430,9 +422,22 @@ export async function submitRun(
               // Structured detail with code and description (new format)
               const structuredDetail = apiDetail as StructuredErrorDetail
               const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN
-              const description =
-                structuredDetail.description ??
-                'An error occurred. Please try again.'
+              const httpStatus = error.response?.status
+
+              // Provide actionable guidance when error details are missing
+              let description = structuredDetail.description
+              if (!description || description.trim() === '') {
+                if (code === PlanErrorCode.UNKNOWN) {
+                  // Build helpful message with HTTP status context
+                  const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
+                  description =
+                    `Request failed${statusInfo}. ` +
+                    `Check ${STATUS_PAGE_URL} for service status. ` +
+                    `If the issue persists, contact ${SUPPORT_EMAIL}.`
+                } else {
+                  description = 'An error occurred. Please try again.'
+                }
+              }
 
               // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
               errorMessage = `${prefixLabel} [${code}] ${description}`
@@ -465,15 +470,24 @@ export async function submitRun(
               }
             }
           } else {
-            errorMessage = `${prefixLabel} Call failed: ${error.message}`
+            // No response data - include status code if available
+            const httpStatus = error.response?.status
+            const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
+            errorMessage =
+              `${prefixLabel} Call failed${statusInfo}: ${error.message}. ` +
+              `Check ${STATUS_PAGE_URL} for service status.`
           }
         }
       } else if (axios.isAxiosError(error)) {
         // Non-parsed axios error (e.g., timeout without response)
         if (error.code === 'ECONNABORTED') {
-          errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
+          errorMessage =
+            `${prefixLabel} Call failed: Request timed out. ` +
+            `The server may be under heavy load. Please try again in a few minutes.`
         } else {
-          errorMessage = `${prefixLabel} Call failed: ${error.message}`
+          errorMessage =
+            `${prefixLabel} Call failed: ${error.message}. ` +
+            `Check ${STATUS_PAGE_URL} for service status.`
         }
       } else {
         core.debug(`Original error: ${error.toString()}`)
@@ -534,7 +548,22 @@ export async function getStatus(id: string) {
       }
 
       if (runStatus === 'completed') {
-        core.info(`${prefixLabel}: Run completed successfully`)
+        const handledErrors =
+          summary?.handled_error_count ??
+          processTracking?.triage_status?.handled_error_count ??
+          0
+        const manualReviewCount =
+          summary?.needs_manual_review_count ??
+          processTracking?.triage_status?.needs_manual_review_count ??
+          0
+
+        if (handledErrors > 0 || manualReviewCount > 0) {
+          core.warning(
+            `${prefixLabel}: Run completed with handled triage errors (${handledErrors}) and manual review required (${manualReviewCount}).`
+          )
+        } else {
+          core.info(`${prefixLabel}: Run completed successfully`)
+        }
         return { status: 'completed', processTracking, summary }
       }
 
@@ -574,6 +603,11 @@ export async function getStatus(id: string) {
               if (value?.extras?.false_positives) {
                 core.info(
                   `${prefixLabel}: False positives found: ${value?.extras?.false_positives}`
+                )
+              }
+              if (value?.extras?.needs_manual_review) {
+                core.warning(
+                  `${prefixLabel}: Manual review required: ${value?.extras?.needs_manual_review} vulnerabilities`
                 )
               }
             }
@@ -620,6 +654,15 @@ export async function getStatus(id: string) {
             processTracking.find_status.error_message ||
             'Vulnerability import failed'
           core.error(`${prefixLabel}: Find stage failed - ${errorMsg}`)
+          return { status: 'failed', error: errorMsg, processTracking, summary }
+        }
+
+        // Check reconcile stage failure
+        if (processTracking.reconcile_status?.status === 'failed') {
+          const errorMsg =
+            processTracking.reconcile_status.error_message ||
+            'Finding reconciliation failed'
+          core.error(`${prefixLabel}: Reconcile stage failed - ${errorMsg}`)
           return { status: 'failed', error: errorMsg, processTracking, summary }
         }
 

@@ -15,6 +15,12 @@ import {
   finalizeRun
 } from '../__fixtures__/service'
 import store from '../src/store'
+import {
+  generateRegressionEvidence,
+  parseRegressionEvidenceArtifactListInput,
+  parseRegressionEvidenceTestCommandsInput,
+  publishRegressionEvidenceCommentFromContext
+} from '../__fixtures__/regression-evidence'
 
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
@@ -28,6 +34,17 @@ jest.unstable_mockModule('../src/service', () => ({
   pollStatusUntilComplete,
   finalizeRun
 }))
+jest.unstable_mockModule('../src/regression-evidence', () => ({
+  generateRegressionEvidence,
+  parseRegressionEvidenceArtifactListInput,
+  parseRegressionEvidenceTestCommandsInput,
+  publishRegressionEvidenceCommentFromContext,
+  RegressionEvidenceStatus: {
+    VERIFIED: 'verified',
+    PARTIAL: 'partial',
+    AT_RISK: 'at_risk'
+  }
+}))
 
 // The module being tested should be imported dynamically. This ensures that the
 // mocks are used in place of any actual dependencies.
@@ -35,6 +52,7 @@ const { run } = await import('../src/main')
 
 describe('main.ts', () => {
   beforeEach(() => {
+    delete process.env.PROCESSING_MODE
     // Set the action's inputs as return values from core.getInput().
     core.getInput.mockImplementation(() => 'some_file.json')
     readFile.mockImplementation((filePath: string) => {
@@ -59,6 +77,17 @@ describe('main.ts', () => {
       Promise.resolve({ status: 'completed' })
     )
     finalizeRun.mockImplementation(() => Promise.resolve(null))
+    generateRegressionEvidence.mockResolvedValue({
+      artifact: {
+        status: 'verified'
+      },
+      markdown: '## Regression Evidence\\n- final status: **verified**',
+      jsonPath: '/tmp/regression-evidence.json',
+      markdownPath: '/tmp/regression-evidence.md'
+    })
+    parseRegressionEvidenceArtifactListInput.mockReturnValue([])
+    parseRegressionEvidenceTestCommandsInput.mockReturnValue([])
+    publishRegressionEvidenceCommentFromContext.mockResolvedValue('skipped')
     // Reset store state
     store.id = ''
   })
@@ -98,6 +127,33 @@ describe('main.ts', () => {
         100,
         30000
       )
+    })
+  })
+
+  describe('regression evidence mode', () => {
+    it('should generate regression evidence and set mode outputs', async () => {
+      process.env.PROCESSING_MODE = 'regression_evidence'
+
+      await run()
+
+      expect(generateRegressionEvidence).toHaveBeenCalled()
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'regression-evidence-status',
+        'verified'
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'regression-evidence-json-path',
+        '/tmp/regression-evidence.json'
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'regression-evidence-markdown-path',
+        '/tmp/regression-evidence.md'
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'message',
+        'Regression evidence generated successfully.'
+      )
+      expect(submitRun).not.toHaveBeenCalled()
     })
   })
 

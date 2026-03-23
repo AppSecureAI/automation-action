@@ -21,11 +21,9 @@ export type SubmitRunOutput = {
 
 export const ProcessingModeExternal = {
   INDIVIDUAL: 'individual',
-  GROUP_ONLY: 'group_only',
-  GROUP_WITH_REMEDIATION: 'group_with_remediation',
-  GROUP_WITH_VALIDATION_CONSISTENCY: 'group_with_validation_consistency',
-  PUSH: 'push',
-  INDIVIDUAL_WITHOUT_PUSH: 'individual_without_push'
+  INDIVIDUAL_CC: 'individual_cc',
+  GROUP_CC: 'group_cc',
+  REGRESSION_EVIDENCE: 'regression_evidence'
 } as const
 
 export type ProcessingModeExternal =
@@ -58,11 +56,20 @@ export type ValidateMethod =
 
 export const CommentModificationMode = {
   BASIC: 'basic',
+  STRICT: 'strict',
   VERBOSE: 'verbose'
 } as const
 
 export type CommentModificationMode =
   (typeof CommentModificationMode)[keyof typeof CommentModificationMode]
+
+export const RegressionEvidenceOutputMode = {
+  CONCISE: 'concise',
+  EXPANDED: 'expanded'
+} as const
+
+export type RegressionEvidenceOutputMode =
+  (typeof RegressionEvidenceOutputMode)[keyof typeof RegressionEvidenceOutputMode]
 
 /**
  * Valid grouping strategy values for vulnerability grouping.
@@ -260,6 +267,10 @@ export interface ProcessStatus {
   error_count: number
   /** Items triaged as false positives (triage only). Defaults to 0. */
   false_positive_count: number
+  /** Items routed to manual review because automated triage was inconclusive. Defaults to 0. */
+  needs_manual_review_count?: number
+  /** Handled triage errors that were safely routed to manual review. Defaults to 0. */
+  handled_error_count?: number
   /** Issues created with validation warnings (security passed, other checks failed). Defaults to 0. */
   self_validation_warning_count: number
   /** Skipped vulnerabilities (security not resolved). Defaults to 0. */
@@ -275,6 +286,8 @@ export interface ProcessStatus {
 export interface RunProcessTracking {
   /** Find/import process status */
   find_status?: ProcessStatus
+  /** Reconcile process status */
+  reconcile_status?: ProcessStatus
   /** Triage process status */
   triage_status?: ProcessStatus
   /** Remediation process status */
@@ -306,6 +319,12 @@ export interface RunSummary {
   true_positives: number
   /** Number of false positive vulnerabilities filtered out */
   false_positives: number
+  /** Number of vulnerabilities routed to manual review because automated triage was inconclusive */
+  needs_manual_review_count?: number
+  /** Number of handled processing errors (for example, parser failures routed to manual review) */
+  handled_error_count?: number
+  /** True when at least one handled error occurred during the run */
+  has_handled_errors?: boolean
   /** Breakdown of vulnerabilities by CWE type (CWE ID -> count) */
   cwe_breakdown: Record<string, number>
   /** Breakdown of vulnerabilities by severity level (severity -> count) */

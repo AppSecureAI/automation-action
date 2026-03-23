@@ -45,6 +45,9 @@ export const RunSummarySchema = z.object({
   total_vulnerabilities: z.number().default(0),
   true_positives: z.number().default(0),
   false_positives: z.number().default(0),
+  needs_manual_review_count: z.number().default(0),
+  handled_error_count: z.number().default(0),
+  has_handled_errors: z.boolean().default(false),
   cwe_breakdown: z.record(z.number()).default({}),
   severity_breakdown: z.record(z.number()).default({}),
   remediation_success: z.number().default(0),
@@ -121,6 +124,8 @@ export const ProcessStatusSchema = z.object({
   success_count: z.number().default(0), // Successfully processed items (includes warnings)
   error_count: z.number().default(0), // Actual processing exceptions
   false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
+  needs_manual_review_count: z.number().default(0), // Items routed to manual review (triage only)
+  handled_error_count: z.number().default(0), // Handled errors routed to manual review (triage only)
   self_validation_warning_count: z.number().default(0), // Issues created (validation warnings - security passed, other checks failed)
   self_validation_failure_count: z.number().default(0), // Skipped (security not resolved)
   additional_context_required_count: z.number().default(0) // PRs with 'Additional Context Required' prefix
@@ -128,6 +133,7 @@ export const ProcessStatusSchema = z.object({
 
 export const RunProcessTrackingSchema = z.object({
   find_status: ProcessStatusSchema.optional(),
+  reconcile_status: ProcessStatusSchema.optional(),
   triage_status: ProcessStatusSchema.optional(),
   remediate_status: ProcessStatusSchema.optional(),
   validate_status: ProcessStatusSchema.optional(),

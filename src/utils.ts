@@ -13,7 +13,8 @@ import {
 import {
   LogLabels,
   getMarkdownBranding,
-  getConsoleBranding
+  getConsoleBranding,
+  TroubleshootingGuidance
 } from './constants.js'
 import { parsePrUrl } from './titles.js'
 import type { GroupingConfig } from './types.js'
@@ -23,6 +24,7 @@ import type { GroupingConfig } from './types.js'
  */
 export const STAGE_DISPLAY_NAMES: Record<string, string> = {
   find: 'Vulnerability Import',
+  reconcile: 'Reconcile Findings',
   triage: 'Triage Analysis',
   remediation_loop: 'Remediation',
   remediation_validation_loop: 'Remediation',
@@ -34,6 +36,21 @@ export const STAGE_DISPLAY_NAMES: Record<string, string> = {
  */
 export function getDisplayName(internalName: string): string {
   return STAGE_DISPLAY_NAMES[internalName] || internalName
+}
+
+function getTriageBreakdown(status: ProcessStatus): {
+  confirmed: number
+  falsePositives: number
+  manualReviewRequired: number
+} {
+  const falsePositives = status.false_positive_count || 0
+  const manualReviewRequired = status.needs_manual_review_count || 0
+  const confirmed = Math.max(
+    0,
+    (status.success_count || 0) - falsePositives - manualReviewRequired
+  )
+
+  return { confirmed, falsePositives, manualReviewRequired }
 }
 
 /**
@@ -65,20 +82,84 @@ export function getDashboardUrl(apiUrl: string): string {
 }
 
 /**
- * Logs steps with appropriate logging level based on status
+ * Get troubleshooting guidance based on the step name
+ * @param stepName The name of the failed step
+ * @returns Array of troubleshooting suggestions
+ */
+function getTroubleshootingGuidance(stepName: string): readonly string[] {
+  const normalizedName = stepName.toLowerCase()
+
+  if (
+    normalizedName.includes('sarif') ||
+    normalizedName.includes('upload sarif')
+  ) {
+    return TroubleshootingGuidance.SARIF_UPLOAD
+  }
+  if (
+    normalizedName.includes('source code') ||
+    normalizedName.includes('upload code')
+  ) {
+    return TroubleshootingGuidance.CODE_UPLOAD
+  }
+  if (
+    normalizedName.includes('auth') ||
+    normalizedName.includes('token') ||
+    normalizedName.includes('installation')
+  ) {
+    return TroubleshootingGuidance.AUTHENTICATION
+  }
+
+  return TroubleshootingGuidance.GENERIC
+}
+
+/**
+ * Check if a detail string is empty or contains no useful information
+ * @param detail The detail string to check
+ * @returns true if the detail is effectively empty
+ */
+function isEmptyDetail(detail: string | undefined | null): boolean {
+  if (!detail) return true
+  const trimmed = detail.trim()
+  return (
+    trimmed === '' ||
+    trimmed === '[]' ||
+    trimmed === 'null' ||
+    trimmed === 'undefined'
+  )
+}
+
+/**
+ * Logs steps with appropriate logging level based on status.
+ * For failed steps with empty details, provides actionable troubleshooting guidance.
  * @param steps Array of steps to log
  * @param apiContext Optional string to indicate which API call these steps are related to
  */
 export function logSteps(
   steps: Array<{ name: string; status: string; detail: string }>,
   apiContext?: string
-) {
+): void {
   steps.forEach((step) => {
-    const logFunction = step.status === 'completed' ? core.info : core.error
+    const isFailed = step.status !== 'completed'
+    const logFunction = isFailed ? core.error : core.info
     const prefix = apiContext ? `[${apiContext}] ` : ''
+
     logFunction(`${prefix}------ ${step.name} ------`)
     logFunction(`${prefix}status: [${step.status}]`)
-    logFunction(`${prefix}detail: [${step.detail}]`)
+
+    // Provide helpful guidance when detail is empty on a failed step
+    if (isFailed && isEmptyDetail(step.detail)) {
+      logFunction(`${prefix}detail: [No details provided by server]`)
+      logFunction(`${prefix}`)
+      logFunction(`${prefix}Troubleshooting steps:`)
+
+      const guidance = getTroubleshootingGuidance(step.name)
+      guidance.forEach((tip, index) => {
+        logFunction(`${prefix}  ${index + 1}. ${tip}`)
+      })
+    } else {
+      logFunction(`${prefix}detail: [${step.detail}]`)
+    }
+
     logFunction(`${prefix}------ ------`)
   })
 }
@@ -109,13 +190,20 @@ export function formatStageStatus(
     const details: string[] = []
     // For triage/Analysis, show confirmed vulnerabilities and false positives
     if (name === 'triage') {
-      const truePositives =
-        status.success_count - (status.false_positive_count || 0)
-      if (truePositives > 0) {
-        details.push(`${truePositives} confirmed vulnerabilities`)
+      const triageBreakdown = getTriageBreakdown(status)
+      if (triageBreakdown.confirmed > 0) {
+        details.push(`${triageBreakdown.confirmed} confirmed vulnerabilities`)
       }
-      if (status.false_positive_count > 0) {
-        details.push(`${status.false_positive_count} false positives`)
+      if (triageBreakdown.falsePositives > 0) {
+        details.push(`${triageBreakdown.falsePositives} false positives`)
+      }
+      if (triageBreakdown.manualReviewRequired > 0) {
+        details.push(
+          `${triageBreakdown.manualReviewRequired} require manual review`
+        )
+      }
+      if ((status.handled_error_count || 0) > 0) {
+        details.push(`${status.handled_error_count} handled errors`)
       }
     } else if (name === 'push') {
       // For push, show PRs created
@@ -126,6 +214,13 @@ export function formatStageStatus(
       // For find/scan, show vulnerabilities found
       if (status.success_count > 0) {
         details.push(`${status.success_count} vulnerabilities found`)
+      }
+    } else if (name === 'reconcile') {
+      // For reconcile, show how many findings were validated
+      if (status.total_items > 0) {
+        details.push(
+          `${status.success_count}/${status.total_items} findings validated`
+        )
       }
     } else if (
       name === 'remediation_loop' ||
@@ -170,9 +265,17 @@ export function formatStageStatus(
     const pct = status.progress_percentage.toFixed(0)
     // For triage/Analysis, show confirmed vulnerabilities found so far
     if (name === 'triage') {
-      const falsePos = status.false_positive_count || 0
-      const truePos = (status.success_count || 0) - falsePos
-      return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} (${pct}%) - ${truePos} confirmed, ${falsePos} false positives`
+      const triageBreakdown = getTriageBreakdown(status)
+      const triageDetails = [
+        `${triageBreakdown.confirmed} confirmed`,
+        `${triageBreakdown.falsePositives} false positives`
+      ]
+      if (triageBreakdown.manualReviewRequired > 0) {
+        triageDetails.push(
+          `${triageBreakdown.manualReviewRequired} manual review`
+        )
+      }
+      return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} (${pct}%) - ${triageDetails.join(', ')}`
     }
     // Special handling for push/PRs when remediation is still in progress
     if (
@@ -212,6 +315,7 @@ export function logProcessTracking(
   // Define the stages to display in order with user-friendly names
   const stages: Array<{ field: keyof RunProcessTracking; name: string }> = [
     { field: 'find_status', name: 'find' },
+    { field: 'reconcile_status', name: 'reconcile' },
     { field: 'triage_status', name: 'triage' },
     { field: 'remediation_validation_loop_status', name: 'remediation_loop' },
     { field: 'push_status', name: 'push' }
@@ -282,10 +386,23 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
   }
 
   if (name === 'triage') {
-    const truePos = status.success_count - (status.false_positive_count || 0)
-    const falsePos = status.false_positive_count || 0
-    if (truePos > 0 || falsePos > 0) {
-      return `${truePos} confirmed, ${falsePos} false positives`
+    const triageBreakdown = getTriageBreakdown(status)
+    if (
+      triageBreakdown.confirmed > 0 ||
+      triageBreakdown.falsePositives > 0 ||
+      triageBreakdown.manualReviewRequired > 0
+    ) {
+      const parts = [
+        `${triageBreakdown.confirmed} confirmed`,
+        `${triageBreakdown.falsePositives} false positives`
+      ]
+      if (triageBreakdown.manualReviewRequired > 0) {
+        parts.push(`${triageBreakdown.manualReviewRequired} manual review`)
+      }
+      if ((status.handled_error_count || 0) > 0) {
+        parts.push(`${status.handled_error_count} handled errors`)
+      }
+      return parts.join(', ')
     }
   } else if (name === 'push') {
     if (status.success_count > 0) {
@@ -294,6 +411,10 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
   } else if (name === 'find') {
     if (status.success_count > 0) {
       return `${status.success_count} vulnerabilities`
+    }
+  } else if (name === 'reconcile') {
+    if (status.total_items > 0) {
+      return `${status.success_count}/${status.total_items} findings validated`
     }
   } else if (
     name === 'remediation_loop' ||
@@ -364,9 +485,29 @@ export async function writeJobSummary(
   // Start building the summary
   core.summary.addHeading('AppSecAI Results', 2)
 
+  const handledErrorCount =
+    summary?.handled_error_count ??
+    tracking?.triage_status?.handled_error_count ??
+    0
+  const manualReviewCount =
+    summary?.needs_manual_review_count ??
+    tracking?.triage_status?.needs_manual_review_count ??
+    0
+  const hasHandledErrors =
+    Boolean(summary?.has_handled_errors) ||
+    handledErrorCount > 0 ||
+    manualReviewCount > 0
+
   // Add outcome banner
   if (success) {
-    core.summary.addRaw('> **Status:** ✅ Completed successfully\n\n', true)
+    if (hasHandledErrors) {
+      core.summary.addRaw(
+        `> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount}) and manual review required (${manualReviewCount})\n\n`,
+        true
+      )
+    } else {
+      core.summary.addRaw('> **Status:** ✅ Completed successfully\n\n', true)
+    }
   } else {
     core.summary.addRaw('> **Status:** ❌ Completed with errors\n\n', true)
   }
@@ -375,6 +516,10 @@ export async function writeJobSummary(
   if (tracking) {
     const stages = [
       { field: 'find_status' as keyof RunProcessTracking, name: 'find' },
+      {
+        field: 'reconcile_status' as keyof RunProcessTracking,
+        name: 'reconcile'
+      },
       { field: 'triage_status' as keyof RunProcessTracking, name: 'triage' },
       {
         field: 'remediation_validation_loop_status' as keyof RunProcessTracking,
@@ -432,6 +577,18 @@ export async function writeJobSummary(
       { data: 'False Positives' },
       { data: summary.false_positives.toString() }
     ])
+    if ((summary.needs_manual_review_count ?? 0) > 0) {
+      metricsData.push([
+        { data: 'Manual Review Required' },
+        { data: (summary.needs_manual_review_count ?? 0).toString() }
+      ])
+    }
+    if ((summary.handled_error_count ?? 0) > 0) {
+      metricsData.push([
+        { data: 'Handled Errors (Admin Review)' },
+        { data: (summary.handled_error_count ?? 0).toString() }
+      ])
+    }
 
     // Remediation
     if (summary.remediation_success + summary.remediation_failed > 0) {
@@ -662,15 +819,25 @@ export function formatVulnerabilitySummary(summary: RunSummary): string {
   if (total === 0) {
     return 'No vulnerabilities found'
   }
+  const manualReviewCount = summary.needs_manual_review_count ?? 0
 
   const tpPercent = ((summary.true_positives / total) * 100).toFixed(1)
   const fpPercent = ((summary.false_positives / total) * 100).toFixed(1)
+  const mrPercent = ((manualReviewCount / total) * 100).toFixed(1)
 
-  return [
+  const lines = [
     `Total: ${total}`,
     `├─ True Positives: ${summary.true_positives} (${tpPercent}%)`,
-    `└─ False Positives: ${summary.false_positives} (${fpPercent}%)`
-  ].join('\n')
+    `├─ False Positives: ${summary.false_positives} (${fpPercent}%)`
+  ]
+  if (manualReviewCount > 0) {
+    lines.push(
+      `└─ Manual Review Required: ${manualReviewCount} (${mrPercent}%)`
+    )
+  } else {
+    lines.push('└─ Manual Review Required: 0 (0.0%)')
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -878,6 +1045,15 @@ export function formatFinalResults(
   vulnLines.forEach((line) => lines.push(`│  ${line}`))
   lines.push('│')
 
+  const handledErrorCount = summary.handled_error_count ?? 0
+  const manualReviewCount = summary.needs_manual_review_count ?? 0
+  if (handledErrorCount > 0 || manualReviewCount > 0) {
+    lines.push('├─ Triage Attention')
+    lines.push(`│  ├─ Handled Errors: ${handledErrorCount}`)
+    lines.push(`│  └─ Manual Review Required: ${manualReviewCount}`)
+    lines.push('│')
+  }
+
   // CWE Breakdown
   if (Object.keys(summary.cwe_breakdown).length > 0) {
     lines.push('├─ CWE Breakdown')
@@ -964,6 +1140,17 @@ export function logSummary(
   )
   core.info(`${prefixLabel}: True positives: ${summary.true_positives}`)
   core.info(`${prefixLabel}: False positives: ${summary.false_positives}`)
+  const manualReviewCount = summary.needs_manual_review_count ?? 0
+  const handledErrorCount = summary.handled_error_count ?? 0
+
+  if (manualReviewCount > 0) {
+    core.warning(`${prefixLabel}: Manual review required: ${manualReviewCount}`)
+  }
+  if (handledErrorCount > 0) {
+    core.warning(
+      `${prefixLabel}: Handled errors (admin review recommended): ${handledErrorCount}`
+    )
+  }
   core.info(
     `${prefixLabel}: Remediation: ${summary.remediation_success} successful, ${summary.remediation_failed} failed`
   )

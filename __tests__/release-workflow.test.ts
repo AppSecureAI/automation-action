@@ -20,11 +20,21 @@ describe('release workflow', () => {
     expect(content).toContain('tags:')
     expect(content).toContain("- 'v*'")
     expect(content).toContain('Update floating tags')
+    expect(content).toContain('Enforce version parity (source of truth)')
+    expect(content).toContain(
+      './scripts/check-version-parity.sh --tag "$TAG" --output "$GITHUB_OUTPUT"'
+    )
+    expect(content).toContain('./scripts/check-version-parity.sh --tag "$TAG"')
+    expect(content).not.toContain('const fs=require("node:fs")')
+    expect(content).not.toContain('grep -m1 -oP "^export const VERSION =')
     expect(content).toContain('Generate changelog')
     expect(content).toContain('npm run changelog')
     expect(content).toContain('Commit and push changelog')
     expect(content).toContain('git tag -fa "${{ steps.meta.outputs.major }}"')
     expect(content).toContain('git tag -fa "${{ steps.meta.outputs.minor }}"')
+    expect(content).toContain(
+      '| src/version.ts | ${{ steps.meta.outputs.version_ts }} |'
+    )
     expect(content).toContain('softprops/action-gh-release@v2')
   })
 })

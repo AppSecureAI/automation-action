@@ -56,7 +56,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('⏸️ Triage Analysis: Pending')
     })
@@ -75,7 +77,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('🔄 Vulnerability Import: Initializing...')
     })
@@ -96,7 +100,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 3,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe(
         '✅ Triage Analysis: Completed (12 confirmed vulnerabilities, 3 false positives)'
@@ -117,7 +123,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 3,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe(
         '✅ Triage Analysis: Completed (7 confirmed vulnerabilities, 3 false positives, 2 errors)'
@@ -136,7 +144,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ Triage Analysis: Completed (10 confirmed vulnerabilities)')
     })
@@ -153,7 +163,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ Vulnerability Import: Completed (10 vulnerabilities found)')
     })
@@ -170,7 +182,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ Pull Requests: Completed (5 PRs created)')
     })
@@ -187,7 +201,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ Remediation: Completed (5 fixes generated)')
     })
@@ -204,7 +220,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 2,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe(
         '✅ Remediation: Completed (6 fixes generated, 2 issues created (security passed, functional/quality checks failed))'
@@ -223,7 +241,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 3,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe(
         '✅ Remediation: Completed (7 fixes generated, 3 skipped (security not resolved))'
@@ -242,7 +262,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 2,
           self_validation_failure_count: 1,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe(
         '✅ Remediation: Completed (8 fixes generated, 2 issues created (security passed, functional/quality checks failed), 1 skipped (security not resolved), 1 errors)'
@@ -261,7 +283,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ Pull Requests: Completed (5 processed)')
     })
@@ -278,7 +302,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('✅ validate: Completed')
     })
@@ -299,7 +325,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 3,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('⏳ Triage Analysis: 8/15 (53%) - 5 confirmed, 3 false positives')
     })
@@ -316,7 +344,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('⏳ Remediation: 5/12 (42%)')
     })
@@ -332,7 +362,9 @@ describe('formatStageStatus', () => {
         false_positive_count: 0,
         self_validation_warning_count: 0,
         self_validation_failure_count: 0,
-        additional_context_required_count: 0
+        additional_context_required_count: 0,
+        needs_manual_review_count: 0,
+        handled_error_count: 0
       }
       expect(
         formatStageStatus(
@@ -347,7 +379,9 @@ describe('formatStageStatus', () => {
             false_positive_count: 0,
             self_validation_warning_count: 0,
             self_validation_failure_count: 0,
-            additional_context_required_count: 0
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
           },
           remediationLoopStatus
         )
@@ -367,7 +401,9 @@ describe('formatStageStatus', () => {
         false_positive_count: 0,
         self_validation_warning_count: 0,
         self_validation_failure_count: 0,
-        additional_context_required_count: 0
+        additional_context_required_count: 0,
+        needs_manual_review_count: 0,
+        handled_error_count: 0
       }
       expect(
         formatStageStatus(
@@ -382,7 +418,9 @@ describe('formatStageStatus', () => {
             false_positive_count: 0,
             self_validation_warning_count: 0,
             self_validation_failure_count: 0,
-            additional_context_required_count: 0
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
           },
           remediationLoopStatus
         )
@@ -401,7 +439,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('⏳ Pull Requests: 6/8 PRs (75%)')
     })
@@ -421,6 +461,8 @@ describe('formatStageStatus', () => {
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
           additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
           error_message: 'LLM API rate limit exceeded'
         })
       ).toBe('❌ remediate: Failed - LLM API rate limit exceeded')
@@ -438,7 +480,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('❌ validate: Failed - unknown error')
     })
@@ -457,7 +501,9 @@ describe('formatStageStatus', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         })
       ).toBe('custom_stage: paused')
     })
@@ -492,7 +538,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -516,7 +564,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 3,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -539,7 +589,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -562,7 +614,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         triage_status: {
           status: 'in_progress',
@@ -574,7 +628,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 1,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         remediation_validation_loop_status: {
           status: 'not_started',
@@ -586,7 +642,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         push_status: {
           status: 'not_started',
@@ -598,7 +656,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -629,7 +689,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         triage_status: {
           status: 'completed',
@@ -641,7 +703,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         remediation_validation_loop_status: {
           status: 'in_progress',
@@ -653,7 +717,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         push_status: {
           status: 'in_progress',
@@ -665,7 +731,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -691,7 +759,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         triage_status: {
           status: 'completed',
@@ -703,7 +773,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         remediation_validation_loop_status: {
           status: 'completed',
@@ -715,7 +787,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         },
         push_status: {
           status: 'in_progress',
@@ -727,7 +801,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
       },
       '[RUN_STATUS]'
@@ -753,7 +829,9 @@ describe('logProcessTracking', () => {
           false_positive_count: 0,
           self_validation_warning_count: 0,
           self_validation_failure_count: 0,
-          additional_context_required_count: 0
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
         }
         // Other stages are undefined - should not log
       },

@@ -19,7 +19,8 @@ import {
   SubmitRunOutput,
   RunProcessTracking,
   RunSummary,
-  GroupingConfig
+  GroupingConfig,
+  ProcessingModeExternal
 } from './types.js'
 import { LogLabels, getConsoleBranding, PollingConfig } from './constants.js'
 import {
@@ -35,6 +36,17 @@ import {
   getAutoCreatePrs,
   getDebug,
   getToken,
+  getRegressionEvidenceBaseRef,
+  getRegressionEvidenceBaseSha,
+  getRegressionEvidenceHeadRef,
+  getRegressionEvidenceHeadSha,
+  getRegressionEvidenceCoverageArtifacts,
+  getRegressionEvidenceTestCommands,
+  getRegressionEvidenceOutputJsonPath,
+  getRegressionEvidenceOutputMarkdownPath,
+  getRegressionEvidenceAllowPartial,
+  getRegressionEvidenceFailOnAtRisk,
+  getRegressionEvidencePublishComment,
   getGroupingEnabled,
   getGroupingStrategy,
   getMaxVulnerabilitiesPerPr,
@@ -47,6 +59,13 @@ import {
   getDashboardUrl
 } from './utils.js'
 import { fetchAndLogServerVersion } from './version-service.js'
+import {
+  RegressionEvidenceStatus,
+  generateRegressionEvidence,
+  parseRegressionEvidenceArtifactListInput,
+  parseRegressionEvidenceTestCommandsInput,
+  publishRegressionEvidenceCommentFromContext
+} from './regression-evidence.js'
 
 /**
  * Log all input configuration in a collapsible group
@@ -64,6 +83,33 @@ function logConfiguration(file: string): void {
   core.info(`Validate Method: ${getValidateMethod()}`)
   core.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`)
   core.info(`Auto Create PRs: ${getAutoCreatePrs()}`)
+  if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
+    core.info(`Regression Evidence Base Ref: ${getRegressionEvidenceBaseRef()}`)
+    core.info(`Regression Evidence Base SHA: ${getRegressionEvidenceBaseSha()}`)
+    core.info(`Regression Evidence Head Ref: ${getRegressionEvidenceHeadRef()}`)
+    core.info(`Regression Evidence Head SHA: ${getRegressionEvidenceHeadSha()}`)
+    core.info(
+      `Regression Evidence Coverage Artifacts: ${getRegressionEvidenceCoverageArtifacts()}`
+    )
+    core.info(
+      `Regression Evidence Test Commands: ${getRegressionEvidenceTestCommands()}`
+    )
+    core.info(
+      `Regression Evidence Output JSON Path: ${getRegressionEvidenceOutputJsonPath()}`
+    )
+    core.info(
+      `Regression Evidence Output Markdown Path: ${getRegressionEvidenceOutputMarkdownPath()}`
+    )
+    core.info(
+      `Regression Evidence Allow Partial: ${getRegressionEvidenceAllowPartial()}`
+    )
+    core.info(
+      `Regression Evidence Fail On At Risk: ${getRegressionEvidenceFailOnAtRisk()}`
+    )
+    core.info(
+      `Regression Evidence Publish Comment: ${getRegressionEvidencePublishComment()}`
+    )
+  }
   const groupingEnabled = getGroupingEnabled()
   core.info(`Grouping Enabled: ${groupingEnabled}`)
   if (groupingEnabled) {
@@ -73,6 +119,59 @@ function logConfiguration(file: string): void {
   }
   core.info(`Update Context: ${getUpdateContext()}`)
   core.endGroup()
+}
+
+async function runRegressionEvidenceMode(): Promise<void> {
+  core.startGroup('Regression Evidence')
+  try {
+    const result = await generateRegressionEvidence({
+      cwd: process.cwd(),
+      baseRef: getRegressionEvidenceBaseRef() || null,
+      baseSha: getRegressionEvidenceBaseSha() || null,
+      headRef: getRegressionEvidenceHeadRef() || null,
+      headSha: getRegressionEvidenceHeadSha() || null,
+      coverageArtifactPaths: parseRegressionEvidenceArtifactListInput(
+        getRegressionEvidenceCoverageArtifacts()
+      ),
+      testCommands: parseRegressionEvidenceTestCommandsInput(
+        getRegressionEvidenceTestCommands()
+      ),
+      outputJsonPath: getRegressionEvidenceOutputJsonPath(),
+      outputMarkdownPath: getRegressionEvidenceOutputMarkdownPath(),
+      allowPartial: getRegressionEvidenceAllowPartial()
+    })
+
+    core.setOutput('regression-evidence-status', result.artifact.status)
+    core.setOutput('regression-evidence-json-path', result.jsonPath)
+    core.setOutput('regression-evidence-markdown-path', result.markdownPath)
+
+    core.summary.addRaw(result.markdown)
+    await core.summary.write()
+    core.info('Regression evidence artifacts generated.')
+
+    if (getRegressionEvidencePublishComment()) {
+      const token =
+        getToken() || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+      const action = await publishRegressionEvidenceCommentFromContext(
+        result.markdown,
+        token || ''
+      )
+      if (action !== 'skipped') {
+        core.info(`Regression evidence PR comment ${action}.`)
+      }
+    }
+
+    if (
+      getRegressionEvidenceFailOnAtRisk() &&
+      result.artifact.status === RegressionEvidenceStatus.AT_RISK
+    ) {
+      throw new Error(
+        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
+      )
+    }
+  } finally {
+    core.endGroup()
+  }
 }
 
 export async function run(): Promise<void> {
@@ -111,6 +210,13 @@ export async function run(): Promise<void> {
     // Log configuration in collapsible group only if debug is enabled
     if (isDebug) {
       logConfiguration(file)
+    }
+
+    if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
+      await runRegressionEvidenceMode()
+      success = true
+      core.setOutput('message', 'Regression evidence generated successfully.')
+      return
     }
 
     // Step 1: Read the file

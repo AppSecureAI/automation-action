@@ -19,40 +19,24 @@ jest.unstable_mockModule('axios', () => ({ default: axios }))
 
 const mockGetApiUrl = jest.fn()
 const mockGetMode = jest.fn()
-const mockGetUseTriageCc = jest.fn()
-const mockGetTriageMethod = jest.fn()
-const mockGetUseRemediateCc = jest.fn()
-const mockGetRemediateMethod = jest.fn()
-const mockGetUseValidateCc = jest.fn()
-const mockGetValidateMethod = jest.fn()
-const mockGetUseRemediateLoopCc = jest.fn()
 const mockGetAutoCreatePrs = jest.fn()
 const mockGetCreateIssuesForIncompleteRemediations = jest.fn()
 const mockGetCommentModificationMode = jest.fn()
-const mockGetGroupingEnabled = jest.fn()
-const mockGetGroupingStrategy = jest.fn()
 const mockGetMaxVulnerabilitiesPerPr = jest.fn()
-const mockGetGroupingStage = jest.fn()
+const mockIsMaxVulnerabilitiesPerPrConfigured = jest.fn()
+const mockGetGroupingEnabled = jest.fn()
 const mockGetUpdateContext = jest.fn()
 
 jest.mock('../src/input', () => ({
   getApiUrl: mockGetApiUrl,
   getMode: mockGetMode,
-  getUseTriageCc: mockGetUseTriageCc,
-  getTriageMethod: mockGetTriageMethod,
-  getUseRemediateCc: mockGetUseRemediateCc,
-  getRemediateMethod: mockGetRemediateMethod,
-  getUseValidateCc: mockGetUseValidateCc,
-  getValidateMethod: mockGetValidateMethod,
-  getUseRemediateLoopCc: mockGetUseRemediateLoopCc,
   getAutoCreatePrs: mockGetAutoCreatePrs,
   getCreateIssuesForIncompleteRemediations:
     mockGetCreateIssuesForIncompleteRemediations,
   getCommentModificationMode: mockGetCommentModificationMode,
-  getGroupingEnabled: mockGetGroupingEnabled,
-  getGroupingStrategy: mockGetGroupingStrategy,
   getMaxVulnerabilitiesPerPr: mockGetMaxVulnerabilitiesPerPr,
-  getGroupingStage: mockGetGroupingStage,
+  isMaxVulnerabilitiesPerPrConfigured: mockIsMaxVulnerabilitiesPerPrConfigured,
+  getGroupingEnabled: mockGetGroupingEnabled,
   getUpdateContext: mockGetUpdateContext
 }))
 jest.mock('../src/store', () => ({
@@ -91,23 +75,19 @@ describe('service.ts', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     // Set the action's inputs as return values from core.getInput().
-    core.getInput.mockImplementation(() => 'https://some-url')
+    core.getInput.mockImplementation((name: string) => {
+      if (name === 'api-url') return 'https://some-url'
+      if (name === 'comment-modification-mode') return 'basic'
+      return ''
+    })
     mockGetApiUrl.mockReturnValue('https://some-url')
     mockGetMode.mockReturnValue('individual')
-    mockGetUseTriageCc.mockReturnValue('false')
-    mockGetTriageMethod.mockReturnValue('baseline')
-    mockGetUseRemediateCc.mockReturnValue('false')
-    mockGetRemediateMethod.mockReturnValue('baseline')
-    mockGetUseValidateCc.mockReturnValue('false')
-    mockGetValidateMethod.mockReturnValue('baseline')
-    mockGetUseRemediateLoopCc.mockReturnValue('false')
     mockGetAutoCreatePrs.mockReturnValue('true')
     mockGetCreateIssuesForIncompleteRemediations.mockReturnValue('true')
     mockGetCommentModificationMode.mockReturnValue('basic')
-    mockGetGroupingEnabled.mockReturnValue(false)
-    mockGetGroupingStrategy.mockReturnValue('cwe_category')
     mockGetMaxVulnerabilitiesPerPr.mockReturnValue(10)
-    mockGetGroupingStage.mockReturnValue('pre_push')
+    mockIsMaxVulnerabilitiesPerPrConfigured.mockReturnValue(false)
+    mockGetGroupingEnabled.mockReturnValue(false)
     mockGetUpdateContext.mockReturnValue(false)
     store.finalLogPrinted = {}
     logSteps.mockClear()
@@ -253,6 +233,137 @@ describe('service.ts', () => {
       await expect(submitRun(inputBuffer, 'file')).rejects.toThrow(
         'SERVER ERROR'
       )
+    })
+
+    describe('processing mode contract and payload alignment', () => {
+      const savedEnv: Record<string, string | undefined> = {}
+      const envKeys = [
+        'PROCESSING_MODE',
+        'GROUPING_ENABLED',
+        'UPDATE_CONTEXT',
+        'AUTO_CREATE_PRS',
+        'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
+        'COMMENT_MODIFICATION_MODE',
+        'MAX_VULNERABILITIES_PER_PR'
+      ]
+
+      beforeEach(() => {
+        // Save and clear env vars to prevent cross-test contamination
+        for (const k of envKeys) {
+          savedEnv[k] = process.env[k]
+          delete process.env[k]
+        }
+        // Use a known-good core.getInput for these tests so real input
+        // functions don't emit unexpected warnings
+        core.getInput.mockImplementation((name: string) => {
+          if (name === 'api-url') return 'https://some-url'
+          return ''
+        })
+        axios.post.mockResolvedValue({
+          data: {
+            message: 'File processed successfully',
+            run_id: 'run-99',
+            steps: []
+          }
+        })
+      })
+
+      afterEach(() => {
+        for (const k of envKeys) {
+          if (savedEnv[k] === undefined) {
+            delete process.env[k]
+          } else {
+            process.env[k] = savedEnv[k]
+          }
+        }
+      })
+
+      it('forwards group_cc as processing_mode in payload', async () => {
+        process.env.PROCESSING_MODE = 'group_cc'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('processing_mode')).toBe('group_cc')
+      })
+
+      it('does not include grouping_enabled in payload even when grouping-enabled=true', async () => {
+        process.env.GROUPING_ENABLED = 'true'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('grouping_enabled')).toBeNull()
+        expect(formData.get('grouping_strategy')).toBeNull()
+        expect(formData.get('grouping_stage')).toBeNull()
+      })
+
+      it('includes max_vulnerabilities_per_pr when configured', async () => {
+        process.env.MAX_VULNERABILITIES_PER_PR = '25'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
+      })
+
+      it('omits deprecated legacy solver fields from submit payload', async () => {
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('use_triage_cc')).toBeNull()
+        expect(formData.get('triage_method')).toBeNull()
+        expect(formData.get('use_remediate_cc')).toBeNull()
+        expect(formData.get('remediate_method')).toBeNull()
+        expect(formData.get('use_validate_cc')).toBeNull()
+        expect(formData.get('validate_method')).toBeNull()
+        expect(formData.get('use_remediate_loop_cc')).toBeNull()
+      })
+
+      it('does not include update_context in payload even when update-context=true', async () => {
+        process.env.UPDATE_CONTEXT = 'true'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('update_context')).toBeNull()
+      })
+
+      it('emits warning when grouping-enabled=true (unsupported field)', async () => {
+        process.env.GROUPING_ENABLED = 'true'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'grouping-enabled is set but grouping fields are not supported'
+          )
+        )
+      })
+
+      it('emits warning when update-context=true (unsupported field)', async () => {
+        process.env.UPDATE_CONTEXT = 'true'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('update-context is set but is not supported')
+        )
+      })
+
+      it('does not emit unsupported-field warnings when grouping and update-context are false', async () => {
+        process.env.GROUPING_ENABLED = 'false'
+        process.env.UPDATE_CONTEXT = 'false'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const warningCalls = (core.warning as jest.Mock).mock.calls.map(
+          (c) => c[0] as string
+        )
+        expect(
+          warningCalls.some((msg) =>
+            msg.includes('grouping fields are not supported')
+          )
+        ).toBe(false)
+        expect(
+          warningCalls.some((msg) =>
+            msg.includes('update-context is set but is not supported')
+          )
+        ).toBe(false)
+      })
     })
 
     // Note: 402 Payment Required tests are in error-formatting.test.ts
@@ -1067,6 +1178,9 @@ describe('service.ts', () => {
         total_vulnerabilities: 10,
         true_positives: 8,
         false_positives: 2,
+        needs_manual_review_count: 0,
+        handled_error_count: 0,
+        has_handled_errors: false,
         cwe_breakdown: { 'CWE-79': 5 },
         severity_breakdown: { high: 3, medium: 7 },
         remediation_success: 5,
@@ -1173,6 +1287,9 @@ describe('service.ts', () => {
         total_vulnerabilities: 5,
         true_positives: 0,
         false_positives: 0,
+        needs_manual_review_count: 0,
+        handled_error_count: 0,
+        has_handled_errors: false,
         cwe_breakdown: {},
         severity_breakdown: {},
         remediation_success: 0,
@@ -1194,6 +1311,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1236,6 +1356,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1269,6 +1392,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1299,6 +1425,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1329,6 +1458,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1359,6 +1491,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1413,6 +1548,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1461,6 +1599,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,
@@ -1495,6 +1636,9 @@ describe('service.ts', () => {
           total_vulnerabilities: 10,
           true_positives: 8,
           false_positives: 2,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
           cwe_breakdown: {},
           severity_breakdown: {},
           remediation_success: 8,

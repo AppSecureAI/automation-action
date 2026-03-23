@@ -29,16 +29,14 @@ describe('input.ts', () => {
 
   describe('getMode', () => {
     it('returns the mode if valid', () => {
-      core.getInput.mockReturnValue(
-        ProcessingModeExternal.INDIVIDUAL_WITHOUT_PUSH
-      )
-      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_WITHOUT_PUSH)
+      core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
       expect(core.warning).not.toHaveBeenCalled()
     })
 
-    it('returns default and warns if mode is invalid', () => {
+    it('returns individual_cc and warns if mode is invalid', () => {
       core.getInput.mockReturnValue('invalid_mode')
-      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
       expect(core.warning).toHaveBeenCalledWith(
         expect.stringContaining(
           'Warning: Provided mode "invalid_mode" is not valid'
@@ -49,9 +47,9 @@ describe('input.ts', () => {
       )
     })
 
-    it('returns default and warns if mode is empty', () => {
+    it('returns individual_cc when mode is empty (default)', () => {
       core.getInput.mockReturnValue('')
-      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
       expect(core.warning).not.toHaveBeenCalled()
     })
   })

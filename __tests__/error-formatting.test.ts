@@ -50,7 +50,11 @@ const { parseApiError, formatErrorMessage, submitRun } =
 describe('Error Formatting', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    core.getInput.mockImplementation(() => 'https://some-url')
+    core.getInput.mockImplementation((name: string) => {
+      if (name === 'api-url') return 'https://some-url'
+      if (name === 'comment-modification-mode') return 'basic'
+      return ''
+    })
     mockGetApiUrl.mockReturnValue('https://some-url')
     mockGetMode.mockReturnValue('individual')
     mockGetUseTriageCc.mockReturnValue('false')

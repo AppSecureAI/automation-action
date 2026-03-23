@@ -27,6 +27,8 @@ Before using this action, install the
 [AppSecAI App](https://github.com/apps/appsecai-app) GitHub App and grant it
 access to your repository.
 
+This action runs with Node.js `22.14.0` internally via `actions/setup-node`.
+
 1. **Install the App:**
    [Click here to install](https://github.com/apps/appsecai-app)
 2. **Grant repository access:** Ensure the app has access to your target
@@ -34,29 +36,52 @@ access to your repository.
 
 ## Inputs
 
-| Input            | Description                                               | Required | Default |
-| ---------------- | --------------------------------------------------------- | -------- | ------- |
-| `file`           | SARIF or JSON file path containing scan results           | Yes      | -       |
-| `update-context` | Trigger fresh security context extraction before the scan | No       | `false` |
+| Input                                      | Description                                               | Required | Default                    |
+| ------------------------------------------ | --------------------------------------------------------- | -------- | -------------------------- |
+| `file`                                     | SARIF or JSON file path containing scan results           | Yes      | -                          |
+| `update-context`                           | Trigger fresh security context extraction before the scan | No       | `false`                    |
+| `regression-evidence-base-ref`             | Base git ref for regression evidence diff calculation     | No       | `''`                       |
+| `regression-evidence-base-sha`             | Base git SHA for regression evidence diff calculation     | No       | `''`                       |
+| `regression-evidence-head-ref`             | Head git ref for regression evidence diff calculation     | No       | `''`                       |
+| `regression-evidence-head-sha`             | Head git SHA for regression evidence diff calculation     | No       | `''`                       |
+| `regression-evidence-coverage-artifacts`   | Comma/newline-separated coverage mapping artifact paths   | No       | `''`                       |
+| `regression-evidence-test-commands`        | Newline-separated test commands (supports `{{tests}}`)    | No       | `''`                       |
+| `regression-evidence-output-json-path`     | Output path for `regression-evidence.json`                | No       | `regression-evidence.json` |
+| `regression-evidence-output-markdown-path` | Output path for markdown summary                          | No       | `regression-evidence.md`   |
+| `regression-evidence-allow-partial`        | Allow `partial` status when changed lines are uncovered   | No       | `true`                     |
+| `regression-evidence-fail-on-at-risk`      | Fail action when status is `at_risk`                      | No       | `false`                    |
 
 ## Configuration
 
 Configure the action behavior using environment variables in your workflow:
 
-| Environment Variable                        | Description                                                                                                            | Default      |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------ |
-| `CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS` | Create GitHub Issues instead of PRs for incomplete remediations (Self-Validation Warning, Additional Context Required) | `true`       |
-| `COMMENT_MODIFICATION_MODE`                 | Controls comment modification in fix PRs. `basic` preserves existing comments; `verbose` may add/modify comments       | `basic`      |
-| `AUTO_CREATE_PRS`                           | Automatically create PRs for remediations                                                                              | `true`       |
-| `PROCESSING_MODE`                           | Processing mode for vulnerability analysis                                                                             | `individual` |
-| `UPDATE_CONTEXT`                            | Trigger fresh security context extraction (same as `update-context` input)                                             | `false`      |
+| Environment Variable                        | Description                                                                                                                                               | Default                    |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS` | Create GitHub Issues instead of PRs for incomplete remediations (Self-Validation Warning, Additional Context Required)                                    | `false`                    |
+| `COMMENT_MODIFICATION_MODE`                 | Controls comment modification in fix PRs. `basic` preserves existing comments; `strict` preserves all comments exactly; `verbose` may add/modify comments | `basic`                    |
+| `AUTO_CREATE_PRS`                           | Automatically create PRs for remediations                                                                                                                 | `false`                    |
+| `PROCESSING_MODE`                           | Processing mode for vulnerability analysis                                                                                                                | `individual_cc`            |
+| `UPDATE_CONTEXT`                            | Trigger fresh security context extraction (same as `update-context` input)                                                                                | `false`                    |
+| `REGRESSION_EVIDENCE_BASE_REF`              | Base ref for regression evidence diffing                                                                                                                  | `''`                       |
+| `REGRESSION_EVIDENCE_BASE_SHA`              | Base SHA for regression evidence diffing                                                                                                                  | `''`                       |
+| `REGRESSION_EVIDENCE_HEAD_REF`              | Head ref for regression evidence diffing                                                                                                                  | `''`                       |
+| `REGRESSION_EVIDENCE_HEAD_SHA`              | Head SHA for regression evidence diffing                                                                                                                  | `''`                       |
+| `REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS`    | Coverage mapping artifact path list                                                                                                                       | `''`                       |
+| `REGRESSION_EVIDENCE_TEST_COMMANDS`         | Newline-separated test commands; `{{tests}}` expands to selected tests                                                                                    | `''`                       |
+| `REGRESSION_EVIDENCE_OUTPUT_JSON_PATH`      | Output path for generated regression evidence JSON                                                                                                        | `regression-evidence.json` |
+| `REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH`  | Output path for generated markdown summary                                                                                                                | `regression-evidence.md`   |
+| `REGRESSION_EVIDENCE_ALLOW_PARTIAL`         | Whether partially covered diffs can produce `partial`                                                                                                     | `true`                     |
+| `REGRESSION_EVIDENCE_FAIL_ON_AT_RISK`       | Fail the action when status is `at_risk`                                                                                                                  | `false`                    |
 
 ## Outputs
 
-| Output            | Description                                           |
-| ----------------- | ----------------------------------------------------- |
-| `message`         | Processed message from the action                     |
-| `context-updated` | Whether context was updated (true/false/rate-limited) |
+| Output                              | Description                                                   |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `message`                           | Processed message from the action                             |
+| `context-updated`                   | Whether context was updated (true/false/rate-limited)         |
+| `regression-evidence-status`        | Regression evidence status (`verified`, `partial`, `at_risk`) |
+| `regression-evidence-json-path`     | Path to generated regression evidence JSON                    |
+| `regression-evidence-markdown-path` | Path to generated markdown summary                            |
 
 ## Usage
 
@@ -112,11 +137,16 @@ all available versions.
 This private repository automatically syncs releases to the public
 `AppSecureAI/automation-action` repository.
 
+- Canonical source of truth: `AppSecureAI/submit-run-action`
+- Public mirror target: `AppSecureAI/automation-action`
+- Mirror policy: do not manually bump versions in `automation-action`; release
+  tags and version changes must originate in `submit-run-action`.
 - Trigger: `publish-public-release.yml` on private release publication
 - Sync: runs `scripts/publish-public.sh --push --tag vX.Y.Z`
 - Result:
   - updates public `main` with allowed files from `.publicrelease`
   - creates/updates matching tag in public repository
+  - force-updates floating tags (`vX`, `vX.Y`) to the same release commit
   - creates/updates public GitHub release notes for the same tag
 
 Required Actions secret:
@@ -258,6 +288,33 @@ policies have been updated.
 
 Note: Context updates are subject to a 24-hour rate limit. If rate limited, the
 action will log a warning and continue with existing context.
+
+### Regression Evidence Mode
+
+Use `PROCESSING_MODE=regression_evidence` to generate deterministic regression
+evidence artifacts tied to git diff, coverage mappings, and impacted test
+execution.
+
+```yaml
+- name: Generate Regression Evidence
+  uses: AppSecureAI/automation-action@v1
+  with:
+    file: scan-results.sarif
+  env:
+    PROCESSING_MODE: regression_evidence
+    REGRESSION_EVIDENCE_BASE_REF: origin/main
+    REGRESSION_EVIDENCE_HEAD_REF: HEAD
+    REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS: coverage/line-test-map.json
+    REGRESSION_EVIDENCE_TEST_COMMANDS: |
+      npm test -- {{tests}}
+    REGRESSION_EVIDENCE_FAIL_ON_AT_RISK: 'true'
+```
+
+This mode generates:
+
+- `regression-evidence.json` (schema version `1`)
+- `regression-evidence.md`
+- Outputs for status + artifact paths for downstream workflow logic
 
 ## Supported SAST Tools
 

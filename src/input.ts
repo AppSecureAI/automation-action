@@ -57,25 +57,39 @@ export function getToken() {
   return getInputValue('token', 'INPUT_TOKEN')
 }
 
+const LEGACY_MODE_MAP: Record<string, ProcessingModeExternal> = {
+  group_only: ProcessingModeExternal.GROUP_CC,
+  group_with_remediation: ProcessingModeExternal.GROUP_CC,
+  group_with_validation_consistency: ProcessingModeExternal.GROUP_CC,
+  individual_without_push: ProcessingModeExternal.INDIVIDUAL
+}
+
 export function getMode() {
   const mode =
     getInputValue(
       'processing-mode',
       'INPUT_PROCESSING_MODE',
       'PROCESSING_MODE'
-    ) || ProcessingModeExternal.INDIVIDUAL
+    ) || ProcessingModeExternal.INDIVIDUAL_CC
 
-  if (!(Object.values(ProcessingModeExternal) as string[]).includes(mode)) {
-    const allowedModes = Object.values(ProcessingModeExternal).join(', ')
-
-    core.warning(
-      `Warning: Provided mode "${mode}" is not valid. Using default mode "${ProcessingModeExternal.INDIVIDUAL}".`
-    )
-    core.warning(`Allowed modes are: ${allowedModes}`)
-    return ProcessingModeExternal.INDIVIDUAL
+  if ((Object.values(ProcessingModeExternal) as string[]).includes(mode)) {
+    return mode as ProcessingModeExternal
   }
 
-  return mode as ProcessingModeExternal
+  if (Object.prototype.hasOwnProperty.call(LEGACY_MODE_MAP, mode)) {
+    const canonical = LEGACY_MODE_MAP[mode]
+    core.warning(
+      `Warning: Processing mode "${mode}" is a legacy alias. Use "${canonical}" instead.`
+    )
+    return canonical
+  }
+
+  const allowedModes = Object.values(ProcessingModeExternal).join(', ')
+  core.warning(
+    `Warning: Provided mode "${mode}" is not valid. Using default mode "${ProcessingModeExternal.INDIVIDUAL_CC}".`
+  )
+  core.warning(`Allowed modes are: ${allowedModes}`)
+  return ProcessingModeExternal.INDIVIDUAL_CC
 }
 
 export function getUseTriageCc(): boolean {
@@ -193,12 +207,12 @@ export function getAutoCreatePrs(): boolean {
       'auto-create-prs',
       'INPUT_AUTO_CREATE_PRS',
       'AUTO_CREATE_PRS'
-    ) || 'true'
+    ) || 'false'
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: true`
+      `Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: false`
     )
-    return true
+    return false
   }
   return value === 'true'
 }
@@ -220,12 +234,12 @@ export function getCreateIssuesForIncompleteRemediations(): boolean {
       'create-issues-for-incomplete-remediations',
       'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS'
-    ) || 'true'
+    ) || 'false'
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid create-issues-for-incomplete-remediations value "${value}". Must be "true" or "false". Using default: true`
+      `Invalid create-issues-for-incomplete-remediations value "${value}". Must be "true" or "false". Using default: false`
     )
-    return true
+    return false
   }
   return value === 'true'
 }
@@ -239,12 +253,127 @@ export function getCommentModificationMode(): CommentModificationMode {
     ) || CommentModificationMode.BASIC
   if (!(Object.values(CommentModificationMode) as string[]).includes(mode)) {
     const allowedModes = Object.values(CommentModificationMode).join(', ')
-    core.warning(
-      `Invalid comment-modification-mode "${mode}". Allowed values: ${allowedModes}. Using default: basic`
+    throw new Error(
+      `Invalid comment-modification-mode "${mode}". Allowed values: ${allowedModes}.`
     )
-    return CommentModificationMode.BASIC
   }
   return mode as CommentModificationMode
+}
+
+export function getRegressionEvidenceBaseRef(): string {
+  return getInputValue(
+    'regression-evidence-base-ref',
+    'INPUT_REGRESSION_EVIDENCE_BASE_REF',
+    'REGRESSION_EVIDENCE_BASE_REF'
+  )
+}
+
+export function getRegressionEvidenceBaseSha(): string {
+  return getInputValue(
+    'regression-evidence-base-sha',
+    'INPUT_REGRESSION_EVIDENCE_BASE_SHA',
+    'REGRESSION_EVIDENCE_BASE_SHA'
+  )
+}
+
+export function getRegressionEvidenceHeadRef(): string {
+  return getInputValue(
+    'regression-evidence-head-ref',
+    'INPUT_REGRESSION_EVIDENCE_HEAD_REF',
+    'REGRESSION_EVIDENCE_HEAD_REF'
+  )
+}
+
+export function getRegressionEvidenceHeadSha(): string {
+  return getInputValue(
+    'regression-evidence-head-sha',
+    'INPUT_REGRESSION_EVIDENCE_HEAD_SHA',
+    'REGRESSION_EVIDENCE_HEAD_SHA'
+  )
+}
+
+export function getRegressionEvidenceCoverageArtifacts(): string {
+  return getInputValue(
+    'regression-evidence-coverage-artifacts',
+    'INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS',
+    'REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS'
+  )
+}
+
+export function getRegressionEvidenceTestCommands(): string {
+  return getInputValue(
+    'regression-evidence-test-commands',
+    'INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS',
+    'REGRESSION_EVIDENCE_TEST_COMMANDS'
+  )
+}
+
+export function getRegressionEvidenceOutputJsonPath(): string {
+  return (
+    getInputValue(
+      'regression-evidence-output-json-path',
+      'INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH',
+      'REGRESSION_EVIDENCE_OUTPUT_JSON_PATH'
+    ) || 'regression-evidence.json'
+  )
+}
+
+export function getRegressionEvidenceOutputMarkdownPath(): string {
+  return (
+    getInputValue(
+      'regression-evidence-output-markdown-path',
+      'INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH',
+      'REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH'
+    ) || 'regression-evidence.md'
+  )
+}
+
+export function getRegressionEvidenceAllowPartial(): boolean {
+  const value =
+    getInputValue(
+      'regression-evidence-allow-partial',
+      'INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL',
+      'REGRESSION_EVIDENCE_ALLOW_PARTIAL'
+    ) || 'true'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid regression-evidence-allow-partial value "${value}". Must be "true" or "false". Using default: true`
+    )
+    return true
+  }
+  return value === 'true'
+}
+
+export function getRegressionEvidenceFailOnAtRisk(): boolean {
+  const value =
+    getInputValue(
+      'regression-evidence-fail-on-at-risk',
+      'INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK',
+      'REGRESSION_EVIDENCE_FAIL_ON_AT_RISK'
+    ) || 'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid regression-evidence-fail-on-at-risk value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
+}
+
+export function getRegressionEvidencePublishComment(): boolean {
+  const value =
+    getInputValue(
+      'regression-evidence-publish-comment',
+      'INPUT_REGRESSION_EVIDENCE_PUBLISH_COMMENT',
+      'REGRESSION_EVIDENCE_PUBLISH_COMMENT'
+    ) || 'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid regression-evidence-publish-comment value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
 }
 
 export function getGroupingEnabled(): boolean {
@@ -295,6 +424,20 @@ export function getMaxVulnerabilitiesPerPr(): number {
     return 10
   }
   return parsed
+}
+
+export function isMaxVulnerabilitiesPerPrConfigured(): boolean {
+  const workflowValue = process.env.MAX_VULNERABILITIES_PER_PR
+  if (workflowValue !== undefined && workflowValue !== '') {
+    return true
+  }
+
+  const envValue = process.env.INPUT_MAX_VULNERABILITIES_PER_PR
+  if (envValue !== undefined && envValue !== '') {
+    return true
+  }
+
+  return core.getInput('max-vulnerabilities-per-pr') !== ''
 }
 
 export function getGroupingStage(): GroupingStage {

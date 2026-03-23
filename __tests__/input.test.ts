@@ -28,6 +28,16 @@ const {
   getDebug,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
+  getRegressionEvidenceBaseRef,
+  getRegressionEvidenceBaseSha,
+  getRegressionEvidenceHeadRef,
+  getRegressionEvidenceHeadSha,
+  getRegressionEvidenceCoverageArtifacts,
+  getRegressionEvidenceTestCommands,
+  getRegressionEvidenceOutputJsonPath,
+  getRegressionEvidenceOutputMarkdownPath,
+  getRegressionEvidenceAllowPartial,
+  getRegressionEvidenceFailOnAtRisk,
   getGroupingEnabled,
   getGroupingStrategy,
   getMaxVulnerabilitiesPerPr,
@@ -67,6 +77,16 @@ describe('input.ts', () => {
       'INPUT_AUTO_CREATE_PRS',
       'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'INPUT_COMMENT_MODIFICATION_MODE',
+      'INPUT_REGRESSION_EVIDENCE_BASE_REF',
+      'INPUT_REGRESSION_EVIDENCE_BASE_SHA',
+      'INPUT_REGRESSION_EVIDENCE_HEAD_REF',
+      'INPUT_REGRESSION_EVIDENCE_HEAD_SHA',
+      'INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS',
+      'INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS',
+      'INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH',
+      'INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH',
+      'INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL',
+      'INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK',
       'INPUT_GROUPING_ENABLED',
       'INPUT_GROUPING_STRATEGY',
       'INPUT_MAX_VULNERABILITIES_PER_PR',
@@ -83,6 +103,16 @@ describe('input.ts', () => {
       'AUTO_CREATE_PRS',
       'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'COMMENT_MODIFICATION_MODE',
+      'REGRESSION_EVIDENCE_BASE_REF',
+      'REGRESSION_EVIDENCE_BASE_SHA',
+      'REGRESSION_EVIDENCE_HEAD_REF',
+      'REGRESSION_EVIDENCE_HEAD_SHA',
+      'REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS',
+      'REGRESSION_EVIDENCE_TEST_COMMANDS',
+      'REGRESSION_EVIDENCE_OUTPUT_JSON_PATH',
+      'REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH',
+      'REGRESSION_EVIDENCE_ALLOW_PARTIAL',
+      'REGRESSION_EVIDENCE_FAIL_ON_AT_RISK',
       'GROUPING_ENABLED',
       'GROUPING_STRATEGY',
       'MAX_VULNERABILITIES_PER_PR',
@@ -147,20 +177,36 @@ describe('input.ts', () => {
   })
 
   describe('getMode', () => {
-    it('returns the mode if valid', () => {
-      core.getInput.mockReturnValue(
-        ProcessingModeExternal.INDIVIDUAL_WITHOUT_PUSH
-      )
-      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_WITHOUT_PUSH)
+    it('returns individual when mode is individual', () => {
+      core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
       expect(core.warning).not.toHaveBeenCalled()
     })
 
-    it('returns default and warns if mode is invalid', () => {
-      core.getInput.mockReturnValue('invalid_mode')
-      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
+    it('returns individual_cc when mode is individual_cc', () => {
+      core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
+
+    it('returns individual_cc when mode is empty (default)', () => {
+      core.getInput.mockReturnValue('')
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
+
+    it('returns group_cc when mode is group_cc (canonical)', () => {
+      core.getInput.mockReturnValue(ProcessingModeExternal.GROUP_CC)
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
+
+    it('returns individual_cc and warns when mode is invalid', () => {
+      core.getInput.mockReturnValue('turbo_mode')
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
       expect(core.warning).toHaveBeenCalledWith(
         expect.stringContaining(
-          'Warning: Provided mode "invalid_mode" is not valid'
+          'Warning: Provided mode "turbo_mode" is not valid'
         )
       )
       expect(core.warning).toHaveBeenCalledWith(
@@ -168,28 +214,74 @@ describe('input.ts', () => {
       )
     })
 
-    it('returns default when mode is empty', () => {
-      core.getInput.mockReturnValue('')
+    it('maps legacy alias group_only to group_cc with warning', () => {
+      core.getInput.mockReturnValue('group_only')
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('"group_only" is a legacy alias')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('group_cc')
+      )
+    })
+
+    it('maps legacy alias group_with_remediation to group_cc with warning', () => {
+      core.getInput.mockReturnValue('group_with_remediation')
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('"group_with_remediation" is a legacy alias')
+      )
+    })
+
+    it('maps legacy alias group_with_validation_consistency to group_cc with warning', () => {
+      core.getInput.mockReturnValue('group_with_validation_consistency')
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '"group_with_validation_consistency" is a legacy alias'
+        )
+      )
+    })
+
+    it('treats push as invalid mode and falls back to individual_cc', () => {
+      core.getInput.mockReturnValue('push')
+      expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Provided mode "push" is not valid')
+      )
+    })
+
+    it('maps legacy alias individual_without_push to individual with warning', () => {
+      core.getInput.mockReturnValue('individual_without_push')
       expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
-      expect(core.warning).not.toHaveBeenCalled()
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('"individual_without_push" is a legacy alias')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('individual')
+      )
+    })
+
+    it('two different unknown modes both fall back to individual_cc (payload determinism)', () => {
+      core.getInput.mockReturnValue('unknown_mode_a')
+      const resultA = getMode()
+      core.warning.mockReset()
+      core.getInput.mockReturnValue('unknown_mode_b')
+      const resultB = getMode()
+      expect(resultA).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
+      expect(resultB).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
     })
 
     it('prefers PROCESSING_MODE workflow env var', () => {
-      process.env.PROCESSING_MODE = ProcessingModeExternal.GROUP_ONLY
+      process.env.PROCESSING_MODE = ProcessingModeExternal.GROUP_CC
       core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
-      expect(getMode()).toBe(ProcessingModeExternal.GROUP_ONLY)
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
     })
 
-    it('prefers INPUT_PROCESSING_MODE over core.getInput', () => {
-      process.env.INPUT_PROCESSING_MODE = ProcessingModeExternal.GROUP_ONLY
+    it('prefers INPUT_PROCESSING_MODE environment variable over core.getInput', () => {
+      process.env.INPUT_PROCESSING_MODE = ProcessingModeExternal.GROUP_CC
       core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
-      expect(getMode()).toBe(ProcessingModeExternal.GROUP_ONLY)
-    })
-
-    it('prefers INPUT_PROCESSING_MODE environment variable', () => {
-      process.env.INPUT_PROCESSING_MODE = ProcessingModeExternal.GROUP_ONLY
-      core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
-      expect(getMode()).toBe(ProcessingModeExternal.GROUP_ONLY)
+      expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
     })
   })
 
@@ -393,9 +485,9 @@ describe('input.ts', () => {
         expect(getAutoCreatePrs()).toBe(false)
       })
 
-      it('returns true by default', () => {
+      it('returns false by default', () => {
         core.getInput.mockReturnValue('')
-        expect(getAutoCreatePrs()).toBe(true)
+        expect(getAutoCreatePrs()).toBe(false)
       })
 
       it('prefers AUTO_CREATE_PRS workflow env var', () => {
@@ -407,6 +499,41 @@ describe('input.ts', () => {
       it('prefers INPUT_AUTO_CREATE_PRS environment variable', () => {
         process.env.INPUT_AUTO_CREATE_PRS = 'false'
         core.getInput.mockReturnValue('true')
+        expect(getAutoCreatePrs()).toBe(false)
+      })
+    })
+
+    describe('push control via auto_create_prs', () => {
+      it('individual + auto_create_prs=false suppresses push', () => {
+        core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
+        expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL)
+        process.env.AUTO_CREATE_PRS = 'false'
+        expect(getAutoCreatePrs()).toBe(false)
+      })
+
+      it('individual_cc + auto_create_prs=false suppresses push', () => {
+        core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL_CC)
+        expect(getMode()).toBe(ProcessingModeExternal.INDIVIDUAL_CC)
+        process.env.AUTO_CREATE_PRS = 'false'
+        expect(getAutoCreatePrs()).toBe(false)
+      })
+
+      it('group_cc + auto_create_prs=false suppresses push', () => {
+        core.getInput.mockReturnValue(ProcessingModeExternal.GROUP_CC)
+        expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+        process.env.AUTO_CREATE_PRS = 'false'
+        expect(getAutoCreatePrs()).toBe(false)
+      })
+
+      it('group_cc + auto_create_prs=true allows push', () => {
+        core.getInput.mockReturnValue(ProcessingModeExternal.GROUP_CC)
+        expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+        process.env.AUTO_CREATE_PRS = 'true'
+        expect(getAutoCreatePrs()).toBe(true)
+      })
+
+      it('auto_create_prs defaults to false when not provided', () => {
+        core.getInput.mockReturnValue('')
         expect(getAutoCreatePrs()).toBe(false)
       })
     })
@@ -454,14 +581,14 @@ describe('input.ts', () => {
         expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
       })
 
-      it('returns true by default', () => {
+      it('returns false by default', () => {
         core.getInput.mockReturnValue('')
-        expect(getCreateIssuesForIncompleteRemediations()).toBe(true)
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
       })
 
-      it('returns true and warns for invalid value', () => {
+      it('returns false and warns for invalid value', () => {
         process.env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS = 'invalid'
-        expect(getCreateIssuesForIncompleteRemediations()).toBe(true)
+        expect(getCreateIssuesForIncompleteRemediations()).toBe(false)
         expect(core.warning).toHaveBeenCalledWith(
           expect.stringContaining(
             'Invalid create-issues-for-incomplete-remediations value'
@@ -495,16 +622,22 @@ describe('input.ts', () => {
         )
       })
 
+      it('returns strict when value is strict', () => {
+        process.env.COMMENT_MODIFICATION_MODE = 'strict'
+        expect(getCommentModificationMode()).toBe(
+          CommentModificationMode.STRICT
+        )
+      })
+
       it('returns basic by default', () => {
         core.getInput.mockReturnValue('')
         expect(getCommentModificationMode()).toBe(CommentModificationMode.BASIC)
       })
 
-      it('returns basic and warns for invalid value', () => {
+      it('throws for invalid value', () => {
         process.env.COMMENT_MODIFICATION_MODE = 'invalid'
-        expect(getCommentModificationMode()).toBe(CommentModificationMode.BASIC)
-        expect(core.warning).toHaveBeenCalledWith(
-          expect.stringContaining('Invalid comment-modification-mode')
+        expect(() => getCommentModificationMode()).toThrow(
+          'Invalid comment-modification-mode'
         )
       })
 
@@ -746,6 +879,53 @@ describe('input.ts', () => {
         core.getInput.mockReturnValue('false')
         expect(getUpdateContext()).toBe(true)
       })
+    })
+  })
+
+  describe('regression evidence getters', () => {
+    it('reads regression evidence refs and artifact paths from workflow env', () => {
+      process.env.REGRESSION_EVIDENCE_BASE_REF = 'origin/main'
+      process.env.REGRESSION_EVIDENCE_BASE_SHA = 'abc123'
+      process.env.REGRESSION_EVIDENCE_HEAD_REF = 'HEAD'
+      process.env.REGRESSION_EVIDENCE_HEAD_SHA = 'def456'
+      process.env.REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS =
+        'coverage/a.json,coverage/b.json'
+      process.env.REGRESSION_EVIDENCE_TEST_COMMANDS =
+        'npm test -- {{tests}}\\nnpm run test:smoke'
+
+      expect(getRegressionEvidenceBaseRef()).toBe('origin/main')
+      expect(getRegressionEvidenceBaseSha()).toBe('abc123')
+      expect(getRegressionEvidenceHeadRef()).toBe('HEAD')
+      expect(getRegressionEvidenceHeadSha()).toBe('def456')
+      expect(getRegressionEvidenceCoverageArtifacts()).toBe(
+        'coverage/a.json,coverage/b.json'
+      )
+      expect(getRegressionEvidenceTestCommands()).toBe(
+        'npm test -- {{tests}}\\nnpm run test:smoke'
+      )
+    })
+
+    it('uses default output paths when not provided', () => {
+      core.getInput.mockReturnValue('')
+      expect(getRegressionEvidenceOutputJsonPath()).toBe(
+        'regression-evidence.json'
+      )
+      expect(getRegressionEvidenceOutputMarkdownPath()).toBe(
+        'regression-evidence.md'
+      )
+    })
+
+    it('parses boolean policy flags and warns on invalid values', () => {
+      process.env.REGRESSION_EVIDENCE_ALLOW_PARTIAL = 'true'
+      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'false'
+      expect(getRegressionEvidenceAllowPartial()).toBe(true)
+      expect(getRegressionEvidenceFailOnAtRisk()).toBe(false)
+
+      process.env.REGRESSION_EVIDENCE_ALLOW_PARTIAL = 'maybe'
+      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'maybe'
+      expect(getRegressionEvidenceAllowPartial()).toBe(true)
+      expect(getRegressionEvidenceFailOnAtRisk()).toBe(false)
+      expect(core.warning).toHaveBeenCalled()
     })
   })
 })
