@@ -70341,10 +70341,10 @@ function getUseRemediateLoopCc() {
     return value === 'true';
 }
 function getAutoCreatePrs() {
-    const value = getInputValue('auto-create-prs', 'INPUT_AUTO_CREATE_PRS', 'AUTO_CREATE_PRS') || 'false';
+    const value = getInputValue('auto-create-prs', 'INPUT_AUTO_CREATE_PRS', 'AUTO_CREATE_PRS') || 'true';
     if (value !== 'true' && value !== 'false') {
-        coreExports.warning(`Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: false`);
-        return false;
+        coreExports.warning(`Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: true`);
+        return true;
     }
     return value === 'true';
 }

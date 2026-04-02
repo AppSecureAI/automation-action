@@ -485,9 +485,9 @@ describe('input.ts', () => {
         expect(getAutoCreatePrs()).toBe(false)
       })
 
-      it('returns false by default', () => {
+      it('returns true by default', () => {
         core.getInput.mockReturnValue('')
-        expect(getAutoCreatePrs()).toBe(false)
+        expect(getAutoCreatePrs()).toBe(true)
       })
 
       it('prefers AUTO_CREATE_PRS workflow env var', () => {
@@ -532,9 +532,9 @@ describe('input.ts', () => {
         expect(getAutoCreatePrs()).toBe(true)
       })
 
-      it('auto_create_prs defaults to false when not provided', () => {
+      it('auto_create_prs defaults to true when not provided', () => {
         core.getInput.mockReturnValue('')
-        expect(getAutoCreatePrs()).toBe(false)
+        expect(getAutoCreatePrs()).toBe(true)
       })
     })
 

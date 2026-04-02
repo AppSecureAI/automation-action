@@ -130,7 +130,7 @@ runs:
         INPUT_USE_VALIDATE_CC: ${{ env.USE_VALIDATE_CC || 'false' }}
         INPUT_VALIDATE_METHOD: ${{ env.VALIDATE_METHOD || 'baseline' }}
         INPUT_USE_REMEDIATE_LOOP_CC: ${{ env.USE_REMEDIATE_LOOP_CC || 'true' }}
-        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'false' }}
+        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'true' }}
         INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS:
           ${{ env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS || 'false' }}
         INPUT_COMMENT_MODIFICATION_MODE:

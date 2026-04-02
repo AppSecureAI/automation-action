@@ -207,12 +207,12 @@ export function getAutoCreatePrs(): boolean {
       'auto-create-prs',
       'INPUT_AUTO_CREATE_PRS',
       'AUTO_CREATE_PRS'
-    ) || 'false'
+    ) || 'true'
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: false`
+      `Invalid auto-create-prs value "${value}". Must be "true" or "false". Using default: true`
     )
-    return false
+    return true
   }
   return value === 'true'
 }
