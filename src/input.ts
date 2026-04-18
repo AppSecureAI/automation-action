@@ -409,6 +409,20 @@ export function getGroupingStrategy(): GroupingStrategy {
   return strategy as GroupingStrategy
 }
 
+export function isGroupingStrategyConfigured(): boolean {
+  const workflowValue = process.env.GROUPING_STRATEGY
+  if (workflowValue !== undefined && workflowValue !== '') {
+    return true
+  }
+
+  const envValue = process.env.INPUT_GROUPING_STRATEGY
+  if (envValue !== undefined && envValue !== '') {
+    return true
+  }
+
+  return core.getInput('grouping-strategy') !== ''
+}
+
 export function getMaxVulnerabilitiesPerPr(): number {
   const value =
     getInputValue(
@@ -452,6 +466,20 @@ export function getGroupingStage(): GroupingStage {
     return GroupingStage.PRE_PUSH
   }
   return stage as GroupingStage
+}
+
+export function isGroupingStageConfigured(): boolean {
+  const workflowValue = process.env.GROUPING_STAGE
+  if (workflowValue !== undefined && workflowValue !== '') {
+    return true
+  }
+
+  const envValue = process.env.INPUT_GROUPING_STAGE
+  if (envValue !== undefined && envValue !== '') {
+    return true
+  }
+
+  return core.getInput('grouping-stage') !== ''
 }
 
 export function getUpdateContext(): boolean {

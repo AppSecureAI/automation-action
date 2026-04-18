@@ -14,7 +14,7 @@ import require$$0$4 from 'string_decoder';
 import require$$2$1 from 'child_process';
 import require$$6 from 'timers';
 import stream, { Readable } from 'stream';
-import require$$0$5 from 'url';
+import require$$5$1 from 'url';
 import http2 from 'http2';
 import require$$1$4 from 'tty';
 import zlib from 'zlib';
@@ -54153,7 +54153,7 @@ function requireForm_data () {
 	var path = require$$1$3;
 	var http = require$$0$3;
 	var https = require$$1;
-	var parseUrl = require$$0$5.parse;
+	var parseUrl = require$$5$1.parse;
 	var fs$1 = fs;
 	var Stream = stream.Stream;
 	var crypto = require$$0$2;
@@ -54937,8 +54937,8 @@ prototype.toString = function toString(encoder) {
 };
 
 /**
- * It replaces all instances of the characters `:`, `$`, `,`, `+`, `[`, and `]` with their
- * URI encoded counterparts
+ * It replaces URL-encoded forms of `:`, `$`, `,`, and spaces with
+ * their plain counterparts (`:`, `$`, `,`, `+`).
  *
  * @param {string} val The value to be encoded.
  *
@@ -55072,7 +55072,7 @@ var transitionalDefaults = {
   legacyInterceptorReqResOrdering: true,
 };
 
-var URLSearchParams$1 = require$$0$5.URLSearchParams;
+var URLSearchParams$1 = require$$5$1.URLSearchParams;
 
 const ALPHA = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -55500,8 +55500,41 @@ var parseHeaders = (rawHeaders) => {
 
 const $internals = Symbol('internals');
 
+const isValidHeaderValue = (value) => !/[\r\n]/.test(value);
+
+function assertValidHeaderValue(value, header) {
+  if (value === false || value == null) {
+    return;
+  }
+
+  if (utils$3.isArray(value)) {
+    value.forEach((v) => assertValidHeaderValue(v, header));
+    return;
+  }
+
+  if (!isValidHeaderValue(String(value))) {
+    throw new Error(`Invalid character in header content ["${header}"]`);
+  }
+}
+
 function normalizeHeader(header) {
   return header && String(header).trim().toLowerCase();
+}
+
+function stripTrailingCRLF(str) {
+  let end = str.length;
+
+  while (end > 0) {
+    const charCode = str.charCodeAt(end - 1);
+
+    if (charCode !== 10 && charCode !== 13) {
+      break;
+    }
+
+    end -= 1;
+  }
+
+  return end === str.length ? str : str.slice(0, end);
 }
 
 function normalizeValue(value) {
@@ -55509,7 +55542,7 @@ function normalizeValue(value) {
     return value;
   }
 
-  return utils$3.isArray(value) ? value.map(normalizeValue) : String(value);
+  return utils$3.isArray(value) ? value.map(normalizeValue) : stripTrailingCRLF(String(value));
 }
 
 function parseTokens(str) {
@@ -55591,6 +55624,7 @@ let AxiosHeaders$1 = class AxiosHeaders {
         _rewrite === true ||
         (_rewrite === undefined && self[key] !== false)
       ) {
+        assertValidHeaderValue(_value, _header);
         self[key || _header] = normalizeValue(_value);
       }
     }
@@ -55958,125 +55992,107 @@ function buildFullPath(baseURL, requestedURL, allowAbsoluteUrls) {
   return requestedURL;
 }
 
-var proxyFromEnv$1 = {};
+var DEFAULT_PORTS$1 = {
+  ftp: 21,
+  gopher: 70,
+  http: 80,
+  https: 443,
+  ws: 80,
+  wss: 443,
+};
 
-var hasRequiredProxyFromEnv;
-
-function requireProxyFromEnv () {
-	if (hasRequiredProxyFromEnv) return proxyFromEnv$1;
-	hasRequiredProxyFromEnv = 1;
-
-	var parseUrl = require$$0$5.parse;
-
-	var DEFAULT_PORTS = {
-	  ftp: 21,
-	  gopher: 70,
-	  http: 80,
-	  https: 443,
-	  ws: 80,
-	  wss: 443,
-	};
-
-	var stringEndsWith = String.prototype.endsWith || function(s) {
-	  return s.length <= this.length &&
-	    this.indexOf(s, this.length - s.length) !== -1;
-	};
-
-	/**
-	 * @param {string|object} url - The URL, or the result from url.parse.
-	 * @return {string} The URL of the proxy that should handle the request to the
-	 *  given URL. If no proxy is set, this will be an empty string.
-	 */
-	function getProxyForUrl(url) {
-	  var parsedUrl = typeof url === 'string' ? parseUrl(url) : url || {};
-	  var proto = parsedUrl.protocol;
-	  var hostname = parsedUrl.host;
-	  var port = parsedUrl.port;
-	  if (typeof hostname !== 'string' || !hostname || typeof proto !== 'string') {
-	    return '';  // Don't proxy URLs without a valid scheme or host.
-	  }
-
-	  proto = proto.split(':', 1)[0];
-	  // Stripping ports in this way instead of using parsedUrl.hostname to make
-	  // sure that the brackets around IPv6 addresses are kept.
-	  hostname = hostname.replace(/:\d*$/, '');
-	  port = parseInt(port) || DEFAULT_PORTS[proto] || 0;
-	  if (!shouldProxy(hostname, port)) {
-	    return '';  // Don't proxy URLs that match NO_PROXY.
-	  }
-
-	  var proxy =
-	    getEnv('npm_config_' + proto + '_proxy') ||
-	    getEnv(proto + '_proxy') ||
-	    getEnv('npm_config_proxy') ||
-	    getEnv('all_proxy');
-	  if (proxy && proxy.indexOf('://') === -1) {
-	    // Missing scheme in proxy, default to the requested URL's scheme.
-	    proxy = proto + '://' + proxy;
-	  }
-	  return proxy;
-	}
-
-	/**
-	 * Determines whether a given URL should be proxied.
-	 *
-	 * @param {string} hostname - The host name of the URL.
-	 * @param {number} port - The effective port of the URL.
-	 * @returns {boolean} Whether the given URL should be proxied.
-	 * @private
-	 */
-	function shouldProxy(hostname, port) {
-	  var NO_PROXY =
-	    (getEnv('npm_config_no_proxy') || getEnv('no_proxy')).toLowerCase();
-	  if (!NO_PROXY) {
-	    return true;  // Always proxy if NO_PROXY is not set.
-	  }
-	  if (NO_PROXY === '*') {
-	    return false;  // Never proxy if wildcard is set.
-	  }
-
-	  return NO_PROXY.split(/[,\s]/).every(function(proxy) {
-	    if (!proxy) {
-	      return true;  // Skip zero-length hosts.
-	    }
-	    var parsedProxy = proxy.match(/^(.+):(\d+)$/);
-	    var parsedProxyHostname = parsedProxy ? parsedProxy[1] : proxy;
-	    var parsedProxyPort = parsedProxy ? parseInt(parsedProxy[2]) : 0;
-	    if (parsedProxyPort && parsedProxyPort !== port) {
-	      return true;  // Skip if ports don't match.
-	    }
-
-	    if (!/^[.*]/.test(parsedProxyHostname)) {
-	      // No wildcards, so stop proxying if there is an exact match.
-	      return hostname !== parsedProxyHostname;
-	    }
-
-	    if (parsedProxyHostname.charAt(0) === '*') {
-	      // Remove leading wildcard.
-	      parsedProxyHostname = parsedProxyHostname.slice(1);
-	    }
-	    // Stop proxying if the hostname ends with the no_proxy host.
-	    return !stringEndsWith.call(hostname, parsedProxyHostname);
-	  });
-	}
-
-	/**
-	 * Get the value for an environment variable.
-	 *
-	 * @param {string} key - The name of the environment variable.
-	 * @return {string} The value of the environment variable.
-	 * @private
-	 */
-	function getEnv(key) {
-	  return process.env[key.toLowerCase()] || process.env[key.toUpperCase()] || '';
-	}
-
-	proxyFromEnv$1.getProxyForUrl = getProxyForUrl;
-	return proxyFromEnv$1;
+function parseUrl$1(urlString) {
+  try {
+    return new URL(urlString);
+  } catch {
+    return null;
+  }
 }
 
-var proxyFromEnvExports = requireProxyFromEnv();
-var proxyFromEnv = /*@__PURE__*/getDefaultExportFromCjs(proxyFromEnvExports);
+/**
+ * @param {string|object|URL} url - The URL as a string or URL instance, or a
+ *   compatible object (such as the result from legacy url.parse).
+ * @return {string} The URL of the proxy that should handle the request to the
+ *  given URL. If no proxy is set, this will be an empty string.
+ */
+function getProxyForUrl(url) {
+  var parsedUrl = (typeof url === 'string' ? parseUrl$1(url) : url) || {};
+  var proto = parsedUrl.protocol;
+  var hostname = parsedUrl.host;
+  var port = parsedUrl.port;
+  if (typeof hostname !== 'string' || !hostname || typeof proto !== 'string') {
+    return '';  // Don't proxy URLs without a valid scheme or host.
+  }
+
+  proto = proto.split(':', 1)[0];
+  // Stripping ports in this way instead of using parsedUrl.hostname to make
+  // sure that the brackets around IPv6 addresses are kept.
+  hostname = hostname.replace(/:\d*$/, '');
+  port = parseInt(port) || DEFAULT_PORTS$1[proto] || 0;
+  if (!shouldProxy(hostname, port)) {
+    return '';  // Don't proxy URLs that match NO_PROXY.
+  }
+
+  var proxy = getEnv(proto + '_proxy') || getEnv('all_proxy');
+  if (proxy && proxy.indexOf('://') === -1) {
+    // Missing scheme in proxy, default to the requested URL's scheme.
+    proxy = proto + '://' + proxy;
+  }
+  return proxy;
+}
+
+/**
+ * Determines whether a given URL should be proxied.
+ *
+ * @param {string} hostname - The host name of the URL.
+ * @param {number} port - The effective port of the URL.
+ * @returns {boolean} Whether the given URL should be proxied.
+ * @private
+ */
+function shouldProxy(hostname, port) {
+  var NO_PROXY = getEnv('no_proxy').toLowerCase();
+  if (!NO_PROXY) {
+    return true;  // Always proxy if NO_PROXY is not set.
+  }
+  if (NO_PROXY === '*') {
+    return false;  // Never proxy if wildcard is set.
+  }
+
+  return NO_PROXY.split(/[,\s]/).every(function(proxy) {
+    if (!proxy) {
+      return true;  // Skip zero-length hosts.
+    }
+    var parsedProxy = proxy.match(/^(.+):(\d+)$/);
+    var parsedProxyHostname = parsedProxy ? parsedProxy[1] : proxy;
+    var parsedProxyPort = parsedProxy ? parseInt(parsedProxy[2]) : 0;
+    if (parsedProxyPort && parsedProxyPort !== port) {
+      return true;  // Skip if ports don't match.
+    }
+
+    if (!/^[.*]/.test(parsedProxyHostname)) {
+      // No wildcards, so stop proxying if there is an exact match.
+      return hostname !== parsedProxyHostname;
+    }
+
+    if (parsedProxyHostname.charAt(0) === '*') {
+      // Remove leading wildcard.
+      parsedProxyHostname = parsedProxyHostname.slice(1);
+    }
+    // Stop proxying if the hostname ends with the no_proxy host.
+    return !hostname.endsWith(parsedProxyHostname);
+  });
+}
+
+/**
+ * Get the value for an environment variable.
+ *
+ * @param {string} key - The name of the environment variable.
+ * @return {string} The value of the environment variable.
+ * @private
+ */
+function getEnv(key) {
+  return process.env[key.toLowerCase()] || process.env[key.toUpperCase()] || '';
+}
 
 var followRedirects$1 = {exports: {}};
 
@@ -57318,7 +57334,7 @@ var hasRequiredFollowRedirects;
 function requireFollowRedirects () {
 	if (hasRequiredFollowRedirects) return followRedirects$1.exports;
 	hasRequiredFollowRedirects = 1;
-	var url = require$$0$5;
+	var url = require$$5$1;
 	var URL = url.URL;
 	var http = require$$0$3;
 	var https = require$$1;
@@ -57345,6 +57361,13 @@ function requireFollowRedirects () {
 	catch (error) {
 	  useNativeURL = error.code === "ERR_INVALID_URL";
 	}
+
+	// HTTP headers to drop across HTTP/HTTPS and domain boundaries
+	var sensitiveHeaders = [
+	  "Authorization",
+	  "Proxy-Authorization",
+	  "Cookie",
+	];
 
 	// URL fields to preserve in copy operations
 	var preservedUrlFields = [
@@ -57426,6 +57449,11 @@ function requireFollowRedirects () {
 	        cause : new RedirectionError({ cause: cause }));
 	    }
 	  };
+
+	  // Create filter for sensitive HTTP headers
+	  this._headerFilter = new RegExp("^(?:" +
+	      sensitiveHeaders.concat(options.sensitiveHeaders).map(escapeRegex).join("|") +
+	    ")$", "i");
 
 	  // Perform the first request
 	  this._performRequest();
@@ -57610,6 +57638,9 @@ function requireFollowRedirects () {
 	  if (!options.headers) {
 	    options.headers = {};
 	  }
+	  if (!isArray(options.sensitiveHeaders)) {
+	    options.sensitiveHeaders = [];
+	  }
 
 	  // Since http.request treats host as an alias of hostname,
 	  // but the url module interprets host as hostname plus port,
@@ -57792,7 +57823,7 @@ function requireFollowRedirects () {
 	     redirectUrl.protocol !== "https:" ||
 	     redirectUrl.host !== currentHost &&
 	     !isSubdomain(redirectUrl.host, currentHost)) {
-	    removeMatchingHeaders(/^(?:(?:proxy-)?authorization|cookie)$/i, this._options.headers);
+	    removeMatchingHeaders(this._headerFilter, this._options.headers);
 	  }
 
 	  // Evaluate the beforeRedirect callback
@@ -57985,6 +58016,10 @@ function requireFollowRedirects () {
 	  return dot > 0 && subdomain[dot] === "." && subdomain.endsWith(domain);
 	}
 
+	function isArray(value) {
+	  return value instanceof Array;
+	}
+
 	function isString(value) {
 	  return typeof value === "string" || value instanceof String;
 	}
@@ -58001,6 +58036,10 @@ function requireFollowRedirects () {
 	  return URL && value instanceof URL;
 	}
 
+	function escapeRegex(regex) {
+	  return regex.replace(/[\]\\/()*+?.$]/g, "\\$&");
+	}
+
 	// Exports
 	followRedirects$1.exports = wrap({ http: http, https: https });
 	followRedirects$1.exports.wrap = wrap;
@@ -58010,7 +58049,7 @@ function requireFollowRedirects () {
 var followRedirectsExports = requireFollowRedirects();
 var followRedirects = /*@__PURE__*/getDefaultExportFromCjs(followRedirectsExports);
 
-const VERSION$8 = "1.13.6";
+const VERSION$8 = "1.15.0";
 
 function parseProtocol(url) {
   const match = /^([-+\w]{1,25})(:?\/\/|:)/.exec(url);
@@ -58379,6 +58418,113 @@ const callbackify = (fn, reducer) => {
     : fn;
 };
 
+const DEFAULT_PORTS = {
+  http: 80,
+  https: 443,
+  ws: 80,
+  wss: 443,
+  ftp: 21,
+};
+
+const parseNoProxyEntry = (entry) => {
+  let entryHost = entry;
+  let entryPort = 0;
+
+  if (entryHost.charAt(0) === '[') {
+    const bracketIndex = entryHost.indexOf(']');
+
+    if (bracketIndex !== -1) {
+      const host = entryHost.slice(1, bracketIndex);
+      const rest = entryHost.slice(bracketIndex + 1);
+
+      if (rest.charAt(0) === ':' && /^\d+$/.test(rest.slice(1))) {
+        entryPort = Number.parseInt(rest.slice(1), 10);
+      }
+
+      return [host, entryPort];
+    }
+  }
+
+  const firstColon = entryHost.indexOf(':');
+  const lastColon = entryHost.lastIndexOf(':');
+
+  if (
+    firstColon !== -1 &&
+    firstColon === lastColon &&
+    /^\d+$/.test(entryHost.slice(lastColon + 1))
+  ) {
+    entryPort = Number.parseInt(entryHost.slice(lastColon + 1), 10);
+    entryHost = entryHost.slice(0, lastColon);
+  }
+
+  return [entryHost, entryPort];
+};
+
+const normalizeNoProxyHost = (hostname) => {
+  if (!hostname) {
+    return hostname;
+  }
+
+  if (hostname.charAt(0) === '[' && hostname.charAt(hostname.length - 1) === ']') {
+    hostname = hostname.slice(1, -1);
+  }
+
+  return hostname.replace(/\.+$/, '');
+};
+
+function shouldBypassProxy(location) {
+  let parsed;
+
+  try {
+    parsed = new URL(location);
+  } catch (_err) {
+    return false;
+  }
+
+  const noProxy = (process.env.no_proxy || process.env.NO_PROXY || '').toLowerCase();
+
+  if (!noProxy) {
+    return false;
+  }
+
+  if (noProxy === '*') {
+    return true;
+  }
+
+  const port =
+    Number.parseInt(parsed.port, 10) || DEFAULT_PORTS[parsed.protocol.split(':', 1)[0]] || 0;
+
+  const hostname = normalizeNoProxyHost(parsed.hostname.toLowerCase());
+
+  return noProxy.split(/[\s,]+/).some((entry) => {
+    if (!entry) {
+      return false;
+    }
+
+    let [entryHost, entryPort] = parseNoProxyEntry(entry);
+
+    entryHost = normalizeNoProxyHost(entryHost);
+
+    if (!entryHost) {
+      return false;
+    }
+
+    if (entryPort && entryPort !== port) {
+      return false;
+    }
+
+    if (entryHost.charAt(0) === '*') {
+      entryHost = entryHost.slice(1);
+    }
+
+    if (entryHost.charAt(0) === '.') {
+      return hostname.endsWith(entryHost);
+    }
+
+    return hostname === entryHost;
+  });
+}
+
 /**
  * Calculate data maxRate
  * @param {Number} [samplesCount= 10]
@@ -58674,6 +58820,9 @@ class Http2Sessions {
           } else {
             entries.splice(i, 1);
           }
+          if (!session.closed) {
+            session.close();
+          }
           return;
         }
       }
@@ -58753,9 +58902,11 @@ function dispatchBeforeRedirect(options, responseDetails) {
 function setProxy(options, configProxy, location) {
   let proxy = configProxy;
   if (!proxy && proxy !== false) {
-    const proxyUrl = proxyFromEnv.getProxyForUrl(location);
+    const proxyUrl = getProxyForUrl(location);
     if (proxyUrl) {
-      proxy = new URL(proxyUrl);
+      if (!shouldBypassProxy(location)) {
+        proxy = new URL(proxyUrl);
+      }
     }
   }
   if (proxy) {
@@ -59229,7 +59380,6 @@ var httpAdapter = isHttpAdapterSupported &&
           protocol + '//' + parsed.hostname + (parsed.port ? ':' + parsed.port : '') + options.path
         );
       }
-
       let transport;
       const isHttpsRequest = isHttps.test(options.protocol);
       options.agent = isHttpsRequest ? config.httpsAgent : config.httpAgent;
@@ -60143,14 +60293,18 @@ const factory = (env) => {
     test(() => {
       let duplexAccessed = false;
 
+      const body = new ReadableStream$1();
+
       const hasContentType = new Request(platform.origin, {
-        body: new ReadableStream$1(),
+        body,
         method: 'POST',
         get duplex() {
           duplexAccessed = true;
           return 'half';
         },
       }).headers.has('Content-Type');
+
+      body.cancel();
 
       return duplexAccessed && !hasContentType;
     });
@@ -60744,13 +60898,29 @@ let Axios$1 = class Axios {
         Error.captureStackTrace ? Error.captureStackTrace(dummy) : (dummy = new Error());
 
         // slice off the Error: ... line
-        const stack = dummy.stack ? dummy.stack.replace(/^.+\n/, '') : '';
+        const stack = (() => {
+          if (!dummy.stack) {
+            return '';
+          }
+
+          const firstNewlineIndex = dummy.stack.indexOf('\n');
+
+          return firstNewlineIndex === -1 ? '' : dummy.stack.slice(firstNewlineIndex + 1);
+        })();
         try {
           if (!err.stack) {
             err.stack = stack;
             // match without the 2 top stack lines
-          } else if (stack && !String(err.stack).endsWith(stack.replace(/^.+\n.+\n/, ''))) {
-            err.stack += '\n' + stack;
+          } else if (stack) {
+            const firstNewlineIndex = stack.indexOf('\n');
+            const secondNewlineIndex =
+              firstNewlineIndex === -1 ? -1 : stack.indexOf('\n', firstNewlineIndex + 1);
+            const stackWithoutTwoTopLines =
+              secondNewlineIndex === -1 ? '' : stack.slice(secondNewlineIndex + 1);
+
+            if (!String(err.stack).endsWith(stackWithoutTwoTopLines)) {
+              err.stack += '\n' + stack;
+            }
           }
         } catch (e) {
           // ignore the case where "stack" is an un-writable property
@@ -60932,8 +61102,6 @@ utils$3.forEach(['delete', 'get', 'head', 'options'], function forEachMethodNoDa
 });
 
 utils$3.forEach(['post', 'put', 'patch'], function forEachMethodWithData(method) {
-  /*eslint func-names:0*/
-
   function generateHTTPMethod(isForm) {
     return function httpMethod(url, data, config) {
       return this.request(
@@ -65198,6 +65366,7 @@ const RunResponseSchema = objectType({
     description: stringType().nullish(),
     steps: StepListSchema,
     run_id: stringType().nullable(),
+    organization_id: stringType().optional(),
     summary: RunSummarySchema.nullable().optional(),
     context_updated: ContextUpdatedSchema.optional()
 });
@@ -70437,6 +70606,17 @@ function getGroupingStrategy() {
     }
     return strategy;
 }
+function isGroupingStrategyConfigured() {
+    const workflowValue = process.env.GROUPING_STRATEGY;
+    if (workflowValue !== undefined && workflowValue !== '') {
+        return true;
+    }
+    const envValue = process.env.INPUT_GROUPING_STRATEGY;
+    if (envValue !== undefined && envValue !== '') {
+        return true;
+    }
+    return coreExports.getInput('grouping-strategy') !== '';
+}
 function getMaxVulnerabilitiesPerPr() {
     const value = getInputValue('max-vulnerabilities-per-pr', 'INPUT_MAX_VULNERABILITIES_PER_PR', 'MAX_VULNERABILITIES_PER_PR') || '10';
     const parsed = parseInt(value, 10);
@@ -70467,6 +70647,17 @@ function getGroupingStage() {
     }
     return stage;
 }
+function isGroupingStageConfigured() {
+    const workflowValue = process.env.GROUPING_STAGE;
+    if (workflowValue !== undefined && workflowValue !== '') {
+        return true;
+    }
+    const envValue = process.env.INPUT_GROUPING_STAGE;
+    if (envValue !== undefined && envValue !== '') {
+        return true;
+    }
+    return coreExports.getInput('grouping-stage') !== '';
+}
 function getUpdateContext() {
     const value = getInputValue('update-context', 'INPUT_UPDATE_CONTEXT', 'UPDATE_CONTEXT') ||
         'false';
@@ -70483,6 +70674,7 @@ function getUpdateContext() {
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const store = {
     id: '',
+    organizationId: undefined,
     finalLogPrinted: {}
 };
 
@@ -70942,13 +71134,20 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
     const manualReviewCount = summary?.needs_manual_review_count ??
         tracking?.triage_status?.needs_manual_review_count ??
         0;
-    const hasHandledErrors = Boolean(summary?.has_handled_errors) ||
-        handledErrorCount > 0 ||
-        manualReviewCount > 0;
+    const hasHandledErrors = Boolean(summary?.has_handled_errors) || handledErrorCount > 0;
+    const hasManualReviewOnly = manualReviewCount > 0;
     // Add outcome banner
     if (success) {
         if (hasHandledErrors) {
-            coreExports.summary.addRaw(`> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount}) and manual review required (${manualReviewCount})\n\n`, true);
+            if (manualReviewCount > 0) {
+                coreExports.summary.addRaw(`> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount}) and manual review required (${manualReviewCount})\n\n`, true);
+            }
+            else {
+                coreExports.summary.addRaw(`> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount})\n\n`, true);
+            }
+        }
+        else if (hasManualReviewOnly) {
+            coreExports.summary.addRaw(`> **Status:** ⚠️ Completed with manual review required (${manualReviewCount})\n\n`, true);
         }
         else {
             coreExports.summary.addRaw('> **Status:** ✅ Completed successfully\n\n', true);
@@ -71513,6 +71712,8 @@ function logSummary(summary, prTitles, dashboardUrl) {
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const API_TIMEOUT = 8 * 60 * 1000;
+const SUBMIT_RETRY_MAX_RETRIES = 4;
+const SUBMIT_RETRY_BASE_DELAY_MS = process.env.NODE_ENV === 'test' ? 10 : 2000;
 /**
  * Check whether an axios error is retriable (transient network or server error).
  * Retries on network errors (timeout, connection reset) and HTTP 5xx responses.
@@ -71733,11 +71934,16 @@ async function submitRun(file, fileName) {
     if (isMaxVulnerabilitiesPerPrConfigured()) {
         formData.append('max_vulnerabilities_per_pr', String(getMaxVulnerabilitiesPerPr()));
     }
-    // Grouping fields (grouping_enabled, grouping_strategy, grouping_stage)
-    // are not sent: Hydra currently classifies them as unsupported submit fields
-    // for this channel.
+    // grouping_enabled remains implicit in processing_mode, but explicit per-run
+    // overrides can now flow through Hydra and Product.
+    if (isGroupingStrategyConfigured()) {
+        formData.append('grouping_strategy', getGroupingStrategy());
+    }
+    if (isGroupingStageConfigured()) {
+        formData.append('grouping_stage', getGroupingStage());
+    }
     if (getGroupingEnabled()) {
-        coreExports.warning('grouping-enabled is set but grouping fields are not supported in the current submit contract and will be ignored.');
+        coreExports.debug('grouping-enabled is set; grouping behavior remains inferred from processing_mode.');
     }
     // update_context is not sent: unsupported by Hydra for this submit channel.
     if (getUpdateContext()) {
@@ -71754,8 +71960,7 @@ async function submitRun(file, fileName) {
     };
     const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`;
     coreExports.info(`${prefixLabel} Submitting analysis results for processing...`);
-    return axios
-        .post(url, formData, setup)
+    return fetchWithRetry(() => axios.post(url, formData, setup), SUBMIT_RETRY_MAX_RETRIES, SUBMIT_RETRY_BASE_DELAY_MS)
         .then((response) => {
         const parsedResponse = RunResponseSchema.safeParse(response.data);
         if (!parsedResponse.success) {
@@ -71769,7 +71974,8 @@ async function submitRun(file, fileName) {
         logSteps(validData.steps, LogLabels.RUN_SUBMIT);
         return {
             message: validData.message,
-            run_id: validData.run_id
+            run_id: validData.run_id,
+            organization_id: validData.organization_id
         };
     })
         .catch((error) => {
@@ -71883,12 +72089,14 @@ async function submitRun(file, fileName) {
         throw new Error(errorMessage);
     });
 }
-async function getStatus(id) {
+async function getStatus(id, organizationId) {
     const apiUrl = getApiUrl();
     const token = await getIdToken(apiUrl);
-    const url = `${apiUrl}/api-product/submit/status/${id}`;
+    const url = organizationId
+        ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${id}/status`)
+        : new URL(`${apiUrl}/api-product/submit/status/${id}`);
     const prefixLabel = `[${LogLabels.RUN_STATUS}]`;
-    coreExports.debug(`Calling status API: GET /api-product/submit/status/${id}`);
+    coreExports.debug(`Calling status API: GET ${url.pathname}${url.search}`);
     const setup = {
         headers: token
             ? {
@@ -71897,7 +72105,7 @@ async function getStatus(id) {
             : undefined,
         timeout: PollingConfig.STATUS_TIMEOUT_MS
     };
-    return fetchWithRetry(() => axios.get(url, setup), 2, 500)
+    return fetchWithRetry(() => axios.get(url.toString(), setup), 2, 500)
         .then((response) => {
         const parsedResponse = ResponseStatusSchema.safeParse(response.data);
         if (!parsedResponse.success) {
@@ -71931,7 +72139,15 @@ async function getStatus(id) {
                 processTracking?.triage_status?.needs_manual_review_count ??
                 0;
             if (handledErrors > 0 || manualReviewCount > 0) {
-                coreExports.warning(`${prefixLabel}: Run completed with handled triage errors (${handledErrors}) and manual review required (${manualReviewCount}).`);
+                if (handledErrors > 0 && manualReviewCount > 0) {
+                    coreExports.warning(`${prefixLabel}: Run completed with handled triage errors (${handledErrors}) and manual review required (${manualReviewCount}).`);
+                }
+                else if (handledErrors > 0) {
+                    coreExports.warning(`${prefixLabel}: Run completed with handled triage errors (${handledErrors}).`);
+                }
+                else {
+                    coreExports.warning(`${prefixLabel}: Run completed with manual review required (${manualReviewCount}).`);
+                }
             }
             else {
                 coreExports.info(`${prefixLabel}: Run completed successfully`);
@@ -72183,12 +72399,14 @@ function delay(ms) {
  * @returns The run summary if available, null otherwise
  */
 async function finalizeRun(runId, options = {}) {
-    const { expectedPrCount, maxRetries = 3, retryDelay = 2000 } = options;
+    const { expectedPrCount, organizationId, maxRetries = 3, retryDelay = 2000 } = options;
     const apiUrl = getApiUrl();
     const token = await getIdToken(apiUrl);
-    const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`;
+    const url = organizationId
+        ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`)
+        : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`);
     const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
-    coreExports.debug(`Calling finalize API: POST ${url}`);
+    coreExports.debug(`Calling finalize API: POST ${url.pathname}${url.search}`);
     const setup = {
         headers: token
             ? {
@@ -72201,7 +72419,7 @@ async function finalizeRun(runId, options = {}) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         coreExports.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`);
         try {
-            const response = await axios.post(url, {}, setup);
+            const response = await axios.post(url.toString(), {}, setup);
             const parsed = RunSummarySchema.safeParse(response.data);
             if (!parsed.success) {
                 coreExports.warning(`${prefixLabel}: Received unexpected response format from finalize API`);
@@ -72266,7 +72484,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.1';
+const VERSION = '1.1.11';
 const CLIENT_VERSION = VERSION;
 
 var re = {exports: {}};
@@ -75698,6 +75916,7 @@ async function run() {
     let finalSummary = null;
     const startTime = Date.now();
     let success = false;
+    let monitoringIndeterminate = false;
     try {
         // Display AppSecAI branding at run start
         coreExports.info('');
@@ -75757,10 +75976,14 @@ async function run() {
         // Step 3: Poll for status (non-critical failure)
         if (submitOutput.run_id) {
             store.id = submitOutput.run_id;
+            store.organizationId = submitOutput.organization_id;
             coreExports.info(`[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`);
             try {
-                const getRunStatus = () => getStatus(store.id);
+                const getRunStatus = () => getStatus(store.id, store.organizationId);
                 const pollResult = await pollStatusUntilComplete(getRunStatus, retries, pollDelay);
+                if (!pollResult) {
+                    monitoringIndeterminate = true;
+                }
                 // Capture final process tracking and summary for job summary
                 // Type assertions are safe here because Zod schema validation ensures complete data
                 if (pollResult?.processTracking) {
@@ -75772,6 +75995,7 @@ async function run() {
                 }
             }
             catch (pollError) {
+                monitoringIndeterminate = true;
                 // This is a "soft" failure. Log a warning but let the process complete
                 coreExports.warning(`[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`);
             }
@@ -75816,11 +76040,21 @@ async function run() {
             // Get expected PR count from push_status.success_count to verify summary completeness
             // This addresses the race condition where summary may be computed before all PRs are persisted
             const expectedPrCount = finalProcessTracking?.push_status?.success_count;
-            const finalizeSummary = await finalizeRun(store.id, { expectedPrCount });
+            const finalizeSummary = await finalizeRun(store.id, {
+                expectedPrCount,
+                organizationId: store.organizationId
+            });
             // Use finalize summary if we don't already have one from polling
             if (finalizeSummary && !finalSummary) {
                 finalSummary = finalizeSummary;
             }
+        }
+        if (success && store.id && monitoringIndeterminate && !finalSummary) {
+            success = false;
+            const errorMessage = 'Run monitoring became indeterminate and final summary data was unavailable. ' +
+                'The server may have been unreachable or degraded while the run was still in progress.';
+            coreExports.error(errorMessage);
+            coreExports.setFailed(errorMessage);
         }
         // Write job summary
         const durationMs = Date.now() - startTime;

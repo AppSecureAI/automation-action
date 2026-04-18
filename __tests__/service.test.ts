@@ -25,9 +25,14 @@ const mockGetCommentModificationMode = jest.fn()
 const mockGetMaxVulnerabilitiesPerPr = jest.fn()
 const mockIsMaxVulnerabilitiesPerPrConfigured = jest.fn()
 const mockGetGroupingEnabled = jest.fn()
+const mockGetGroupingStrategy = jest.fn()
+const mockIsGroupingStrategyConfigured = jest.fn()
+const mockGetGroupingStage = jest.fn()
+const mockIsGroupingStageConfigured = jest.fn()
 const mockGetUpdateContext = jest.fn()
 
 jest.mock('../src/input', () => ({
+  __esModule: true,
   getApiUrl: mockGetApiUrl,
   getMode: mockGetMode,
   getAutoCreatePrs: mockGetAutoCreatePrs,
@@ -37,6 +42,10 @@ jest.mock('../src/input', () => ({
   getMaxVulnerabilitiesPerPr: mockGetMaxVulnerabilitiesPerPr,
   isMaxVulnerabilitiesPerPrConfigured: mockIsMaxVulnerabilitiesPerPrConfigured,
   getGroupingEnabled: mockGetGroupingEnabled,
+  getGroupingStrategy: mockGetGroupingStrategy,
+  isGroupingStrategyConfigured: mockIsGroupingStrategyConfigured,
+  getGroupingStage: mockGetGroupingStage,
+  isGroupingStageConfigured: mockIsGroupingStageConfigured,
   getUpdateContext: mockGetUpdateContext
 }))
 jest.mock('../src/store', () => ({
@@ -88,6 +97,10 @@ describe('service.ts', () => {
     mockGetMaxVulnerabilitiesPerPr.mockReturnValue(10)
     mockIsMaxVulnerabilitiesPerPrConfigured.mockReturnValue(false)
     mockGetGroupingEnabled.mockReturnValue(false)
+    mockGetGroupingStrategy.mockReturnValue('cwe_category')
+    mockIsGroupingStrategyConfigured.mockReturnValue(false)
+    mockGetGroupingStage.mockReturnValue('pre_push')
+    mockIsGroupingStageConfigured.mockReturnValue(false)
     mockGetUpdateContext.mockReturnValue(false)
     store.finalLogPrinted = {}
     logSteps.mockClear()
@@ -125,6 +138,33 @@ describe('service.ts', () => {
       const jsonData = JSON.stringify({ key: 'value' })
       const inputBuffer = Buffer.from(jsonData)
       await expect(submitRun(inputBuffer, 'file')).rejects.toThrow()
+    })
+
+    it('retries transient 503 submit failures and succeeds', async () => {
+      const transientError = new Error('Service Unavailable')
+      Object.assign(transientError, {
+        isAxiosError: true,
+        response: { status: 503 }
+      })
+
+      axios.post.mockRejectedValueOnce(transientError).mockResolvedValueOnce({
+        data: {
+          message: 'File processed successfully',
+          run_id: 'run-12345',
+          description: 'Processing completed',
+          steps: []
+        }
+      })
+
+      const jsonData = JSON.stringify({ key: 'value' })
+      const inputBuffer = Buffer.from(jsonData)
+      const result = await submitRun(inputBuffer, 'file')
+
+      expect(result).toEqual({
+        message: 'File processed successfully',
+        run_id: 'run-12345'
+      })
+      expect(axios.post).toHaveBeenCalledTimes(2)
     })
 
     it('handles API error with detail description', async () => {
@@ -240,6 +280,8 @@ describe('service.ts', () => {
       const envKeys = [
         'PROCESSING_MODE',
         'GROUPING_ENABLED',
+        'GROUPING_STRATEGY',
+        'GROUPING_STAGE',
         'UPDATE_CONTEXT',
         'AUTO_CREATE_PRS',
         'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
@@ -296,6 +338,16 @@ describe('service.ts', () => {
         expect(formData.get('grouping_stage')).toBeNull()
       })
 
+      it('includes grouping_strategy and grouping_stage when explicitly configured', async () => {
+        process.env.GROUPING_STRATEGY = 'smart'
+        process.env.GROUPING_STAGE = 'pre_remediation'
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('grouping_strategy')).toBe('smart')
+        expect(formData.get('grouping_stage')).toBe('pre_remediation')
+      })
+
       it('includes max_vulnerabilities_per_pr when configured', async () => {
         process.env.MAX_VULNERABILITIES_PER_PR = '25'
         const buf = Buffer.from('{}')
@@ -325,15 +377,18 @@ describe('service.ts', () => {
         expect(formData.get('update_context')).toBeNull()
       })
 
-      it('emits warning when grouping-enabled=true (unsupported field)', async () => {
+      it('does not emit unsupported-field warning when grouping-enabled=true', async () => {
         process.env.GROUPING_ENABLED = 'true'
         const buf = Buffer.from('{}')
         await submitRun(buf, 'file.json')
-        expect(core.warning).toHaveBeenCalledWith(
-          expect.stringContaining(
-            'grouping-enabled is set but grouping fields are not supported'
-          )
+        const warningCalls = (core.warning as jest.Mock).mock.calls.map(
+          (c) => c[0] as string
         )
+        expect(
+          warningCalls.some((msg) =>
+            msg.includes('grouping fields are not supported')
+          )
+        ).toBe(false)
       })
 
       it('emits warning when update-context=true (unsupported field)', async () => {
@@ -475,6 +530,37 @@ describe('service.ts', () => {
       })
       expect(core.warning).toHaveBeenCalledWith(
         '[Analysis Processing Status]: An unexpected error occurred. Please try again later.'
+      )
+    })
+
+    it('uses org-path status endpoint when organizationId is available', async () => {
+      axios.get.mockResolvedValue({
+        data: {
+          message: 'Scan complete',
+          run_status: 'completed',
+          results: {
+            find: { count: 0, extras: {} },
+            triage: { count: 0, extras: {} },
+            remediate: { count: 0, extras: {} },
+            validate: { count: 0, extras: {} },
+            push: { count: 0, extras: {} }
+          },
+          process_tracking: {
+            overall_status: { status: 'completed' }
+          },
+          summary: null
+        }
+      })
+
+      const result = await getStatus('test-id', 'org-123')
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: 'completed'
+        })
+      )
+      expect(core.debug).toHaveBeenCalledWith(
+        'Calling status API: GET /api-product/organizations/org-123/runs/test-id/status'
       )
     })
   })
@@ -1197,12 +1283,42 @@ describe('service.ts', () => {
 
       expect(result).toEqual(mockSummary)
       expect(core.debug).toHaveBeenCalledWith(
-        'Calling finalize API: POST https://some-url/api-product/runs/test-run-id/compute-summary'
+        'Calling finalize API: POST /api-product/runs/test-run-id/compute-summary'
       )
       expect(core.info).toHaveBeenCalledWith(
         '[FINALIZE]: Summary computed successfully'
       )
       expect(logSummary).toHaveBeenCalledWith(mockSummary)
+    })
+
+    it('uses org-path finalize endpoint when organizationId is available', async () => {
+      const mockSummary = {
+        total_vulnerabilities: 1,
+        true_positives: 1,
+        false_positives: 0,
+        needs_manual_review_count: 0,
+        handled_error_count: 0,
+        has_handled_errors: false,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 1,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [],
+        issue_count: 0,
+        skipped_count: 0
+      }
+      axios.post.mockResolvedValue({ data: mockSummary })
+
+      const result = await finalizeRun('test-run-id', {
+        organizationId: 'org-123'
+      })
+
+      expect(result).toEqual(mockSummary)
+      expect(core.debug).toHaveBeenCalledWith(
+        'Calling finalize API: POST /api-product/organizations/org-123/runs/test-run-id/compute-summary'
+      )
     })
 
     it('returns null and logs warning on invalid response format', async () => {

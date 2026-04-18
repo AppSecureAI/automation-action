@@ -494,15 +494,26 @@ export async function writeJobSummary(
     tracking?.triage_status?.needs_manual_review_count ??
     0
   const hasHandledErrors =
-    Boolean(summary?.has_handled_errors) ||
-    handledErrorCount > 0 ||
-    manualReviewCount > 0
+    Boolean(summary?.has_handled_errors) || handledErrorCount > 0
+  const hasManualReviewOnly = manualReviewCount > 0
 
   // Add outcome banner
   if (success) {
     if (hasHandledErrors) {
+      if (manualReviewCount > 0) {
+        core.summary.addRaw(
+          `> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount}) and manual review required (${manualReviewCount})\n\n`,
+          true
+        )
+      } else {
+        core.summary.addRaw(
+          `> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount})\n\n`,
+          true
+        )
+      }
+    } else if (hasManualReviewOnly) {
       core.summary.addRaw(
-        `> **Status:** ⚠️ Completed with handled triage errors (${handledErrorCount}) and manual review required (${manualReviewCount})\n\n`,
+        `> **Status:** ⚠️ Completed with manual review required (${manualReviewCount})\n\n`,
         true
       )
     } else {

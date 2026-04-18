@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.1",
+  "version": "1.1.11",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -46,7 +46,7 @@
     "@actions/core": "^1.11.1",
     "@actions/github": "^7.0.0",
     "@rollup/plugin-json": "^6.1.0",
-    "axios": "^1.13.5",
+    "axios": "^1.15.0",
     "semver": "^7.7.3",
     "zod": "^3.25.56"
   },
@@ -88,6 +88,22 @@
     "@octokit/request-error": "^5.1.1",
     "@octokit/core": "^5.2.2",
     "@octokit/graphql": "^7.1.1",
-    "undici": "^7.23.0"
+    "undici": "^7.23.0",
+    "follow-redirects": "^1.16.0",
+    "anymatch": {
+      "picomatch": "^2.3.2"
+    },
+    "micromatch": {
+      "picomatch": "^2.3.2"
+    },
+    "jest-util": {
+      "picomatch": "^2.3.2"
+    },
+    "@rollup/pluginutils": {
+      "picomatch": "^4.0.4"
+    },
+    "fdir": {
+      "picomatch": "^4.0.4"
+    }
   }
 }

@@ -12,11 +12,17 @@ This GitHub Action provides automated security vulnerability triage,
 remediation, and validation powered by AI. Submit SARIF or JSON security scan
 results to the AppSecAI platform for intelligent analysis of your source code.
 
+When the submit API returns an `organization_id`, the action uses the matching
+org-scoped status and finalize endpoints for subsequent polling.
+
 ## Quick Start
 
 ```yaml
 - name: AppSecAI Expert Fix Automation
   uses: AppSecureAI/automation-action@v1
+  env:
+    PROCESSING_MODE: group_cc
+    AUTO_CREATE_PRS: 'true'
   with:
     file: sarif-results.sarif
 ```
@@ -98,6 +104,9 @@ permissions:
 ```yaml
 - name: AppSecAI Security Analysis
   uses: AppSecureAI/automation-action@v1
+  env:
+    PROCESSING_MODE: group_cc
+    AUTO_CREATE_PRS: 'true'
   with:
     file: scan-results.sarif
 ```
@@ -189,6 +198,9 @@ jobs:
 
       - name: AppSecAI Security Analysis
         uses: AppSecureAI/automation-action@v1
+        env:
+          PROCESSING_MODE: group_cc
+          AUTO_CREATE_PRS: 'true'
         with:
           file: bandit_results.json
 ```
@@ -210,18 +222,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Security Scan
-        run: semgrep --config=auto --json > semgrep_results.json
+      - name: Download OpenGrep
+        run: |
+          curl -sL "https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86" -o opengrep
+          chmod +x opengrep
+
+      - name: Run OpenGrep scan
+        run:
+          ./opengrep scan --sarif --sarif-output=opengrep-results.sarif --config
+          auto . || true
 
       - name: AppSecAI Security Analysis
         uses: AppSecureAI/automation-action@v1
-        with:
-          file: semgrep_results.json
         env:
+          PROCESSING_MODE: group_cc
+          AUTO_CREATE_PRS: 'true'
           # Create GitHub Issues for incomplete remediations instead of PRs
           CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS: 'true'
           # Use minimal comment modifications in PRs
           COMMENT_MODIFICATION_MODE: 'basic'
+        with:
+          file: opengrep-results.sarif
 ```
 
 ### Importing Pre-Generated Results
@@ -250,6 +271,9 @@ jobs:
 
       - name: AppSecAI Security Analysis
         uses: AppSecureAI/automation-action@v1
+        env:
+          PROCESSING_MODE: group_cc
+          AUTO_CREATE_PRS: 'true'
         with:
           file: sast/bandit-report.json
 ```
@@ -260,16 +284,26 @@ Notes:
 - This workflow does not run a scanner; it only uploads existing results.
 - `file` is a path relative to the repository root.
 
-### Using Semgrep
+### Using OpenGrep
 
 ```yaml
-- name: Run Semgrep
-  run: semgrep --config=auto --json > semgrep_results.json
+- name: Download OpenGrep
+  run: |
+    curl -sL "https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86" -o opengrep
+    chmod +x opengrep
+
+- name: Run OpenGrep scan
+  run:
+    ./opengrep scan --sarif --sarif-output=opengrep-results.sarif --config auto
+    . || true
 
 - name: AppSecAI Analysis
   uses: AppSecureAI/automation-action@v1
+  env:
+    PROCESSING_MODE: group_cc
+    AUTO_CREATE_PRS: 'true'
   with:
-    file: semgrep_results.json
+    file: opengrep-results.sarif
 ```
 
 ### Triggering Fresh Security Context Extraction
@@ -281,6 +315,9 @@ policies have been updated.
 ```yaml
 - name: AppSecAI Analysis with Context Update
   uses: AppSecureAI/automation-action@v1
+  env:
+    PROCESSING_MODE: group_cc
+    AUTO_CREATE_PRS: 'true'
   with:
     file: scan-results.sarif
     update-context: true
@@ -298,9 +335,8 @@ execution.
 ```yaml
 - name: Generate Regression Evidence
   uses: AppSecureAI/automation-action@v1
-  with:
-    file: scan-results.sarif
   env:
+    AUTO_CREATE_PRS: 'true'
     PROCESSING_MODE: regression_evidence
     REGRESSION_EVIDENCE_BASE_REF: origin/main
     REGRESSION_EVIDENCE_HEAD_REF: HEAD
@@ -308,6 +344,8 @@ execution.
     REGRESSION_EVIDENCE_TEST_COMMANDS: |
       npm test -- {{tests}}
     REGRESSION_EVIDENCE_FAIL_ON_AT_RISK: 'true'
+  with:
+    file: scan-results.sarif
 ```
 
 This mode generates:
@@ -321,7 +359,7 @@ This mode generates:
 This action works with output from various static analysis tools:
 
 - [Bandit](https://bandit.readthedocs.io/) (Python)
-- [Semgrep](https://semgrep.dev/) (Multiple Languages)
+- [OpenGrep](https://github.com/opengrep/opengrep) (Multiple Languages)
 - [CodeQL](https://codeql.github.com/) (Multiple Languages)
 - Any tool outputting SARIF or compatible JSON format
 
@@ -333,10 +371,10 @@ This action works with output from various static analysis tools:
 bandit -r . -f json -o bandit_results.json
 ```
 
-**Semgrep (JSON):**
+**OpenGrep (SARIF):**
 
 ```sh
-semgrep --config=auto --json > semgrep_results.json
+./opengrep scan --sarif --sarif-output=opengrep-results.sarif --config auto . || true
 ```
 
 **CodeQL (SARIF):**

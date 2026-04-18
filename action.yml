@@ -120,8 +120,8 @@ runs:
         #   group_with_validation_consistency -> group_cc;
         #   individual_without_push -> individual
         # Push control: use AUTO_CREATE_PRS=false to suppress PR creation (all modes)
-        # Unsupported fields (ignored, emit warning): GROUPING_ENABLED, GROUPING_STRATEGY,
-        #   GROUPING_STAGE, UPDATE_CONTEXT
+        # GROUPING_STRATEGY and GROUPING_STAGE are forwarded when explicitly set.
+        # GROUPING_ENABLED remains implicit in PROCESSING_MODE. UPDATE_CONTEXT is unsupported.
         INPUT_PROCESSING_MODE: ${{ env.PROCESSING_MODE || 'individual_cc' }}
         INPUT_USE_TRIAGE_CC: ${{ env.USE_TRIAGE_CC || 'true' }}
         INPUT_TRIAGE_METHOD: ${{ env.TRIAGE_METHOD || 'ml_based' }}

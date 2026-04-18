@@ -77,6 +77,7 @@ export const RunResponseSchema = z.object({
   description: z.string().nullish(),
   steps: StepListSchema,
   run_id: z.string().nullable(),
+  organization_id: z.string().optional(),
   summary: RunSummarySchema.nullable().optional(),
   context_updated: ContextUpdatedSchema.optional()
 })

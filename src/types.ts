@@ -16,6 +16,7 @@ export type ContextUpdatedStatus = boolean | 'rate-limited'
 export type SubmitRunOutput = {
   message: string
   run_id: string | null
+  organization_id?: string
   context_updated?: ContextUpdatedStatus
 }
 

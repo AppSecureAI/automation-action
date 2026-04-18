@@ -254,7 +254,7 @@ describe('main.ts', () => {
   })
 
   describe('status polling failures', () => {
-    it('should handle pollStatusUntilComplete failure and call core.warning', async () => {
+    it('should fail when polling becomes indeterminate and finalize has no summary', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.reject(new Error('Polling failed'))
       })
@@ -263,6 +263,33 @@ describe('main.ts', () => {
       expect(core.warning).toHaveBeenCalledWith(
         '[Analysis Processing Status] Failed to poll status for run_id: run-12345. The analysis may still be running on the server.'
       )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Run monitoring became indeterminate and final summary data was unavailable. The server may have been unreachable or degraded while the run was still in progress.'
+      )
+    })
+
+    it('should not fail when polling is indeterminate but finalize returns a summary', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
+        return Promise.resolve(null)
+      })
+      finalizeRun.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          total_vulnerabilities: 0,
+          true_positives: 0,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          pr_count: 0,
+          pr_urls: [],
+          issue_urls: [],
+          issue_count: 0,
+          remediation_success: 0,
+          remediation_failed: 0
+        })
+      )
+
+      await run()
+
       expect(core.setFailed).not.toHaveBeenCalled()
     })
   })

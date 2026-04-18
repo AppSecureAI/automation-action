@@ -20,7 +20,11 @@ import {
   getAutoCreatePrs,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
+  getGroupingStage,
+  getGroupingStrategy,
   getMaxVulnerabilitiesPerPr,
+  isGroupingStageConfigured,
+  isGroupingStrategyConfigured,
   isMaxVulnerabilitiesPerPrConfigured,
   getGroupingEnabled,
   getUpdateContext
@@ -45,6 +49,8 @@ import {
 } from './constants.js'
 
 const API_TIMEOUT = 8 * 60 * 1000
+const SUBMIT_RETRY_MAX_RETRIES = 4
+const SUBMIT_RETRY_BASE_DELAY_MS = process.env.NODE_ENV === 'test' ? 10 : 2000
 
 /**
  * Check whether an axios error is retriable (transient network or server error).
@@ -332,12 +338,19 @@ export async function submitRun(
     )
   }
 
-  // Grouping fields (grouping_enabled, grouping_strategy, grouping_stage)
-  // are not sent: Hydra currently classifies them as unsupported submit fields
-  // for this channel.
+  // grouping_enabled remains implicit in processing_mode, but explicit per-run
+  // overrides can now flow through Hydra and Product.
+  if (isGroupingStrategyConfigured()) {
+    formData.append('grouping_strategy', getGroupingStrategy())
+  }
+
+  if (isGroupingStageConfigured()) {
+    formData.append('grouping_stage', getGroupingStage())
+  }
+
   if (getGroupingEnabled()) {
-    core.warning(
-      'grouping-enabled is set but grouping fields are not supported in the current submit contract and will be ignored.'
+    core.debug(
+      'grouping-enabled is set; grouping behavior remains inferred from processing_mode.'
     )
   }
 
@@ -361,8 +374,11 @@ export async function submitRun(
   const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`
   core.info(`${prefixLabel} Submitting analysis results for processing...`)
 
-  return axios
-    .post(url, formData, setup)
+  return fetchWithRetry(
+    () => axios.post(url, formData, setup),
+    SUBMIT_RETRY_MAX_RETRIES,
+    SUBMIT_RETRY_BASE_DELAY_MS
+  )
     .then((response) => {
       const parsedResponse = RunResponseSchema.safeParse(response.data)
 
@@ -381,7 +397,8 @@ export async function submitRun(
 
       return {
         message: validData.message,
-        run_id: validData.run_id
+        run_id: validData.run_id,
+        organization_id: validData.organization_id
       } as SubmitRunOutput
     })
     .catch((error) => {
@@ -498,13 +515,17 @@ export async function submitRun(
     })
 }
 
-export async function getStatus(id: string) {
+export async function getStatus(id: string, organizationId?: string) {
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
-  const url = `${apiUrl}/api-product/submit/status/${id}`
+  const url = organizationId
+    ? new URL(
+        `${apiUrl}/api-product/organizations/${organizationId}/runs/${id}/status`
+      )
+    : new URL(`${apiUrl}/api-product/submit/status/${id}`)
   const prefixLabel = `[${LogLabels.RUN_STATUS}]`
 
-  core.debug(`Calling status API: GET /api-product/submit/status/${id}`)
+  core.debug(`Calling status API: GET ${url.pathname}${url.search}`)
 
   const setup = {
     headers: token
@@ -515,7 +536,7 @@ export async function getStatus(id: string) {
     timeout: PollingConfig.STATUS_TIMEOUT_MS
   }
 
-  return fetchWithRetry(() => axios.get(url, setup), 2, 500)
+  return fetchWithRetry(() => axios.get(url.toString(), setup), 2, 500)
     .then((response) => {
       const parsedResponse = ResponseStatusSchema.safeParse(response.data)
 
@@ -558,9 +579,19 @@ export async function getStatus(id: string) {
           0
 
         if (handledErrors > 0 || manualReviewCount > 0) {
-          core.warning(
-            `${prefixLabel}: Run completed with handled triage errors (${handledErrors}) and manual review required (${manualReviewCount}).`
-          )
+          if (handledErrors > 0 && manualReviewCount > 0) {
+            core.warning(
+              `${prefixLabel}: Run completed with handled triage errors (${handledErrors}) and manual review required (${manualReviewCount}).`
+            )
+          } else if (handledErrors > 0) {
+            core.warning(
+              `${prefixLabel}: Run completed with handled triage errors (${handledErrors}).`
+            )
+          } else {
+            core.warning(
+              `${prefixLabel}: Run completed with manual review required (${manualReviewCount}).`
+            )
+          }
         } else {
           core.info(`${prefixLabel}: Run completed successfully`)
         }
@@ -863,6 +894,8 @@ export async function pollStatusUntilComplete(
 export interface FinalizeRunOptions {
   /** Expected number of PRs to be present in the summary. If provided, will retry until count matches. */
   expectedPrCount?: number
+  /** Organization ID for org-scoped summary calls. */
+  organizationId?: string
   /** Maximum number of retry attempts (default: 3) */
   maxRetries?: number
   /** Delay between retries in milliseconds (default: 2000) */
@@ -893,13 +926,22 @@ export async function finalizeRun(
   runId: string,
   options: FinalizeRunOptions = {}
 ): Promise<RunSummary | null> {
-  const { expectedPrCount, maxRetries = 3, retryDelay = 2000 } = options
+  const {
+    expectedPrCount,
+    organizationId,
+    maxRetries = 3,
+    retryDelay = 2000
+  } = options
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
-  const url = `${apiUrl}/api-product/runs/${runId}/compute-summary`
+  const url = organizationId
+    ? new URL(
+        `${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`
+      )
+    : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`)
   const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`
 
-  core.debug(`Calling finalize API: POST ${url}`)
+  core.debug(`Calling finalize API: POST ${url.pathname}${url.search}`)
 
   const setup = {
     headers: token
@@ -916,7 +958,7 @@ export async function finalizeRun(
     core.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`)
 
     try {
-      const response = await axios.post(url, {}, setup)
+      const response = await axios.post(url.toString(), {}, setup)
       const parsed = RunSummarySchema.safeParse(response.data)
 
       if (!parsed.success) {

@@ -196,6 +196,7 @@ export async function run(): Promise<void> {
   let finalSummary: RunSummary | null = null
   const startTime = Date.now()
   let success = false
+  let monitoringIndeterminate = false
 
   try {
     // Display AppSecAI branding at run start
@@ -262,17 +263,21 @@ export async function run(): Promise<void> {
     // Step 3: Poll for status (non-critical failure)
     if (submitOutput.run_id) {
       store.id = submitOutput.run_id
+      store.organizationId = submitOutput.organization_id
 
       core.info(
         `[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`
       )
       try {
-        const getRunStatus = () => getStatus(store.id)
+        const getRunStatus = () => getStatus(store.id, store.organizationId)
         const pollResult = await pollStatusUntilComplete(
           getRunStatus,
           retries,
           pollDelay
         )
+        if (!pollResult) {
+          monitoringIndeterminate = true
+        }
         // Capture final process tracking and summary for job summary
         // Type assertions are safe here because Zod schema validation ensures complete data
         if (pollResult?.processTracking) {
@@ -283,6 +288,7 @@ export async function run(): Promise<void> {
           finalSummary = pollResult.summary as RunSummary
         }
       } catch (pollError) {
+        monitoringIndeterminate = true
         // This is a "soft" failure. Log a warning but let the process complete
         core.warning(
           `[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`
@@ -331,12 +337,24 @@ export async function run(): Promise<void> {
       // Get expected PR count from push_status.success_count to verify summary completeness
       // This addresses the race condition where summary may be computed before all PRs are persisted
       const expectedPrCount = finalProcessTracking?.push_status?.success_count
-      const finalizeSummary = await finalizeRun(store.id, { expectedPrCount })
+      const finalizeSummary = await finalizeRun(store.id, {
+        expectedPrCount,
+        organizationId: store.organizationId
+      })
 
       // Use finalize summary if we don't already have one from polling
       if (finalizeSummary && !finalSummary) {
         finalSummary = finalizeSummary
       }
+    }
+
+    if (success && store.id && monitoringIndeterminate && !finalSummary) {
+      success = false
+      const errorMessage =
+        'Run monitoring became indeterminate and final summary data was unavailable. ' +
+        'The server may have been unreachable or degraded while the run was still in progress.'
+      core.error(errorMessage)
+      core.setFailed(errorMessage)
     }
 
     // Write job summary
