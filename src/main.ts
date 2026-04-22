@@ -14,7 +14,7 @@ import {
 import { fetchPrTitles } from './titles.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
-import { VERSION } from './version.js'
+import { VERSION, VERSION_INFO } from './version.js'
 import {
   SubmitRunOutput,
   RunProcessTracking,
@@ -175,7 +175,7 @@ async function runRegressionEvidenceMode(): Promise<void> {
 }
 
 export async function run(): Promise<void> {
-  core.info(`submit-run-action v${VERSION}`)
+  core.info(`${VERSION_INFO.name} v${VERSION}`)
 
   // Fetch and log server version information (non-blocking to avoid startup latency)
   fetchAndLogServerVersion(getApiUrl()).catch(() => {
@@ -203,7 +203,7 @@ export async function run(): Promise<void> {
     core.info('')
     core.info(getConsoleBranding())
     core.info('')
-    core.info(`submit-run-action v${VERSION}`)
+    core.info(`${VERSION_INFO.name} v${VERSION}`)
     core.info(
       '======== Getting static analysis results for further processing. ========'
     )
