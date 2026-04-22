@@ -126,7 +126,7 @@ There are a few things to keep in mind when writing your action code:
       expects. For this action, you need to set the following:
 
       ```env
-      # The SARIF or JSON file to be processed (required)
+      # The SARIF, JSON, CSV, or TSV file to be processed (required)
       INPUT_FILE=results.sarif
       ```
 

@@ -313,7 +313,7 @@ export async function run(): Promise<void> {
           errorMessage = `File is empty or could not be read: ${file}. Please check if the file contains data.`
           break
         case 'EINVAL':
-          errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif`
+          errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv`
           break
         default:
           errorMessage = `An error occurred while processing the file: ${file}. Please verify the file is accessible and properly formatted.`

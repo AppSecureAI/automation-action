@@ -76,12 +76,19 @@ describe('file.ts', () => {
       expect(validFileName('File.Sarif')).toBe(true) // Mixed case
     }, 12000)
 
+    it('returns true for .csv and .tsv files', () => {
+      expect(validFileName('file.csv')).toBe(true)
+      expect(validFileName('path/to/file.csv')).toBe(true)
+      expect(validFileName('sonarqube-issues-report.tsv')).toBe(true)
+      expect(validFileName('FILE.CSV')).toBe(true) // Case insensitive
+      expect(validFileName('File.Tsv')).toBe(true) // Mixed case
+    }, 12000)
+
     it('returns false for unsupported file extensions', () => {
       expect(validFileName('file.txt')).toBe(false)
       expect(validFileName('file.xml')).toBe(false)
       expect(validFileName('file.yaml')).toBe(false)
       expect(validFileName('file.yml')).toBe(false)
-      expect(validFileName('file.csv')).toBe(false)
       expect(validFileName('file.pdf')).toBe(false)
       expect(validFileName('file.docx')).toBe(false)
       expect(validFileName('file.html')).toBe(false)
@@ -116,10 +123,16 @@ describe('file.ts', () => {
     it('handles edge cases with multiple dots', () => {
       expect(validFileName('file.backup.json')).toBe(true)
       expect(validFileName('file.backup.sarif')).toBe(true)
+      expect(validFileName('file.backup.csv')).toBe(true)
+      expect(validFileName('file.backup.tsv')).toBe(true)
       expect(validFileName('file..json')).toBe(false)
       expect(validFileName('file..sarif')).toBe(false)
+      expect(validFileName('file..csv')).toBe(false)
+      expect(validFileName('file..tsv')).toBe(false)
       expect(validFileName('file...json')).toBe(false)
       expect(validFileName('file...sarif')).toBe(false)
+      expect(validFileName('file...csv')).toBe(false)
+      expect(validFileName('file...tsv')).toBe(false)
     }, 12000)
 
     describe('validates filename characters properly', () => {
@@ -186,6 +199,9 @@ describe('file.ts', () => {
       expect(validFilePath('path/to/file.json')).toBe(true)
       expect(validFilePath('file.sarif')).toBe(true)
       expect(validFilePath('path/to/file.sarif')).toBe(true)
+      expect(validFilePath('file.csv')).toBe(true)
+      expect(validFilePath('path/to/file.tsv')).toBe(true)
+      expect(validFilePath('FILE.CSV')).toBe(true)
     })
 
     it('returns false for invalid file paths', () => {

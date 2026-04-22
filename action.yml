@@ -12,7 +12,8 @@ branding:
 # Define your inputs here.
 inputs:
   file:
-    description: The SARIF or JSON file containing security scan results
+    description:
+      The SARIF, JSON, CSV, or TSV file containing security scan results
     required: true
 
   update-context:

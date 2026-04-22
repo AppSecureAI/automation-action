@@ -9,8 +9,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This GitHub Action provides automated security vulnerability triage,
-remediation, and validation powered by AI. Submit SARIF or JSON security scan
-results to the AppSecAI platform for intelligent analysis of your source code.
+remediation, and validation powered by AI. Submit SARIF, JSON, CSV, or TSV
+security scan results to the AppSecAI platform for intelligent analysis of your
+source code.
 
 When the submit API returns an `organization_id`, the action uses the matching
 org-scoped status and finalize endpoints for subsequent polling.
@@ -42,20 +43,20 @@ This action runs with Node.js `22.14.0` internally via `actions/setup-node`.
 
 ## Inputs
 
-| Input                                      | Description                                               | Required | Default                    |
-| ------------------------------------------ | --------------------------------------------------------- | -------- | -------------------------- |
-| `file`                                     | SARIF or JSON file path containing scan results           | Yes      | -                          |
-| `update-context`                           | Trigger fresh security context extraction before the scan | No       | `false`                    |
-| `regression-evidence-base-ref`             | Base git ref for regression evidence diff calculation     | No       | `''`                       |
-| `regression-evidence-base-sha`             | Base git SHA for regression evidence diff calculation     | No       | `''`                       |
-| `regression-evidence-head-ref`             | Head git ref for regression evidence diff calculation     | No       | `''`                       |
-| `regression-evidence-head-sha`             | Head git SHA for regression evidence diff calculation     | No       | `''`                       |
-| `regression-evidence-coverage-artifacts`   | Comma/newline-separated coverage mapping artifact paths   | No       | `''`                       |
-| `regression-evidence-test-commands`        | Newline-separated test commands (supports `{{tests}}`)    | No       | `''`                       |
-| `regression-evidence-output-json-path`     | Output path for `regression-evidence.json`                | No       | `regression-evidence.json` |
-| `regression-evidence-output-markdown-path` | Output path for markdown summary                          | No       | `regression-evidence.md`   |
-| `regression-evidence-allow-partial`        | Allow `partial` status when changed lines are uncovered   | No       | `true`                     |
-| `regression-evidence-fail-on-at-risk`      | Fail action when status is `at_risk`                      | No       | `false`                    |
+| Input                                      | Description                                                | Required | Default                    |
+| ------------------------------------------ | ---------------------------------------------------------- | -------- | -------------------------- |
+| `file`                                     | SARIF, JSON, CSV, or TSV file path containing scan results | Yes      | -                          |
+| `update-context`                           | Trigger fresh security context extraction before the scan  | No       | `false`                    |
+| `regression-evidence-base-ref`             | Base git ref for regression evidence diff calculation      | No       | `''`                       |
+| `regression-evidence-base-sha`             | Base git SHA for regression evidence diff calculation      | No       | `''`                       |
+| `regression-evidence-head-ref`             | Head git ref for regression evidence diff calculation      | No       | `''`                       |
+| `regression-evidence-head-sha`             | Head git SHA for regression evidence diff calculation      | No       | `''`                       |
+| `regression-evidence-coverage-artifacts`   | Comma/newline-separated coverage mapping artifact paths    | No       | `''`                       |
+| `regression-evidence-test-commands`        | Newline-separated test commands (supports `{{tests}}`)     | No       | `''`                       |
+| `regression-evidence-output-json-path`     | Output path for `regression-evidence.json`                 | No       | `regression-evidence.json` |
+| `regression-evidence-output-markdown-path` | Output path for markdown summary                           | No       | `regression-evidence.md`   |
+| `regression-evidence-allow-partial`        | Allow `partial` status when changed lines are uncovered    | No       | `true`                     |
+| `regression-evidence-fail-on-at-risk`      | Fail action when status is `at_risk`                       | No       | `false`                    |
 
 ## Configuration
 
