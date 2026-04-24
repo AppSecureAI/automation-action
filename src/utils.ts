@@ -315,7 +315,6 @@ export function logProcessTracking(
   // Define the stages to display in order with user-friendly names
   const stages: Array<{ field: keyof RunProcessTracking; name: string }> = [
     { field: 'find_status', name: 'find' },
-    { field: 'reconcile_status', name: 'reconcile' },
     { field: 'triage_status', name: 'triage' },
     { field: 'remediation_validation_loop_status', name: 'remediation_loop' },
     { field: 'push_status', name: 'push' }
@@ -466,6 +465,7 @@ function formatSummaryDetails(name: string, status?: ProcessStatus): string {
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display
  * @param groupingConfig Optional grouping configuration to display
+ * @param issueTitles Optional map of issue URL to title
  */
 export async function writeJobSummary(
   tracking: RunProcessTracking | null | undefined,
@@ -475,7 +475,8 @@ export async function writeJobSummary(
   success: boolean,
   prTitles?: Map<string, string>,
   dashboardUrl?: string,
-  groupingConfig?: GroupingConfig
+  groupingConfig?: GroupingConfig,
+  issueTitles?: Map<string, string>
 ): Promise<void> {
   const durationStr = formatDuration(durationMs)
 
@@ -737,7 +738,12 @@ export async function writeJobSummary(
     if ((summary.issue_urls ?? []).length > 0) {
       core.summary.addHeading('GitHub Issues', 4)
       for (const issueUrl of summary.issue_urls ?? []) {
-        core.summary.addRaw(`- ${issueUrl}\n`, true)
+        const title = issueTitles?.get(issueUrl)
+        if (title) {
+          core.summary.addRaw(`- ${issueUrl} (${title})\n`, true)
+        } else {
+          core.summary.addRaw(`- ${issueUrl}\n`, true)
+        }
       }
     }
   }
@@ -988,7 +994,10 @@ export function formatPrLinks(
 /**
  * Format GitHub Issue links (created from failed validations)
  */
-export function formatIssueLinks(issueUrls: string[]): string {
+export function formatIssueLinks(
+  issueUrls: string[],
+  issueTitles?: Map<string, string>
+): string {
   if (issueUrls.length === 0) {
     return 'No issues created'
   }
@@ -998,7 +1007,13 @@ export function formatIssueLinks(issueUrls: string[]): string {
   for (let i = 0; i < issueUrls.length; i++) {
     const isLast = i === issueUrls.length - 1
     const prefix = isLast ? '└─' : '├─'
-    lines.push(`${prefix} ${issueUrls[i]}`)
+    const url = issueUrls[i]
+    const title = issueTitles?.get(url)
+    if (title) {
+      lines.push(`${prefix} ${url} (${title})`)
+    } else {
+      lines.push(`${prefix} ${url}`)
+    }
   }
 
   return lines.join('\n')
@@ -1013,6 +1028,7 @@ export function formatIssueLinks(issueUrls: string[]): string {
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display at bottom
  * @param groupingConfig Optional grouping configuration to display
+ * @param issueTitles Optional map of issue URL to title
  * @returns Formatted output string
  */
 export function formatFinalResults(
@@ -1022,7 +1038,8 @@ export function formatFinalResults(
   tracking?: RunProcessTracking | null,
   prTitles?: Map<string, string>,
   dashboardUrl?: string,
-  groupingConfig?: GroupingConfig
+  groupingConfig?: GroupingConfig,
+  issueTitles?: Map<string, string>
 ): string {
   const lines: string[] = []
   const durationStr = formatDuration(durationMs)
@@ -1105,7 +1122,10 @@ export function formatFinalResults(
   // GitHub Issues (created from failed validations)
   if ((summary.issue_count ?? 0) > 0) {
     lines.push(`├─ GitHub Issues (${summary.issue_count})`)
-    const issueLines = formatIssueLinks(summary.issue_urls ?? []).split('\n')
+    const issueLines = formatIssueLinks(
+      summary.issue_urls ?? [],
+      issueTitles
+    ).split('\n')
     issueLines.forEach((line) => lines.push(`│  ${line}`))
     lines.push('│')
   }
@@ -1137,11 +1157,13 @@ export function formatFinalResults(
  * @param summary The run summary with metrics
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display
+ * @param issueTitles Optional map of issue URL to title
  */
 export function logSummary(
   summary: RunSummary,
   prTitles?: Map<string, string>,
-  dashboardUrl?: string
+  dashboardUrl?: string,
+  issueTitles?: Map<string, string>
 ): void {
   const prefixLabel = `[${LogLabels.RUN_SUMMARY}]`
 
@@ -1204,7 +1226,12 @@ export function logSummary(
     }
 
     for (const url of summary.issue_urls ?? []) {
-      core.info(`${prefixLabel}:   - ${url}`)
+      const title = issueTitles?.get(url)
+      if (title) {
+        core.info(`${prefixLabel}:   - ${url} (${title})`)
+      } else {
+        core.info(`${prefixLabel}:   - ${url}`)
+      }
     }
   }
 

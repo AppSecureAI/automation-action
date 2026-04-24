@@ -1071,6 +1071,154 @@ describe('service.ts', () => {
     expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
   })
 
+  it('returns completed status with null dashboard_url', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Scan complete',
+        run_status: 'completed',
+        dashboard_url: null,
+        results: {
+          find: { count: 10, extras: {} },
+          triage: { count: 10, extras: {} },
+          remediate: { count: 5, extras: {} },
+          validate: { count: 5, extras: {} },
+          push: { count: 5, extras: {} }
+        },
+        process_tracking: {
+          overall_status: { status: 'completed' }
+        },
+        summary: {
+          total_vulnerabilities: 10,
+          true_positives: 8,
+          false_positives: 2,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 5,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        dashboard_url: null
+      })
+    )
+  })
+
+  it('returns completed status with canonical issue_titles_by_url', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Scan complete',
+        run_status: 'completed',
+        results: null,
+        process_tracking: {
+          overall_status: { status: 'completed' }
+        },
+        summary: {
+          total_vulnerabilities: 5,
+          true_positives: 4,
+          false_positives: 1,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 2,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: ['https://github.com/org/repo/issues/1'],
+          issue_titles_by_url: {
+            'https://github.com/org/repo/issues/1': 'Validation warning'
+          },
+          issue_count: 1
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        summary: expect.objectContaining({
+          issue_titles_by_url: {
+            'https://github.com/org/repo/issues/1': 'Validation warning'
+          }
+        })
+      })
+    )
+  })
+
+  it('returns completed status with legacy issue_titles fallback', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Scan complete',
+        run_status: 'completed',
+        results: null,
+        process_tracking: {
+          overall_status: { status: 'completed' }
+        },
+        summary: {
+          total_vulnerabilities: 5,
+          true_positives: 4,
+          false_positives: 1,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 2,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: ['https://github.com/org/repo/issues/1'],
+          issue_titles: {
+            'https://github.com/org/repo/issues/1': 'Legacy title'
+          },
+          issue_count: 1
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        summary: expect.objectContaining({
+          issue_titles: {
+            'https://github.com/org/repo/issues/1': 'Legacy title'
+          }
+        })
+      })
+    )
+  })
+
+  it('does not fail when reconcile_status is missing (non-contractual stage)', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Scan in progress',
+        description: 'Processing',
+        results: {
+          find: { count: 5, extras: {} },
+          triage: { count: 3, extras: {} },
+          remediate: { count: 0, extras: {} },
+          validate: { count: 0, extras: {} },
+          push: { count: 0, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'in_progress', progress_percentage: 60 }
+          // reconcile_status intentionally omitted
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    // Should continue processing without failure
+    expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
+  })
+
   describe('pollStatusUntilComplete', () => {
     it('returns completed status when processing finishes', async () => {
       const mockGetStatus = () => Promise.resolve({ status: 'completed' })
@@ -1275,7 +1423,10 @@ describe('service.ts', () => {
         pr_count: 1,
         issue_urls: [],
         issue_count: 0,
-        skipped_count: 0
+        skipped_count: 0,
+        dedup_skipped_count: 0,
+        validation_failure_count: 0,
+        remediation_with_warnings: 0
       }
       axios.post.mockResolvedValue({ data: mockSummary })
 
@@ -1307,7 +1458,10 @@ describe('service.ts', () => {
         pr_count: 0,
         issue_urls: [],
         issue_count: 0,
-        skipped_count: 0
+        skipped_count: 0,
+        dedup_skipped_count: 0,
+        validation_failure_count: 0,
+        remediation_with_warnings: 0
       }
       axios.post.mockResolvedValue({ data: mockSummary })
 
@@ -1414,7 +1568,10 @@ describe('service.ts', () => {
         pr_count: 0,
         issue_urls: [],
         issue_count: 0,
-        skipped_count: 0
+        skipped_count: 0,
+        dedup_skipped_count: 0,
+        validation_failure_count: 0,
+        remediation_with_warnings: 0
       })
     })
 
@@ -1438,7 +1595,10 @@ describe('service.ts', () => {
           pr_count: 7,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
         const completeSummary = {
           ...incompleteSummary,
@@ -1483,7 +1643,10 @@ describe('service.ts', () => {
           pr_count: 7,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post.mockResolvedValue({ data: incompleteSummary })
@@ -1519,7 +1682,10 @@ describe('service.ts', () => {
           pr_count: 8,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post.mockResolvedValue({ data: completeSummary })
@@ -1555,7 +1721,10 @@ describe('service.ts', () => {
           pr_count: 9, // More PRs than expected
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post.mockResolvedValue({ data: completeSummary })
@@ -1585,7 +1754,10 @@ describe('service.ts', () => {
           pr_count: 0,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post.mockResolvedValue({ data: summary })
@@ -1618,7 +1790,10 @@ describe('service.ts', () => {
           pr_count: 8,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post
@@ -1675,7 +1850,10 @@ describe('service.ts', () => {
           pr_count: 8,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post
@@ -1726,7 +1904,10 @@ describe('service.ts', () => {
           pr_count: 5,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
         const apiError = new Error('Server Error')
         Object.assign(apiError, { isAxiosError: true })
@@ -1763,7 +1944,10 @@ describe('service.ts', () => {
           pr_count: 0,
           issue_urls: [],
           issue_count: 0,
-          skipped_count: 0
+          skipped_count: 0,
+          dedup_skipped_count: 0,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
         }
 
         axios.post.mockResolvedValue({ data: summary })

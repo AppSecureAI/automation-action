@@ -9,6 +9,7 @@
 
 import {
   RunResponseSchema,
+  RunSummarySchema,
   StepSchema,
   ResponseStatusSchema,
   StepListSchema,
@@ -188,6 +189,146 @@ describe('schemas.ts', () => {
     })
   })
 
+  describe('RunSummarySchema', () => {
+    test('must parse correctly with pr_titles and issue_titles maps', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 2,
+        true_positives: 2,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 1,
+        remediation_failed: 1,
+        pr_urls: ['https://github.com/org/repo/pull/10'],
+        pr_titles: {
+          'https://github.com/org/repo/pull/10': 'Fix CWE-79'
+        },
+        pr_count: 1,
+        issue_urls: ['https://github.com/org/repo/issues/7'],
+        issue_titles: {
+          'https://github.com/org/repo/issues/7': 'Validation warning follow-up'
+        },
+        issue_count: 1
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.pr_titles).toEqual({
+        'https://github.com/org/repo/pull/10': 'Fix CWE-79'
+      })
+      expect(parsed.data?.issue_titles).toEqual({
+        'https://github.com/org/repo/issues/7': 'Validation warning follow-up'
+      })
+    })
+
+    test('must parse correctly when pr_titles and issue_titles are absent', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 0,
+        true_positives: 0,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [],
+        issue_count: 0
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.pr_titles).toBeUndefined()
+      expect(parsed.data?.issue_titles).toBeUndefined()
+    })
+
+    test('must parse correctly with nullable issue_titles_by_url field', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 2,
+        true_positives: 2,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 1,
+        remediation_failed: 1,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: ['https://github.com/org/repo/issues/7'],
+        issue_titles_by_url: {
+          'https://github.com/org/repo/issues/7': 'Validation warning follow-up'
+        },
+        issue_count: 1
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.issue_titles_by_url).toEqual({
+        'https://github.com/org/repo/issues/7': 'Validation warning follow-up'
+      })
+    })
+
+    test('must parse correctly when issue_titles_by_url is null', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 0,
+        true_positives: 0,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [],
+        issue_titles_by_url: null,
+        issue_count: 0
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.issue_titles_by_url).toBeNull()
+    })
+
+    test('must parse correctly when issue_titles is null', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 0,
+        true_positives: 0,
+        false_positives: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [],
+        issue_titles: null,
+        issue_count: 0
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.issue_titles).toBeNull()
+    })
+
+    test('must parse correctly with new Medusa summary fields', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 5,
+        true_positives: 4,
+        false_positives: 1,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 2,
+        remediation_failed: 1,
+        pr_urls: [],
+        pr_count: 2,
+        issue_urls: [],
+        issue_count: 0,
+        dedup_skipped_count: 2,
+        validation_failure_count: 1,
+        remediation_with_warnings: 3
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.dedup_skipped_count).toBe(2)
+      expect(parsed.data?.validation_failure_count).toBe(1)
+      expect(parsed.data?.remediation_with_warnings).toBe(3)
+    })
+  })
+
   describe('ResponseStatusSchema', () => {
     test('must parse correctly with valid results', () => {
       const testData = createResponseStatus()
@@ -201,6 +342,40 @@ describe('schemas.ts', () => {
       const parsed = ResponseStatusSchema.safeParse(testData)
 
       expect(parsed.data).toStrictEqual(testData)
+    })
+
+    test('must parse correctly with dashboard_url present', () => {
+      const testData = createResponseStatus({
+        results: null
+      })
+      const parsed = ResponseStatusSchema.safeParse({
+        ...testData,
+        dashboard_url: 'https://portal.cloud.appsecai.io/runs/run-123'
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.dashboard_url).toBe(
+        'https://portal.cloud.appsecai.io/runs/run-123'
+      )
+    })
+
+    test('must parse correctly with dashboard_url absent', () => {
+      const testData = createResponseStatus({ results: null })
+      const parsed = ResponseStatusSchema.safeParse(testData)
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.dashboard_url).toBeUndefined()
+    })
+
+    test('must parse correctly when dashboard_url is null', () => {
+      const testData = createResponseStatus({ results: null })
+      const parsed = ResponseStatusSchema.safeParse({
+        ...testData,
+        dashboard_url: null
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.dashboard_url).toBeNull()
     })
   })
 
@@ -379,6 +554,29 @@ describe('schemas.ts', () => {
       const parsed = RunProcessTrackingSchema.safeParse(testData)
 
       expect(parsed.success).toBe(true)
+    })
+
+    test('must handle legacy reconcile_status field gracefully by ignoring it', () => {
+      const processStatus = {
+        status: 'completed',
+        total_items: 10,
+        processed_items: 10,
+        success_count: 10,
+        error_count: 0
+      }
+
+      const testData = {
+        find_status: processStatus,
+        reconcile_status: processStatus, // legacy field, should be ignored
+        triage_status: processStatus
+      }
+
+      const parsed = RunProcessTrackingSchema.safeParse(testData)
+
+      expect(parsed.success).toBe(true)
+      // reconcile_status is not part of the schema, so it's dropped during parsing
+      expect(parsed.data?.find_status).toBeDefined()
+      expect(parsed.data?.triage_status).toBeDefined()
     })
   })
 })

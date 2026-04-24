@@ -341,7 +341,8 @@ describe('main.ts', () => {
         remediation_success: 5,
         remediation_failed: 3,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       pollStatusUntilComplete
         .mockClear()
@@ -369,7 +370,8 @@ describe('main.ts', () => {
         remediation_success: 10,
         remediation_failed: 5,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const finalizeSummary = {
         total_vulnerabilities: 10,
@@ -380,7 +382,8 @@ describe('main.ts', () => {
         remediation_success: 5,
         remediation_failed: 3,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
         Promise.resolve({

@@ -1,7 +1,7 @@
 import require$$0$1 from 'os';
 import require$$0$2 from 'crypto';
 import fs from 'fs';
-import require$$1$3 from 'path';
+import require$$1$3, { resolve } from 'path';
 import require$$0$3 from 'http';
 import require$$1 from 'https';
 import 'net';
@@ -2458,19 +2458,39 @@ function requireUtil$5 () {
 	    const key = headerNameToString(headers[i]);
 	    let val = obj[key];
 
-	    if (val) {
-	      if (typeof val === 'string') {
-	        val = [val];
-	        obj[key] = val;
-	      }
-	      val.push(headers[i + 1].toString('latin1'));
-	    } else {
-	      const headersValue = headers[i + 1];
-	      if (typeof headersValue === 'string') {
-	        obj[key] = headersValue;
+	    if (val !== undefined) {
+	      if (!Object.hasOwn(obj, key)) {
+	        const headersValue = typeof headers[i + 1] === 'string'
+	          ? headers[i + 1]
+	          : Array.isArray(headers[i + 1])
+	            ? headers[i + 1].map(x => x.toString('latin1'))
+	            : headers[i + 1].toString('latin1');
+
+	        if (key === '__proto__') {
+	          Object.defineProperty(obj, key, {
+	            value: headersValue,
+	            enumerable: true,
+	            configurable: true,
+	            writable: true
+	          });
+	        } else {
+	          obj[key] = headersValue;
+	        }
 	      } else {
-	        obj[key] = Array.isArray(headersValue) ? headersValue.map(x => x.toString('latin1')) : headersValue.toString('latin1');
+	        if (typeof val === 'string') {
+	          val = [val];
+	          obj[key] = val;
+	        }
+	        val.push(headers[i + 1].toString('latin1'));
 	      }
+	    } else {
+	      const headersValue = typeof headers[i + 1] === 'string'
+	        ? headers[i + 1]
+	        : Array.isArray(headers[i + 1])
+	          ? headers[i + 1].map(x => x.toString('latin1'))
+	          : headers[i + 1].toString('latin1');
+
+	      obj[key] = headersValue;
 	    }
 	  }
 
@@ -3221,10 +3241,12 @@ function requireDiagnostics () {
 
 	  diagnosticsChannel.subscribe('undici:websocket:open',
 	    evt => {
-	      const {
-	        address: { address, port }
-	      } = evt;
-	      debugLog('connection opened %s%s', address, port ? `:${port}` : '');
+	      if (evt.address != null) {
+	        const { address, port } = evt.address;
+	        debugLog('connection opened %s%s', address, port ? `:${port}` : '');
+	      } else {
+	        debugLog('connection opened');
+	      }
 	    });
 
 	  diagnosticsChannel.subscribe('undici:websocket:close',
@@ -3689,13 +3711,21 @@ function requireRequest$1 () {
 	  } else if (headerName === 'transfer-encoding' || headerName === 'keep-alive' || headerName === 'upgrade') {
 	    throw new InvalidArgumentError(`invalid ${headerName} header`)
 	  } else if (headerName === 'connection') {
-	    const value = typeof val === 'string' ? val.toLowerCase() : null;
-	    if (value !== 'close' && value !== 'keep-alive') {
+	    // Per RFC 7230 Section 6.1, Connection header can contain
+	    // a comma-separated list of connection option tokens (header names)
+	    const value = typeof val === 'string' ? val : null;
+	    if (value === null) {
 	      throw new InvalidArgumentError('invalid connection header')
 	    }
 
-	    if (value === 'close') {
-	      request.reset = true;
+	    for (const token of value.toLowerCase().split(',')) {
+	      const trimmed = token.trim();
+	      if (!isValidHTTPToken(trimmed)) {
+	        throw new InvalidArgumentError('invalid connection header')
+	      }
+	      if (trimmed === 'close') {
+	        request.reset = true;
+	      }
 	    }
 	  } else if (headerName === 'expect') {
 	    throw new NotSupportedError('expect header not supported')
@@ -8615,8 +8645,10 @@ function requireUtil$4 () {
 	 * @param {object|string} navigable
 	 */
 	function isTraversableNavigable (navigable) {
-	  // TODO
-	  return true
+	  // Returns true only if we have an actual traversable navigable object
+	  // that can prompt the user for credentials. In Node.js, this will always
+	  // be false since there's no Window object or navigable.
+	  return navigable != null && navigable !== 'client' && navigable !== 'no-traversable'
 	}
 
 	class EnvironmentSettingsObjectBase {
@@ -8967,10 +8999,10 @@ function requireFormdataParser () {
 	const { webidl } = requireWebidl();
 	const assert = __require$m();
 	const { isomorphicDecode } = requireInfra();
-	const { utf8DecodeBytes } = requireEncoding();
 
 	const dd = Buffer.from('--');
 	const decoder = new TextDecoder();
+	const decoderIgnoreBOM = new TextDecoder('utf-8', { ignoreBOM: true });
 
 	/**
 	 * @param {string} chars
@@ -9149,7 +9181,7 @@ function requireFormdataParser () {
 	      // 5.11. Otherwise:
 
 	      // 5.11.1. Let value be the UTF-8 decoding without BOM of body.
-	      value = utf8DecodeBytes(Buffer.from(body));
+	      value = decoderIgnoreBOM.decode(Buffer.from(body));
 	    }
 
 	    // 5.12. Assert: name is a scalar value string and value is either a scalar value string or a File object.
@@ -13168,65 +13200,70 @@ function requireClient () {
 	    });
 	  }
 
-	  client[kConnector]({
-	    host,
-	    hostname,
-	    protocol,
-	    port,
-	    servername: client[kServerName],
-	    localAddress: client[kLocalAddress]
-	  }, (err, socket) => {
-	    if (err) {
-	      handleConnectError(client, err, { host, hostname, protocol, port });
+	  try {
+	    client[kConnector]({
+	      host,
+	      hostname,
+	      protocol,
+	      port,
+	      servername: client[kServerName],
+	      localAddress: client[kLocalAddress]
+	    }, (err, socket) => {
+	      if (err) {
+	        handleConnectError(client, err, { host, hostname, protocol, port });
+	        client[kResume]();
+	        return
+	      }
+
+	      if (client.destroyed) {
+	        util.destroy(socket.on('error', noop), new ClientDestroyedError());
+	        client[kResume]();
+	        return
+	      }
+
+	      assert(socket);
+
+	      try {
+	        client[kHTTPContext] = socket.alpnProtocol === 'h2'
+	          ? connectH2(client, socket)
+	          : connectH1(client, socket);
+	      } catch (err) {
+	        socket.destroy().on('error', noop);
+	        handleConnectError(client, err, { host, hostname, protocol, port });
+	        client[kResume]();
+	        return
+	      }
+
+	      client[kConnecting] = false;
+
+	      socket[kCounter] = 0;
+	      socket[kMaxRequests] = client[kMaxRequests];
+	      socket[kClient] = client;
+	      socket[kError] = null;
+
+	      if (channels.connected.hasSubscribers) {
+	        channels.connected.publish({
+	          connectParams: {
+	            host,
+	            hostname,
+	            protocol,
+	            port,
+	            version: client[kHTTPContext]?.version,
+	            servername: client[kServerName],
+	            localAddress: client[kLocalAddress]
+	          },
+	          connector: client[kConnector],
+	          socket
+	        });
+	      }
+
+	      client.emit('connect', client[kUrl], [client]);
 	      client[kResume]();
-	      return
-	    }
-
-	    if (client.destroyed) {
-	      util.destroy(socket.on('error', noop), new ClientDestroyedError());
-	      client[kResume]();
-	      return
-	    }
-
-	    assert(socket);
-
-	    try {
-	      client[kHTTPContext] = socket.alpnProtocol === 'h2'
-	        ? connectH2(client, socket)
-	        : connectH1(client, socket);
-	    } catch (err) {
-	      socket.destroy().on('error', noop);
-	      handleConnectError(client, err, { host, hostname, protocol, port });
-	      client[kResume]();
-	      return
-	    }
-
-	    client[kConnecting] = false;
-
-	    socket[kCounter] = 0;
-	    socket[kMaxRequests] = client[kMaxRequests];
-	    socket[kClient] = client;
-	    socket[kError] = null;
-
-	    if (channels.connected.hasSubscribers) {
-	      channels.connected.publish({
-	        connectParams: {
-	          host,
-	          hostname,
-	          protocol,
-	          port,
-	          version: client[kHTTPContext]?.version,
-	          servername: client[kServerName],
-	          localAddress: client[kLocalAddress]
-	        },
-	        connector: client[kConnector],
-	        socket
-	      });
-	    }
-
-	    client.emit('connect', client[kUrl], [client]);
+	    });
+	  } catch (err) {
+	    handleConnectError(client, err, { host, hostname, protocol, port });
 	    client[kResume]();
-	  });
+	  }
 	}
 
 	function handleConnectError (client, err, { host, hostname, protocol, port }) {
@@ -17952,7 +17989,8 @@ function requireMockSymbols () {
 	  kMockAgentAddCallHistoryLog: Symbol('mock agent add call history log'),
 	  kMockAgentIsCallHistoryEnabled: Symbol('mock agent is call history enabled'),
 	  kMockAgentAcceptsNonStandardSearchParameters: Symbol('mock agent accepts non standard search parameters'),
-	  kMockCallHistoryAddLog: Symbol('mock call history add log')
+	  kMockCallHistoryAddLog: Symbol('mock call history add log'),
+	  kTotalDispatchCount: Symbol('total dispatch count')
 	};
 	return mockSymbols;
 }
@@ -17970,7 +18008,8 @@ function requireMockUtils () {
 	  kMockAgent,
 	  kOriginalDispatch,
 	  kOrigin,
-	  kGetNetConnect
+	  kGetNetConnect,
+	  kTotalDispatchCount
 	} = requireMockSymbols();
 	const { serializePathWithQuery } = requireUtil$5();
 	const { STATUS_CODES } = __require$k();
@@ -18170,6 +18209,8 @@ function requireMockUtils () {
 	  const replyData = typeof data === 'function' ? { callback: data } : { ...data };
 	  const newMockDispatch = { ...baseData, ...key, pending: true, data: { error: null, ...replyData } };
 	  mockDispatches.push(newMockDispatch);
+	  // Track total number of intercepts ever registered for better error messages
+	  mockDispatches[kTotalDispatchCount] = (mockDispatches[kTotalDispatchCount] || 0) + 1;
 	  return newMockDispatch
 	}
 
@@ -18365,13 +18406,16 @@ function requireMockUtils () {
 	      } catch (error) {
 	        if (error.code === 'UND_MOCK_ERR_MOCK_NOT_MATCHED') {
 	          const netConnect = agent[kGetNetConnect]();
+	          const totalInterceptsCount = this[kDispatches][kTotalDispatchCount] || this[kDispatches].length;
+	          const pendingInterceptsCount = this[kDispatches].filter(({ consumed }) => !consumed).length;
+	          const interceptsMessage = `, ${pendingInterceptsCount} interceptor(s) remaining out of ${totalInterceptsCount} defined`;
 	          if (netConnect === false) {
-	            throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`)
+	            throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)${interceptsMessage}`)
 	          }
 	          if (checkNetConnect(netConnect, origin)) {
 	            originalDispatch.call(this, opts, handler);
 	          } else {
-	            throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`)
+	            throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)${interceptsMessage}`)
 	          }
 	        } else {
 	          throw error
@@ -22938,7 +22982,7 @@ function requireCacheHandler () {
 	    }
 
 	    const cacheControlDirectives = cacheControlHeader ? parseCacheControlHeader(cacheControlHeader) : {};
-	    if (!canCacheResponse(this.#cacheType, statusCode, resHeaders, cacheControlDirectives)) {
+	    if (!canCacheResponse(this.#cacheType, statusCode, resHeaders, cacheControlDirectives, this.#cacheKey.headers)) {
 	      return downstreamOnHeaders()
 	    }
 
@@ -23143,8 +23187,9 @@ function requireCacheHandler () {
 	 * @param {number} statusCode
 	 * @param {import('../../types/header.d.ts').IncomingHttpHeaders} resHeaders
 	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives} cacheControlDirectives
+	 * @param {import('../../types/header.d.ts').IncomingHttpHeaders} [reqHeaders]
 	 */
-	function canCacheResponse (cacheType, statusCode, resHeaders, cacheControlDirectives) {
+	function canCacheResponse (cacheType, statusCode, resHeaders, cacheControlDirectives, reqHeaders) {
 	  // Status code must be final and understood.
 	  if (statusCode < 200 || NOT_UNDERSTOOD_STATUS_CODES.includes(statusCode)) {
 	    return false
@@ -23175,8 +23220,16 @@ function requireCacheHandler () {
 	  }
 
 	  // https://www.rfc-editor.org/rfc/rfc9111.html#name-storing-responses-to-authen
-	  if (resHeaders.authorization) {
-	    if (!cacheControlDirectives.public || typeof resHeaders.authorization !== 'string') {
+	  if (reqHeaders?.authorization) {
+	    if (
+	      !cacheControlDirectives.public &&
+	      !cacheControlDirectives['s-maxage'] &&
+	      !cacheControlDirectives['must-revalidate']
+	    ) {
+	      return false
+	    }
+
+	    if (typeof reqHeaders.authorization !== 'string') {
 	      return false
 	    }
 
@@ -23296,8 +23349,16 @@ function requireCacheHandler () {
 	    staleIfError = staleAt + (cacheControlDirectives['stale-if-error'] * 1000);
 	  }
 
-	  if (staleWhileRevalidate === -Infinity && staleIfError === -Infinity) {
+	  if (cacheControlDirectives.immutable && staleWhileRevalidate === -Infinity && staleIfError === -Infinity) {
 	    immutable = now + 31536000000;
+	  }
+
+	  // When no stale directives or immutable flag, add a revalidation buffer
+	  // equal to the freshness lifetime so the entry survives past staleAt long
+	  // enough to be revalidated instead of silently disappearing.
+	  if (staleWhileRevalidate === -Infinity && staleIfError === -Infinity && immutable === -Infinity) {
+	    const freshnessLifetime = staleAt - now;
+	    return staleAt + freshnessLifetime
 	  }
 
 	  return Math.max(staleAt, staleWhileRevalidate, staleIfError, immutable)
@@ -30003,12 +30064,25 @@ function requireFetch () {
 	  // 14. If response’s status is 401, httpRequest’s response tainting is not "cors",
 	  //     includeCredentials is true, and request’s traversable for user prompts is
 	  //     a traversable navigable:
-	  if (response.status === 401 && httpRequest.responseTainting !== 'cors' && includeCredentials && isTraversableNavigable(request.traversableForUserPrompts)) {
+	  //
+	  //     In Node.js there is no traversable navigable to prompt the user, but we
+	  //     still need to handle URL-embedded credentials so authentication retries
+	  //     for WebSocket handshakes continue to work.
+	  if (response.status === 401 && httpRequest.responseTainting !== 'cors' && includeCredentials && (
+	    request.useURLCredentials !== undefined ||
+	    isTraversableNavigable(request.traversableForUserPrompts)
+	  )) {
 	    // 2. If request’s body is non-null, then:
 	    if (request.body != null) {
 	      // 1. If request’s body’s source is null, then return a network error.
 	      if (request.body.source == null) {
-	        return makeNetworkError('expected non-null body source')
+	        // Note: In Node.js, this code path should not be reached because
+	        // isTraversableNavigable() returns false for non-navigable contexts.
+	        // However, we handle it gracefully by returning the response instead of
+	        // a network error, as we won't actually retry the request.
+	        // This aligns with the Fetch spec discussion in whatwg/fetch#1132,
+	        // which allows implementations flexibility when credentials can't be obtained.
+	        return response
 	      }
 
 	      // 2. Set request’s body to the body of the result of safely extracting
@@ -30519,7 +30593,15 @@ function requireFetch () {
 	          const headersList = new HeadersList();
 
 	          for (let i = 0; i < rawHeaders.length; i += 2) {
-	            headersList.append(bufferToLowerCasedHeaderName(rawHeaders[i]), rawHeaders[i + 1].toString('latin1'), true);
+	            const nameStr = bufferToLowerCasedHeaderName(rawHeaders[i]);
+	            const value = rawHeaders[i + 1];
+	            if (Array.isArray(value) && !Buffer.isBuffer(rawHeaders[i + 1])) {
+	              for (const val of value) {
+	                headersList.append(nameStr, val.toString('latin1'), true);
+	              }
+	            } else {
+	              headersList.append(nameStr, value.toString('latin1'), true);
+	            }
 	          }
 	          const location = headersList.get('location', true);
 
@@ -30688,7 +30770,15 @@ function requireFetch () {
 	          const headersList = new HeadersList();
 
 	          for (let i = 0; i < rawHeaders.length; i += 2) {
-	            headersList.append(bufferToLowerCasedHeaderName(rawHeaders[i]), rawHeaders[i + 1].toString('latin1'), true);
+	            const nameStr = bufferToLowerCasedHeaderName(rawHeaders[i]);
+	            const value = rawHeaders[i + 1];
+	            if (Array.isArray(value) && !Buffer.isBuffer(rawHeaders[i + 1])) {
+	              for (const val of value) {
+	                headersList.append(nameStr, val.toString('latin1'), true);
+	              }
+	            } else {
+	              headersList.append(nameStr, value.toString('latin1'), true);
+	            }
 	          }
 
 	          resolve({
@@ -34683,6 +34773,18 @@ function requireWebsocket () {
 	const { WebsocketFrameSend } = requireFrame();
 	const { channels } = requireDiagnostics();
 
+	function getSocketAddress (socket) {
+	  if (typeof socket?.address === 'function') {
+	    return socket.address()
+	  }
+
+	  if (typeof socket?.session?.socket?.address === 'function') {
+	    return socket.session.socket.address()
+	  }
+
+	  return null
+	}
+
 	/**
 	 * @typedef {object} Handler
 	 * @property {(response: any, extensions?: string[]) => void} onConnectionEstablished
@@ -35149,7 +35251,7 @@ function requireWebsocket () {
 	      // Convert headers to a plain object for the event
 	      const headers = response.headersList.entries;
 	      channels.open.publish({
-	        address: response.socket.address(),
+	        address: getSocketAddress(response.socket),
 	        protocol: this.#protocol,
 	        extensions: this.#extensions,
 	        websocket: this,
@@ -40584,16 +40686,16 @@ const G = getGlobal();
 const FormDataCtor = typeof G.FormData !== 'undefined' ? G.FormData : undefined;
 
 const isFormData = (thing) => {
-  let kind;
-  return thing && (
-    (FormDataCtor && thing instanceof FormDataCtor) || (
-      isFunction$1(thing.append) && (
-        (kind = kindOf(thing)) === 'formdata' ||
-        // detect form-data instance
-        (kind === 'object' && isFunction$1(thing.toString) && thing.toString() === '[object FormData]')
-      )
-    )
-  );
+  if (!thing) return false;
+  if (FormDataCtor && thing instanceof FormDataCtor) return true;
+  // Reject plain objects inheriting directly from Object.prototype so prototype-pollution gadgets can't spoof FormData (GHSA-6chq-wfr3-2hj9).
+  const proto = getPrototypeOf(thing);
+  if (!proto || proto === Object.prototype) return false;
+  if (!isFunction$1(thing.append)) return false;
+  const kind = kindOf(thing);
+  return kind === 'formdata' ||
+    // detect form-data instance
+    (kind === 'object' && isFunction$1(thing.toString) && thing.toString() === '[object FormData]');
 };
 
 /**
@@ -41260,40 +41362,40 @@ let AxiosError$1 = class AxiosError extends Error {
     return axiosError;
   }
 
-    /**
-     * Create an Error with the specified message, config, error code, request and response.
-     *
-     * @param {string} message The error message.
-     * @param {string} [code] The error code (for example, 'ECONNABORTED').
-     * @param {Object} [config] The config.
-     * @param {Object} [request] The request.
-     * @param {Object} [response] The response.
-     *
-     * @returns {Error} The created error.
-     */
-    constructor(message, code, config, request, response) {
-      super(message);
-      
-      // Make message enumerable to maintain backward compatibility
-      // The native Error constructor sets message as non-enumerable,
-      // but axios < v1.13.3 had it as enumerable
-      Object.defineProperty(this, 'message', {
-          value: message,
-          enumerable: true,
-          writable: true,
-          configurable: true
-      });
-      
-      this.name = 'AxiosError';
-      this.isAxiosError = true;
-      code && (this.code = code);
-      config && (this.config = config);
-      request && (this.request = request);
-      if (response) {
-          this.response = response;
-          this.status = response.status;
-      }
+  /**
+   * Create an Error with the specified message, config, error code, request and response.
+   *
+   * @param {string} message The error message.
+   * @param {string} [code] The error code (for example, 'ECONNABORTED').
+   * @param {Object} [config] The config.
+   * @param {Object} [request] The request.
+   * @param {Object} [response] The response.
+   *
+   * @returns {Error} The created error.
+   */
+  constructor(message, code, config, request, response) {
+    super(message);
+
+    // Make message enumerable to maintain backward compatibility
+    // The native Error constructor sets message as non-enumerable,
+    // but axios < v1.13.3 had it as enumerable
+    Object.defineProperty(this, 'message', {
+      value: message,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+
+    this.name = 'AxiosError';
+    this.isAxiosError = true;
+    code && (this.code = code);
+    config && (this.config = config);
+    request && (this.request = request);
+    if (response) {
+      this.response = response;
+      this.status = response.status;
     }
+  }
 
   toJSON() {
     return {
@@ -41329,6 +41431,7 @@ AxiosError$1.ERR_BAD_REQUEST = 'ERR_BAD_REQUEST';
 AxiosError$1.ERR_CANCELED = 'ERR_CANCELED';
 AxiosError$1.ERR_NOT_SUPPORT = 'ERR_NOT_SUPPORT';
 AxiosError$1.ERR_INVALID_URL = 'ERR_INVALID_URL';
+AxiosError$1.ERR_FORM_DATA_DEPTH_EXCEEDED = 'ERR_FORM_DATA_DEPTH_EXCEEDED';
 
 var delayed_stream;
 var hasRequiredDelayed_stream;
@@ -54756,6 +54859,7 @@ function toFormData$1(obj, formData, options) {
   const dots = options.dots;
   const indexes = options.indexes;
   const _Blob = options.Blob || (typeof Blob !== 'undefined' && Blob);
+  const maxDepth = options.maxDepth === undefined ? 100 : options.maxDepth;
   const useBlob = _Blob && utils$3.isSpecCompliantForm(formData);
 
   if (!utils$3.isFunction(visitor)) {
@@ -54848,8 +54952,15 @@ function toFormData$1(obj, formData, options) {
     isVisitable,
   });
 
-  function build(value, path) {
+  function build(value, path, depth = 0) {
     if (utils$3.isUndefined(value)) return;
+
+    if (depth > maxDepth) {
+      throw new AxiosError$1(
+        'Object is too deeply nested (' + depth + ' levels). Max depth: ' + maxDepth,
+        AxiosError$1.ERR_FORM_DATA_DEPTH_EXCEEDED
+      );
+    }
 
     if (stack.indexOf(value) !== -1) {
       throw Error('Circular reference detected in ' + path.join('.'));
@@ -54863,7 +54974,7 @@ function toFormData$1(obj, formData, options) {
         visitor.call(formData, el, utils$3.isString(key) ? key.trim() : key, path, exposedHelpers);
 
       if (result === true) {
-        build(el, path ? path.concat(key) : [key]);
+        build(el, path ? path.concat(key) : [key], depth + 1);
       }
     });
 
@@ -54895,9 +55006,8 @@ function encode$1(str) {
     ')': '%29',
     '~': '%7E',
     '%20': '+',
-    '%00': '\x00',
   };
-  return encodeURIComponent(str).replace(/[!'()~]|%20|%00/g, function replacer(match) {
+  return encodeURIComponent(str).replace(/[!'()~]|%20/g, function replacer(match) {
     return charMap[match];
   });
 }
@@ -55237,7 +55347,9 @@ function formDataToJSON(formData) {
 
     if (isLast) {
       if (utils$3.hasOwnProp(target, name)) {
-        target[name] = [target[name], value];
+        target[name] = utils$3.isArray(target[name])
+          ? target[name].concat(value)
+          : [target[name], value];
       } else {
         target[name] = value;
       }
@@ -55270,6 +55382,8 @@ function formDataToJSON(formData) {
 
   return null;
 }
+
+const own = (obj, key) => (obj != null && utils$3.hasOwnProp(obj, key) ? obj[key] : undefined);
 
 /**
  * It takes a string, tries to parse it, and if it fails, it returns the stringified version
@@ -55338,20 +55452,22 @@ const defaults = {
       let isFileList;
 
       if (isObjectPayload) {
+        const formSerializer = own(this, 'formSerializer');
         if (contentType.indexOf('application/x-www-form-urlencoded') > -1) {
-          return toURLEncodedForm(data, this.formSerializer).toString();
+          return toURLEncodedForm(data, formSerializer).toString();
         }
 
         if (
           (isFileList = utils$3.isFileList(data)) ||
           contentType.indexOf('multipart/form-data') > -1
         ) {
-          const _FormData = this.env && this.env.FormData;
+          const env = own(this, 'env');
+          const _FormData = env && env.FormData;
 
           return toFormData$1(
             isFileList ? { 'files[]': data } : data,
             _FormData && new _FormData(),
-            this.formSerializer
+            formSerializer
           );
         }
       }
@@ -55367,9 +55483,10 @@ const defaults = {
 
   transformResponse: [
     function transformResponse(data) {
-      const transitional = this.transitional || defaults.transitional;
+      const transitional = own(this, 'transitional') || defaults.transitional;
       const forcedJSONParsing = transitional && transitional.forcedJSONParsing;
-      const JSONRequested = this.responseType === 'json';
+      const responseType = own(this, 'responseType');
+      const JSONRequested = responseType === 'json';
 
       if (utils$3.isResponse(data) || utils$3.isReadableStream(data)) {
         return data;
@@ -55378,17 +55495,17 @@ const defaults = {
       if (
         data &&
         utils$3.isString(data) &&
-        ((forcedJSONParsing && !this.responseType) || JSONRequested)
+        ((forcedJSONParsing && !responseType) || JSONRequested)
       ) {
         const silentJSONParsing = transitional && transitional.silentJSONParsing;
         const strictJSONParsing = !silentJSONParsing && JSONRequested;
 
         try {
-          return JSON.parse(data, this.parseReviver);
+          return JSON.parse(data, own(this, 'parseReviver'));
         } catch (e) {
           if (strictJSONParsing) {
             if (e.name === 'SyntaxError') {
-              throw AxiosError$1.from(e, AxiosError$1.ERR_BAD_RESPONSE, this, null, this.response);
+              throw AxiosError$1.from(e, AxiosError$1.ERR_BAD_RESPONSE, this, null, own(this, 'response'));
             }
             throw e;
           }
@@ -55500,41 +55617,41 @@ var parseHeaders = (rawHeaders) => {
 
 const $internals = Symbol('internals');
 
-const isValidHeaderValue = (value) => !/[\r\n]/.test(value);
+const INVALID_HEADER_VALUE_CHARS_RE = /[^\x09\x20-\x7E\x80-\xFF]/g;
 
-function assertValidHeaderValue(value, header) {
-  if (value === false || value == null) {
-    return;
-  }
-
-  if (utils$3.isArray(value)) {
-    value.forEach((v) => assertValidHeaderValue(v, header));
-    return;
-  }
-
-  if (!isValidHeaderValue(String(value))) {
-    throw new Error(`Invalid character in header content ["${header}"]`);
-  }
-}
-
-function normalizeHeader(header) {
-  return header && String(header).trim().toLowerCase();
-}
-
-function stripTrailingCRLF(str) {
+function trimSPorHTAB(str) {
+  let start = 0;
   let end = str.length;
 
-  while (end > 0) {
-    const charCode = str.charCodeAt(end - 1);
+  while (start < end) {
+    const code = str.charCodeAt(start);
 
-    if (charCode !== 10 && charCode !== 13) {
+    if (code !== 0x09 && code !== 0x20) {
+      break;
+    }
+
+    start += 1;
+  }
+
+  while (end > start) {
+    const code = str.charCodeAt(end - 1);
+
+    if (code !== 0x09 && code !== 0x20) {
       break;
     }
 
     end -= 1;
   }
 
-  return end === str.length ? str : str.slice(0, end);
+  return start === 0 && end === str.length ? str : str.slice(start, end);
+}
+
+function normalizeHeader(header) {
+  return header && String(header).trim().toLowerCase();
+}
+
+function sanitizeHeaderValue(str) {
+  return trimSPorHTAB(str.replace(INVALID_HEADER_VALUE_CHARS_RE, ''));
 }
 
 function normalizeValue(value) {
@@ -55542,7 +55659,7 @@ function normalizeValue(value) {
     return value;
   }
 
-  return utils$3.isArray(value) ? value.map(normalizeValue) : stripTrailingCRLF(String(value));
+  return utils$3.isArray(value) ? value.map(normalizeValue) : sanitizeHeaderValue(String(value));
 }
 
 function parseTokens(str) {
@@ -55624,7 +55741,6 @@ let AxiosHeaders$1 = class AxiosHeaders {
         _rewrite === true ||
         (_rewrite === undefined && self[key] !== false)
       ) {
-        assertValidHeaderValue(_value, _header);
         self[key || _header] = normalizeValue(_value);
       }
     }
@@ -55986,7 +56102,7 @@ function combineURLs(baseURL, relativeURL) {
  */
 function buildFullPath(baseURL, requestedURL, allowAbsoluteUrls) {
   let isRelativeUrl = !isAbsoluteURL(requestedURL);
-  if (baseURL && (isRelativeUrl || allowAbsoluteUrls == false)) {
+  if (baseURL && (isRelativeUrl || allowAbsoluteUrls === false)) {
     return combineURLs(baseURL, requestedURL);
   }
   return requestedURL;
@@ -58049,7 +58165,7 @@ function requireFollowRedirects () {
 var followRedirectsExports = requireFollowRedirects();
 var followRedirects = /*@__PURE__*/getDefaultExportFromCjs(followRedirectsExports);
 
-const VERSION$8 = "1.15.0";
+const VERSION$8 = "1.15.2";
 
 function parseProtocol(url) {
   const match = /^([-+\w]{1,25})(:?\/\/|:)/.exec(url);
@@ -58288,7 +58404,8 @@ class FormDataPart {
     if (isStringValue) {
       value = textEncoder.encode(String(value).replace(/\r?\n|\r\n?/g, CRLF));
     } else {
-      headers += `Content-Type: ${value.type || 'application/octet-stream'}${CRLF}`;
+      const safeType = String(value.type || 'application/octet-stream').replace(/[\r\n]/g, '');
+      headers += `Content-Type: ${safeType}${CRLF}`;
     }
 
     this.headers = textEncoder.encode(headers + CRLF);
@@ -58418,6 +58535,53 @@ const callbackify = (fn, reducer) => {
     : fn;
 };
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost']);
+
+const isIPv4Loopback = (host) => {
+  const parts = host.split('.');
+  if (parts.length !== 4) return false;
+  if (parts[0] !== '127') return false;
+  return parts.every((p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
+};
+
+const isIPv6Loopback = (host) => {
+  // Collapse all-zero groups: any form of ::1 / 0:0:...:0:1
+  // First, strip any leading "::" by normalising with Set lookup of common forms,
+  // then fall back to structural check.
+  if (host === '::1') return true;
+
+  // Check IPv4-mapped IPv6 loopback: ::ffff:<v4-loopback> or ::ffff:<hex-v4-loopback>
+  // Node's URL parser normalises ::ffff:127.0.0.1 → ::ffff:7f00:1
+  const v4MappedDotted = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (v4MappedDotted) return isIPv4Loopback(v4MappedDotted[1]);
+
+  const v4MappedHex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (v4MappedHex) {
+    const high = parseInt(v4MappedHex[1], 16);
+    // High 16 bits must start with 127 (0x7f) — i.e. 0x7f00..0x7fff
+    return high >= 0x7f00 && high <= 0x7fff;
+  }
+
+  // Full-form ::1 variants: any number of zero groups followed by trailing 1
+  // e.g. 0:0:0:0:0:0:0:1, 0000:...:0001
+  const groups = host.split(':');
+  if (groups.length === 8) {
+    for (let i = 0; i < 7; i++) {
+      if (!/^0+$/.test(groups[i])) return false;
+    }
+    return /^0*1$/.test(groups[7]);
+  }
+
+  return false;
+};
+
+const isLoopback = (host) => {
+  if (!host) return false;
+  if (LOOPBACK_HOSTNAMES.has(host)) return true;
+  if (isIPv4Loopback(host)) return true;
+  return isIPv6Loopback(host);
+};
+
 const DEFAULT_PORTS = {
   http: 80,
   https: 443,
@@ -58521,7 +58685,7 @@ function shouldBypassProxy(location) {
       return hostname.endsWith(entryHost);
     }
 
-    return hostname === entryHost;
+    return hostname === entryHost || (isLoopback(hostname) && isLoopback(entryHost));
   });
 }
 
@@ -58625,13 +58789,13 @@ const progressEventReducer = (listener, isDownloadStream, freq = 3) => {
   const _speedometer = speedometer(50, 250);
 
   return throttle((e) => {
-    const loaded = e.loaded;
+    const rawLoaded = e.loaded;
     const total = e.lengthComputable ? e.total : undefined;
-    const progressBytes = loaded - bytesNotified;
+    const loaded = total != null ? Math.min(rawLoaded, total) : rawLoaded;
+    const progressBytes = Math.max(0, loaded - bytesNotified);
     const rate = _speedometer(progressBytes);
-    const inRange = loaded <= total;
 
-    bytesNotified = loaded;
+    bytesNotified = Math.max(bytesNotified, loaded);
 
     const data = {
       loaded,
@@ -58639,7 +58803,7 @@ const progressEventReducer = (listener, isDownloadStream, freq = 3) => {
       progress: total ? loaded / total : undefined,
       bytes: progressBytes,
       rate: rate ? rate : undefined,
-      estimated: rate && total && inRange ? (total - loaded) / rate : undefined,
+      estimated: rate && total ? (total - loaded) / rate : undefined,
       event: e,
       lengthComputable: total != null,
       [isDownloadStream ? 'download' : 'upload']: true,
@@ -58757,6 +58921,11 @@ const isBrotliSupported = utils$3.isFunction(zlib.createBrotliDecompress);
 const { http: httpFollow, https: httpsFollow } = followRedirects;
 
 const isHttps = /https:?/;
+
+// Symbols used to bind a single 'error' listener to a pooled socket and track
+// the request currently owning that socket across keep-alive reuse (issue #10780).
+const kAxiosSocketListener = Symbol('axios.http.socketListener');
+const kAxiosCurrentReq = Symbol('axios.http.currentReq');
 
 const supportedProtocols = platform.protocols.map((protocol) => {
   return protocol + ':';
@@ -59043,9 +59212,16 @@ const http2Transport = {
 /*eslint consistent-return:0*/
 var httpAdapter = isHttpAdapterSupported &&
   function httpAdapter(config) {
-    return wrapAsync(async function dispatchHttpRequest(resolve, reject, onDone) {
-      let { data, lookup, family, httpVersion = 1, http2Options } = config;
-      const { responseType, responseEncoding } = config;
+    return wrapAsync(async function dispatchHttpRequest(resolve$1, reject, onDone) {
+      const own = (key) => (utils$3.hasOwnProp(config, key) ? config[key] : undefined);
+      let data = own('data');
+      let lookup = own('lookup');
+      let family = own('family');
+      let httpVersion = own('httpVersion');
+      if (httpVersion === undefined) httpVersion = 1;
+      let http2Options = own('http2Options');
+      const responseType = own('responseType');
+      const responseEncoding = own('responseEncoding');
       const method = config.method.toUpperCase();
       let isDone;
       let rejected = false;
@@ -59162,7 +59338,7 @@ var httpAdapter = isHttpAdapterSupported &&
         let convertedData;
 
         if (method !== 'GET') {
-          return settle(resolve, reject, {
+          return settle(resolve$1, reject, {
             status: 405,
             statusText: 'method not allowed',
             headers: {},
@@ -59188,7 +59364,7 @@ var httpAdapter = isHttpAdapterSupported &&
           convertedData = stream.Readable.from(convertedData);
         }
 
-        return settle(resolve, reject, {
+        return settle(resolve$1, reject, {
           data: convertedData,
           status: 200,
           statusText: 'OK',
@@ -59231,7 +59407,8 @@ var httpAdapter = isHttpAdapterSupported &&
           }
         );
         // support for https://www.npmjs.com/package/form-data api
-      } else if (utils$3.isFormData(data) && utils$3.isFunction(data.getHeaders)) {
+      } else if (utils$3.isFormData(data) && utils$3.isFunction(data.getHeaders) &&
+                 data.getHeaders !== Object.prototype.getHeaders) {
         headers.set(data.getHeaders());
 
         if (!headers.hasContentLength()) {
@@ -59315,9 +59492,10 @@ var httpAdapter = isHttpAdapterSupported &&
 
       // HTTP basic authentication
       let auth = undefined;
-      if (config.auth) {
-        const username = config.auth.username || '';
-        const password = config.auth.password || '';
+      const configAuth = own('auth');
+      if (configAuth) {
+        const username = configAuth.username || '';
+        const password = configAuth.password || '';
         auth = username + ':' + password;
       }
 
@@ -59351,7 +59529,10 @@ var httpAdapter = isHttpAdapterSupported &&
         false
       );
 
-      const options = {
+      // Null-prototype to block prototype pollution gadgets on properties read
+      // directly by Node's http.request (e.g. insecureHTTPParser, lookup).
+      // See GHSA-q8qp-cvcw-x6jj.
+      const options = Object.assign(Object.create(null), {
         path,
         method: method,
         headers: headers.toJSON(),
@@ -59360,14 +59541,41 @@ var httpAdapter = isHttpAdapterSupported &&
         protocol,
         family,
         beforeRedirect: dispatchBeforeRedirect,
-        beforeRedirects: {},
+        beforeRedirects: Object.create(null),
         http2Options,
-      };
+      });
 
       // cacheable-lookup integration hotfix
       !utils$3.isUndefined(lookup) && (options.lookup = lookup);
 
       if (config.socketPath) {
+        if (typeof config.socketPath !== 'string') {
+          return reject(new AxiosError$1(
+            'socketPath must be a string',
+            AxiosError$1.ERR_BAD_OPTION_VALUE,
+            config
+          ));
+        }
+
+        if (config.allowedSocketPaths != null) {
+          const allowed = Array.isArray(config.allowedSocketPaths)
+            ? config.allowedSocketPaths
+            : [config.allowedSocketPaths];
+
+          const resolvedSocket = resolve(config.socketPath);
+          const isAllowed = allowed.some(
+            (entry) => typeof entry === 'string' && resolve(entry) === resolvedSocket
+          );
+
+          if (!isAllowed) {
+            return reject(new AxiosError$1(
+              `socketPath "${config.socketPath}" is not permitted by allowedSocketPaths`,
+              AxiosError$1.ERR_BAD_OPTION_VALUE,
+              config
+            ));
+          }
+        }
+
         options.socketPath = config.socketPath;
       } else {
         options.hostname = parsed.hostname.startsWith('[')
@@ -59387,16 +59595,18 @@ var httpAdapter = isHttpAdapterSupported &&
       if (isHttp2) {
         transport = http2Transport;
       } else {
-        if (config.transport) {
-          transport = config.transport;
+        const configTransport = own('transport');
+        if (configTransport) {
+          transport = configTransport;
         } else if (config.maxRedirects === 0) {
           transport = isHttpsRequest ? require$$1 : require$$0$3;
         } else {
           if (config.maxRedirects) {
             options.maxRedirects = config.maxRedirects;
           }
-          if (config.beforeRedirect) {
-            options.beforeRedirects.config = config.beforeRedirect;
+          const configBeforeRedirect = own('beforeRedirect');
+          if (configBeforeRedirect) {
+            options.beforeRedirects.config = configBeforeRedirect;
           }
           transport = isHttpsRequest ? httpsFollow : httpFollow;
         }
@@ -59409,9 +59619,10 @@ var httpAdapter = isHttpAdapterSupported &&
         options.maxBodyLength = Infinity;
       }
 
-      if (config.insecureHTTPParser) {
-        options.insecureHTTPParser = config.insecureHTTPParser;
-      }
+      // Always set an explicit own value so a polluted
+      // Object.prototype.insecureHTTPParser cannot enable the lenient parser
+      // through Node's internal options copy (GHSA-q8qp-cvcw-x6jj).
+      options.insecureHTTPParser = Boolean(own('insecureHTTPParser'));
 
       // Create the request
       req = transport.request(options, function handleResponse(res) {
@@ -59495,8 +59706,32 @@ var httpAdapter = isHttpAdapterSupported &&
         };
 
         if (responseType === 'stream') {
+          // Enforce maxContentLength on streamed responses; previously this
+          // was applied only to buffered responses. See GHSA-vf2m-468p-8v99.
+          if (config.maxContentLength > -1) {
+            const limit = config.maxContentLength;
+            const source = responseStream;
+            async function* enforceMaxContentLength() {
+              let totalResponseBytes = 0;
+              for await (const chunk of source) {
+                totalResponseBytes += chunk.length;
+                if (totalResponseBytes > limit) {
+                  throw new AxiosError$1(
+                    'maxContentLength size of ' + limit + ' exceeded',
+                    AxiosError$1.ERR_BAD_RESPONSE,
+                    config,
+                    lastRequest
+                  );
+                }
+                yield chunk;
+              }
+            }
+            responseStream = stream.Readable.from(enforceMaxContentLength(), {
+              objectMode: false,
+            });
+          }
           response.data = responseStream;
-          settle(resolve, reject, response);
+          settle(resolve$1, reject, response);
         } else {
           const responseBuffer = [];
           let totalResponseBytes = 0;
@@ -59555,7 +59790,7 @@ var httpAdapter = isHttpAdapterSupported &&
             } catch (err) {
               return reject(AxiosError$1.from(err, null, config, response.request, response));
             }
-            settle(resolve, reject, response);
+            settle(resolve$1, reject, response);
           });
         }
 
@@ -59584,6 +59819,29 @@ var httpAdapter = isHttpAdapterSupported &&
       req.on('socket', function handleRequestSocket(socket) {
         // default interval of sending ack packet is 1 minute
         socket.setKeepAlive(true, 1000 * 60);
+
+        // Install a single 'error' listener per socket (not per request) to avoid
+        // accumulating listeners on pooled keep-alive sockets that get reassigned
+        // to new requests before the previous request's 'close' fires (issue #10780).
+        // The listener is bound to the socket's currently-active request via a
+        // symbol, which is swapped as the socket is reassigned.
+        if (!socket[kAxiosSocketListener]) {
+          socket.on('error', function handleSocketError(err) {
+            const current = socket[kAxiosCurrentReq];
+            if (current && !current.destroyed) {
+              current.destroy(err);
+            }
+          });
+          socket[kAxiosSocketListener] = true;
+        }
+
+        socket[kAxiosCurrentReq] = req;
+
+        req.once('close', function clearCurrentReq() {
+          if (socket[kAxiosCurrentReq] === req) {
+            socket[kAxiosCurrentReq] = null;
+          }
+        });
       });
 
       // Handle request timeout
@@ -59652,7 +59910,41 @@ var httpAdapter = isHttpAdapterSupported &&
           }
         });
 
-        data.pipe(req);
+        // Enforce maxBodyLength for streamed uploads on the native http/https
+        // transport (maxRedirects === 0); follow-redirects enforces it on the
+        // other path. See GHSA-5c9x-8gcm-mpgx.
+        let uploadStream = data;
+        if (config.maxBodyLength > -1 && config.maxRedirects === 0) {
+          const limit = config.maxBodyLength;
+          let bytesSent = 0;
+          uploadStream = stream.pipeline(
+            [
+              data,
+              new stream.Transform({
+                transform(chunk, _enc, cb) {
+                  bytesSent += chunk.length;
+                  if (bytesSent > limit) {
+                    return cb(
+                      new AxiosError$1(
+                        'Request body larger than maxBodyLength limit',
+                        AxiosError$1.ERR_BAD_REQUEST,
+                        config,
+                        req
+                      )
+                    );
+                  }
+                  cb(null, chunk);
+                },
+              }),
+            ],
+            utils$3.noop
+          );
+          uploadStream.on('error', (err) => {
+            if (!req.destroyed) req.destroy(err);
+          });
+        }
+
+        uploadStream.pipe(req);
       } else {
         data && req.write(data);
         req.end();
@@ -59735,7 +60027,18 @@ const headersToObject = (thing) => (thing instanceof AxiosHeaders$1 ? { ...thing
 function mergeConfig$1(config1, config2) {
   // eslint-disable-next-line no-param-reassign
   config2 = config2 || {};
-  const config = {};
+
+  // Use a null-prototype object so that downstream reads such as `config.auth`
+  // or `config.baseURL` cannot inherit polluted values from Object.prototype
+  // (see GHSA-q8qp-cvcw-x6jj). `hasOwnProperty` is restored as a non-enumerable
+  // own slot to preserve ergonomics for user code that relies on it.
+  const config = Object.create(null);
+  Object.defineProperty(config, 'hasOwnProperty', {
+    value: Object.prototype.hasOwnProperty,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
 
   function getMergedValue(target, source, prop, caseless) {
     if (utils$3.isPlainObject(target) && utils$3.isPlainObject(source)) {
@@ -59774,9 +60077,9 @@ function mergeConfig$1(config1, config2) {
 
   // eslint-disable-next-line consistent-return
   function mergeDirectKeys(a, b, prop) {
-    if (prop in config2) {
+    if (utils$3.hasOwnProp(config2, prop)) {
       return getMergedValue(a, b);
-    } else if (prop in config1) {
+    } else if (utils$3.hasOwnProp(config1, prop)) {
       return getMergedValue(undefined, a);
     }
   }
@@ -59808,6 +60111,7 @@ function mergeConfig$1(config1, config2) {
     httpsAgent: defaultToConfig2,
     cancelToken: defaultToConfig2,
     socketPath: defaultToConfig2,
+    allowedSocketPaths: defaultToConfig2,
     responseEncoding: defaultToConfig2,
     validateStatus: mergeDirectKeys,
     headers: (a, b, prop) =>
@@ -59817,7 +60121,9 @@ function mergeConfig$1(config1, config2) {
   utils$3.forEach(Object.keys({ ...config1, ...config2 }), function computeConfigValue(prop) {
     if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return;
     const merge = utils$3.hasOwnProp(mergeMap, prop) ? mergeMap[prop] : mergeDeepProperties;
-    const configValue = merge(config1[prop], config2[prop], prop);
+    const a = utils$3.hasOwnProp(config1, prop) ? config1[prop] : undefined;
+    const b = utils$3.hasOwnProp(config2, prop) ? config2[prop] : undefined;
+    const configValue = merge(a, b, prop);
     (utils$3.isUndefined(configValue) && merge !== mergeDirectKeys) || (config[prop] = configValue);
   });
 
@@ -59827,12 +60133,24 @@ function mergeConfig$1(config1, config2) {
 var resolveConfig = (config) => {
   const newConfig = mergeConfig$1({}, config);
 
-  let { data, withXSRFToken, xsrfHeaderName, xsrfCookieName, headers, auth } = newConfig;
+  // Read only own properties to prevent prototype pollution gadgets
+  // (e.g. Object.prototype.baseURL = 'https://evil.com'). See GHSA-q8qp-cvcw-x6jj.
+  const own = (key) => (utils$3.hasOwnProp(newConfig, key) ? newConfig[key] : undefined);
+
+  const data = own('data');
+  let withXSRFToken = own('withXSRFToken');
+  const xsrfHeaderName = own('xsrfHeaderName');
+  const xsrfCookieName = own('xsrfCookieName');
+  let headers = own('headers');
+  const auth = own('auth');
+  const baseURL = own('baseURL');
+  const allowAbsoluteUrls = own('allowAbsoluteUrls');
+  const url = own('url');
 
   newConfig.headers = headers = AxiosHeaders$1.from(headers);
 
   newConfig.url = buildURL(
-    buildFullPath(newConfig.baseURL, newConfig.url, newConfig.allowAbsoluteUrls),
+    buildFullPath(baseURL, url, allowAbsoluteUrls),
     config.params,
     config.paramsSerializer
   );
@@ -59871,10 +60189,18 @@ var resolveConfig = (config) => {
   // Specifically not if we're in a web worker, or react-native.
 
   if (platform.hasStandardBrowserEnv) {
-    withXSRFToken && utils$3.isFunction(withXSRFToken) && (withXSRFToken = withXSRFToken(newConfig));
+    if (utils$3.isFunction(withXSRFToken)) {
+      withXSRFToken = withXSRFToken(newConfig);
+    }
 
-    if (withXSRFToken || (withXSRFToken !== false && isURLSameOrigin(newConfig.url))) {
-      // Add xsrf header
+    // Strict boolean check — prevents proto-pollution gadgets (e.g. Object.prototype.withXSRFToken = 1)
+    // and misconfigurations (e.g. "false") from short-circuiting the same-origin check and leaking
+    // the XSRF token cross-origin. See GHSA-xx6v-rp6x-q39c.
+    const shouldSendXSRF =
+      withXSRFToken === true ||
+      (withXSRFToken == null && isURLSameOrigin(newConfig.url));
+
+    if (shouldSendXSRF) {
       const xsrfValue = xsrfHeaderName && xsrfCookieName && cookies.read(xsrfCookieName);
 
       if (xsrfValue) {
@@ -60293,18 +60619,20 @@ const factory = (env) => {
     test(() => {
       let duplexAccessed = false;
 
-      const body = new ReadableStream$1();
-
-      const hasContentType = new Request(platform.origin, {
-        body,
+      const request = new Request(platform.origin, {
+        body: new ReadableStream$1(),
         method: 'POST',
         get duplex() {
           duplexAccessed = true;
           return 'half';
         },
-      }).headers.has('Content-Type');
+      });
 
-      body.cancel();
+      const hasContentType = request.headers.has('Content-Type');
+
+      if (request.body != null) {
+        request.body.cancel();
+      }
 
       return duplexAccessed && !hasContentType;
     });
@@ -60447,6 +60775,19 @@ const factory = (env) => {
       // Cloudflare Workers throws when credentials are defined
       // see https://github.com/cloudflare/workerd/issues/902
       const isCredentialsSupported = isRequestSupported && 'credentials' in Request.prototype;
+
+      // If data is FormData and Content-Type is multipart/form-data without boundary,
+      // delete it so fetch can set it correctly with the boundary
+      if (utils$3.isFormData(data)) {
+        const contentType = headers.getContentType();
+        if (
+          contentType &&
+          /^multipart\/form-data/i.test(contentType) &&
+          !/boundary=/i.test(contentType)
+        ) {
+          headers.delete('content-type');
+        }
+      }
 
       const resolvedOptions = {
         ...fetchOptions,
@@ -60839,7 +61180,9 @@ function assertOptions(options, schema, allowUnknown) {
   let i = keys.length;
   while (i-- > 0) {
     const opt = keys[i];
-    const validator = schema[opt];
+    // Use hasOwnProperty so a polluted Object.prototype.<opt> cannot supply
+    // a non-function validator and cause a TypeError. See GHSA-q8qp-cvcw-x6jj.
+    const validator = Object.prototype.hasOwnProperty.call(schema, opt) ? schema[opt] : undefined;
     if (validator) {
       const value = options[opt];
       const result = value === undefined || validator(value, opt, options);
@@ -65332,6 +65675,13 @@ const StructuredErrorDetailSchema = objectType({
     owner_type: stringType().optional(),
     quota_info: QuotaInfoSchema.optional()
 });
+/**
+ * Schema for run summary data from Medusa/Product API.
+ * Nullable fields (issue_titles, issue_titles_by_url) are accepted when null from API
+ * to maintain parser resilience to Medusa contract variations.
+ * Canonical precedence: issue_titles_by_url (preferred) -> issue_titles (legacy).
+ * Consumers should check both fields in precedence order; rendering is URL-only if both are absent/null.
+ */
 const RunSummarySchema = objectType({
     total_vulnerabilities: numberType().default(0),
     true_positives: numberType().default(0),
@@ -65344,12 +65694,18 @@ const RunSummarySchema = objectType({
     remediation_success: numberType().default(0),
     remediation_failed: numberType().default(0),
     pr_urls: arrayType(stringType()).default([]),
+    pr_titles: recordType(stringType()).optional(),
     pr_count: numberType().default(0),
     issue_urls: arrayType(stringType()).default([]),
+    issue_titles: recordType(stringType()).nullable().optional(),
+    issue_titles_by_url: recordType(stringType()).nullable().optional(),
     issue_count: numberType().default(0),
     skipped_count: numberType().default(0),
     issues_validation_warning: numberType().optional(),
-    issues_multistep_cwe: numberType().optional()
+    issues_multistep_cwe: numberType().optional(),
+    dedup_skipped_count: numberType().default(0),
+    validation_failure_count: numberType().default(0),
+    remediation_with_warnings: numberType().default(0)
 });
 /**
  * Valid values for context_updated field.
@@ -65418,7 +65774,6 @@ const ProcessStatusSchema = objectType({
 });
 const RunProcessTrackingSchema = objectType({
     find_status: ProcessStatusSchema.optional(),
-    reconcile_status: ProcessStatusSchema.optional(),
     triage_status: ProcessStatusSchema.optional(),
     remediate_status: ProcessStatusSchema.optional(),
     validate_status: ProcessStatusSchema.optional(),
@@ -65433,6 +65788,7 @@ const ResponseStatusSchema = objectType({
     message: stringType(),
     description: stringType().nullable().optional(),
     run_status: stringType().nullable().optional(),
+    dashboard_url: stringType().nullable().optional(),
     results: SolverResultsSchema.nullable(),
     process_tracking: RunProcessTrackingSchema.nullable().optional(),
     summary: RunSummarySchema.nullable().optional()
@@ -70694,46 +71050,6 @@ function parsePrUrl(url) {
         number: parseInt(match[3], 10)
     };
 }
-/**
- * Fetch titles for a list of PR/Issue URLs
- * @param urls List of PR or Issue URLs
- * @param token GitHub token
- * @returns Map of URL to Title
- */
-async function fetchPrTitles(urls, token) {
-    const titles = new Map();
-    if (!urls.length || !token) {
-        return titles;
-    }
-    try {
-        const octokit = githubExports.getOctokit(token);
-        // Process in parallel but handle errors individually
-        const promises = urls.map(async (url) => {
-            const parsed = parsePrUrl(url);
-            if (!parsed) {
-                return;
-            }
-            try {
-                const { data } = await octokit.rest.issues.get({
-                    owner: parsed.owner,
-                    repo: parsed.repo,
-                    issue_number: parsed.number
-                });
-                if (data.title) {
-                    titles.set(url, data.title);
-                }
-            }
-            catch (error) {
-                coreExports.debug(`Failed to fetch title for ${url}: ${error}`);
-            }
-        });
-        await Promise.all(promises);
-    }
-    catch (error) {
-        coreExports.warning(`Error initializing GitHub client for title fetching: ${error}`);
-    }
-    return titles;
-}
 
 // src/utils.ts
 // Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
@@ -70772,19 +71088,6 @@ const STATUS_ICONS = {
     failed: '❌',
     initiated: '🔄'
 };
-/**
- * Get the Dashboard URL based on the API URL.
- * Defaults to the integration environment URL unless prod API is detected.
- */
-function getDashboardUrl(apiUrl) {
-    // Check if it's the production API
-    if (apiUrl.includes('api.appsecai.io') ||
-        apiUrl.includes('api.cloud.appsecai.io')) {
-        return 'https://portal.cloud.appsecai.io/';
-    }
-    // Default to integration for all other cases (including localhost/dev)
-    return 'https://app.intg.appsecai.net/';
-}
 /**
  * Get troubleshooting guidance based on the step name
  * @param stepName The name of the failed step
@@ -70979,7 +71282,6 @@ function logProcessTracking(tracking, prefixLabel) {
     // Define the stages to display in order with user-friendly names
     const stages = [
         { field: 'find_status', name: 'find' },
-        { field: 'reconcile_status', name: 'reconcile' },
         { field: 'triage_status', name: 'triage' },
         { field: 'remediation_validation_loop_status', name: 'remediation_loop' },
         { field: 'push_status', name: 'push' }
@@ -71121,8 +71423,9 @@ function formatSummaryDetails(name, status) {
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display
  * @param groupingConfig Optional grouping configuration to display
+ * @param issueTitles Optional map of issue URL to title
  */
-async function writeJobSummary(tracking, summary, runId, durationMs, success, prTitles, dashboardUrl, groupingConfig) {
+async function writeJobSummary(tracking, summary, runId, durationMs, success, prTitles, dashboardUrl, groupingConfig, issueTitles) {
     const durationStr = formatDuration(durationMs);
     // Add branding at the top
     coreExports.summary.addRaw(getMarkdownBranding() + '\n\n', true);
@@ -71345,7 +71648,13 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
         if ((summary.issue_urls ?? []).length > 0) {
             coreExports.summary.addHeading('GitHub Issues', 4);
             for (const issueUrl of summary.issue_urls ?? []) {
-                coreExports.summary.addRaw(`- ${issueUrl}\n`, true);
+                const title = issueTitles?.get(issueUrl);
+                if (title) {
+                    coreExports.summary.addRaw(`- ${issueUrl} (${title})\n`, true);
+                }
+                else {
+                    coreExports.summary.addRaw(`- ${issueUrl}\n`, true);
+                }
             }
         }
     }
@@ -71547,7 +71856,7 @@ function formatPrLinks(prUrls, prTitles) {
 /**
  * Format GitHub Issue links (created from failed validations)
  */
-function formatIssueLinks(issueUrls) {
+function formatIssueLinks(issueUrls, issueTitles) {
     if (issueUrls.length === 0) {
         return 'No issues created';
     }
@@ -71555,7 +71864,14 @@ function formatIssueLinks(issueUrls) {
     for (let i = 0; i < issueUrls.length; i++) {
         const isLast = i === issueUrls.length - 1;
         const prefix = isLast ? '└─' : '├─';
-        lines.push(`${prefix} ${issueUrls[i]}`);
+        const url = issueUrls[i];
+        const title = issueTitles?.get(url);
+        if (title) {
+            lines.push(`${prefix} ${url} (${title})`);
+        }
+        else {
+            lines.push(`${prefix} ${url}`);
+        }
     }
     return lines.join('\n');
 }
@@ -71568,9 +71884,10 @@ function formatIssueLinks(issueUrls) {
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display at bottom
  * @param groupingConfig Optional grouping configuration to display
+ * @param issueTitles Optional map of issue URL to title
  * @returns Formatted output string
  */
-function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dashboardUrl, groupingConfig) {
+function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dashboardUrl, groupingConfig, issueTitles) {
     const lines = [];
     const durationStr = formatDuration(durationMs);
     // Add branding at the top
@@ -71633,7 +71950,7 @@ function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dash
     // GitHub Issues (created from failed validations)
     if ((summary.issue_count ?? 0) > 0) {
         lines.push(`├─ GitHub Issues (${summary.issue_count})`);
-        const issueLines = formatIssueLinks(summary.issue_urls ?? []).split('\n');
+        const issueLines = formatIssueLinks(summary.issue_urls ?? [], issueTitles).split('\n');
         issueLines.forEach((line) => lines.push(`│  ${line}`));
         lines.push('│');
     }
@@ -71658,8 +71975,9 @@ function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dash
  * @param summary The run summary with metrics
  * @param prTitles Optional map of PR URL to title
  * @param dashboardUrl Optional dashboard URL to display
+ * @param issueTitles Optional map of issue URL to title
  */
-function logSummary(summary, prTitles, dashboardUrl) {
+function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
     const prefixLabel = `[${LogLabels.RUN_SUMMARY}]`;
     coreExports.info(`${prefixLabel}: === Run Summary ===`);
     coreExports.info(`${prefixLabel}: Total vulnerabilities: ${summary.total_vulnerabilities}`);
@@ -71698,7 +72016,9 @@ function logSummary(summary, prTitles, dashboardUrl) {
             coreExports.info(`${prefixLabel}: Issues created: ${summary.issue_count} (security passed, functional/quality checks failed)`);
         }
         for (const url of summary.issue_urls ?? []) {
-            coreExports.info(`${prefixLabel}:   - ${url}`);
+            {
+                coreExports.info(`${prefixLabel}:   - ${url}`);
+            }
         }
     }
     if ((summary.skipped_count ?? 0) > 0) {
@@ -72117,11 +72437,14 @@ async function getStatus(id, organizationId) {
         const processTracking = parsedResponse.data.process_tracking;
         const summary = parsedResponse.data.summary;
         const runStatus = parsedResponse.data.run_status;
+        const dashboardUrl = parsedResponse.data.dashboard_url;
         let totalVulns = 0;
         // Log process tracking information if available (Issue #181)
         if (processTracking) {
             logProcessTracking(processTracking, prefixLabel);
         }
+        // Note: dashboard_url may be null from Medusa contract; rendering layer handles null gracefully
+        // Note: processTracking no longer checks reconcile_status (not part of Medusa contract)
         // Check run-level status first (canonical source of truth)
         // The run's top-level status is the authoritative indicator of run state
         if (runStatus === 'failed') {
@@ -72129,7 +72452,13 @@ async function getStatus(id, organizationId) {
                 processTracking?.find_status?.error_message ||
                 'Run failed';
             coreExports.error(`${prefixLabel}: Run failed - ${errorMsg}`);
-            return { status: 'failed', error: errorMsg, processTracking, summary };
+            return {
+                status: 'failed',
+                error: errorMsg,
+                processTracking,
+                summary,
+                dashboard_url: dashboardUrl
+            };
         }
         if (runStatus === 'completed') {
             const handledErrors = summary?.handled_error_count ??
@@ -72152,7 +72481,12 @@ async function getStatus(id, organizationId) {
             else {
                 coreExports.info(`${prefixLabel}: Run completed successfully`);
             }
-            return { status: 'completed', processTracking, summary };
+            return {
+                status: 'completed',
+                processTracking,
+                summary,
+                dashboard_url: dashboardUrl
+            };
         }
         if (runStatus === 'cancelled') {
             coreExports.warning(`${prefixLabel}: Run was cancelled`);
@@ -72160,7 +72494,8 @@ async function getStatus(id, organizationId) {
                 status: 'failed',
                 error: 'Run was cancelled',
                 processTracking,
-                summary
+                summary,
+                dashboard_url: dashboardUrl
             };
         }
         if (results) {
@@ -72208,12 +72543,23 @@ async function getStatus(id, organizationId) {
         const overallStatus = processTracking?.overall_status?.status;
         if (overallStatus === 'completed') {
             coreExports.info(`${prefixLabel}: Processing completed successfully`);
-            return { status: 'completed', processTracking, summary };
+            return {
+                status: 'completed',
+                processTracking,
+                summary,
+                dashboard_url: dashboardUrl
+            };
         }
         else if (overallStatus === 'failed') {
             const errorMsg = processTracking?.overall_status?.error_message || 'Processing failed';
             coreExports.error(`${prefixLabel}: Processing failed - ${errorMsg}`);
-            return { status: 'failed', error: errorMsg, processTracking, summary };
+            return {
+                status: 'failed',
+                error: errorMsg,
+                processTracking,
+                summary,
+                dashboard_url: dashboardUrl
+            };
         }
         // Fallback: Check for individual stage failures (Issue #233)
         // This provides granular error messages when run_status isn't available
@@ -72223,21 +72569,26 @@ async function getStatus(id, organizationId) {
                 const errorMsg = processTracking.find_status.error_message ||
                     'Vulnerability import failed';
                 coreExports.error(`${prefixLabel}: Find stage failed - ${errorMsg}`);
-                return { status: 'failed', error: errorMsg, processTracking, summary };
-            }
-            // Check reconcile stage failure
-            if (processTracking.reconcile_status?.status === 'failed') {
-                const errorMsg = processTracking.reconcile_status.error_message ||
-                    'Finding reconciliation failed';
-                coreExports.error(`${prefixLabel}: Reconcile stage failed - ${errorMsg}`);
-                return { status: 'failed', error: errorMsg, processTracking, summary };
+                return {
+                    status: 'failed',
+                    error: errorMsg,
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
             }
             // Check triage stage failure
             if (processTracking.triage_status?.status === 'failed') {
                 const errorMsg = processTracking.triage_status.error_message ||
                     'Triage analysis failed';
                 coreExports.error(`${prefixLabel}: Triage stage failed - ${errorMsg}`);
-                return { status: 'failed', error: errorMsg, processTracking, summary };
+                return {
+                    status: 'failed',
+                    error: errorMsg,
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
             }
             // Check remediation loop failure
             if (processTracking.remediation_validation_loop_status?.status ===
@@ -72245,14 +72596,26 @@ async function getStatus(id, organizationId) {
                 const errorMsg = processTracking.remediation_validation_loop_status.error_message ||
                     'Remediation failed';
                 coreExports.error(`${prefixLabel}: Remediation stage failed - ${errorMsg}`);
-                return { status: 'failed', error: errorMsg, processTracking, summary };
+                return {
+                    status: 'failed',
+                    error: errorMsg,
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
             }
             // Check push stage failure
             if (processTracking.push_status?.status === 'failed') {
                 const errorMsg = processTracking.push_status.error_message ||
                     'Pull request creation failed';
                 coreExports.error(`${prefixLabel}: Push stage failed - ${errorMsg}`);
-                return { status: 'failed', error: errorMsg, processTracking, summary };
+                return {
+                    status: 'failed',
+                    error: errorMsg,
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
             }
         }
         // Fallback: Check process_tracking stage statuses when overall_status isn't set
@@ -72267,7 +72630,12 @@ async function getStatus(id, organizationId) {
                 // Failed push should still return progress to allow retry detection
                 if (pushStatus === 'completed' || pushStatus === 'not_scheduled') {
                     coreExports.info(`${prefixLabel}: Push stage ${pushStatus} - marking run as complete`);
-                    return { status: 'completed', processTracking, summary };
+                    return {
+                        status: 'completed',
+                        processTracking,
+                        summary,
+                        dashboard_url: dashboardUrl
+                    };
                 }
             }
             // Check if remediation loop is completed and there's no push stage configured
@@ -72276,10 +72644,20 @@ async function getStatus(id, organizationId) {
                 'completed' &&
                 !processTracking.push_status) {
                 coreExports.info(`${prefixLabel}: Remediation stage completed (no push) - marking run as complete`);
-                return { status: 'completed', processTracking, summary };
+                return {
+                    status: 'completed',
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
             }
         }
-        return { status: 'progress', processTracking, summary };
+        return {
+            status: 'progress',
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+        };
     })
         .catch((error) => {
         if (error.message &&
@@ -72484,7 +72862,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.12';
+const VERSION = '1.1.13';
 const CLIENT_VERSION = VERSION;
 
 var re = {exports: {}};
@@ -75914,6 +76292,7 @@ async function run() {
     let submitOutput;
     let finalProcessTracking = null;
     let finalSummary = null;
+    let finalDashboardUrl;
     const startTime = Date.now();
     let success = false;
     let monitoringIndeterminate = false;
@@ -75993,6 +76372,9 @@ async function run() {
                 if (pollResult?.summary) {
                     finalSummary = pollResult.summary;
                 }
+                if (pollResult?.dashboard_url) {
+                    finalDashboardUrl = pollResult.dashboard_url;
+                }
             }
             catch (pollError) {
                 monitoringIndeterminate = true;
@@ -76058,21 +76440,17 @@ async function run() {
         }
         // Write job summary
         const durationMs = Date.now() - startTime;
-        // Fetch PR titles if we have a summary with PRs
-        let prTitles;
-        if (finalSummary && finalSummary.pr_urls.length > 0) {
-            try {
-                const token = getToken();
-                if (token) {
-                    prTitles = await fetchPrTitles(finalSummary.pr_urls, token);
-                }
-            }
-            catch (error) {
-                coreExports.debug(`Failed to fetch PR titles: ${error}`);
-            }
-        }
-        // Get dashboard URL
-        const dashboardUrl = getDashboardUrl(getApiUrl());
+        // Use backend-provided title maps and dashboard URL when available.
+        const prTitles = finalSummary?.pr_titles
+            ? new Map(Object.entries(finalSummary.pr_titles))
+            : undefined;
+        // Prefer canonical issue_titles_by_url; fall back to legacy issue_titles for backward compatibility
+        const issueTitles = finalSummary?.issue_titles_by_url
+            ? new Map(Object.entries(finalSummary.issue_titles_by_url))
+            : finalSummary?.issue_titles
+                ? new Map(Object.entries(finalSummary.issue_titles))
+                : undefined;
+        const dashboardUrl = finalDashboardUrl;
         // Build grouping config for summary display
         const groupingEnabled = getGroupingEnabled();
         let groupingConfig;
@@ -76084,10 +76462,10 @@ async function run() {
                 stage: getGroupingStage()
             };
         }
-        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, success, prTitles, dashboardUrl, groupingConfig);
+        await writeJobSummary(finalProcessTracking, finalSummary, store.id, durationMs, success, prTitles, dashboardUrl, groupingConfig, issueTitles);
         // Final summary
         coreExports.startGroup('Final Results');
-        const finalResultsOutput = formatFinalResults(finalSummary, store.id, durationMs, finalProcessTracking, prTitles, dashboardUrl, groupingConfig);
+        const finalResultsOutput = formatFinalResults(finalSummary, store.id, durationMs, finalProcessTracking, prTitles, dashboardUrl, groupingConfig, issueTitles);
         coreExports.info(finalResultsOutput);
         coreExports.endGroup();
     }

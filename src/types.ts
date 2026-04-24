@@ -287,8 +287,6 @@ export interface ProcessStatus {
 export interface RunProcessTracking {
   /** Find/import process status */
   find_status?: ProcessStatus
-  /** Reconcile process status */
-  reconcile_status?: ProcessStatus
   /** Triage process status */
   triage_status?: ProcessStatus
   /** Remediation process status */
@@ -336,10 +334,16 @@ export interface RunSummary {
   remediation_failed: number
   /** List of created pull request URLs */
   pr_urls: string[]
+  /** Optional map of PR URL to title */
+  pr_titles?: Record<string, string>
   /** Total number of pull requests created */
   pr_count: number
   /** List of GitHub Issue URLs created for validation warnings */
-  issue_urls?: string[]
+  issue_urls: string[]
+  /** Optional map of Issue URL to title (legacy field, use issue_titles_by_url for new code) */
+  issue_titles?: Record<string, string> | null
+  /** Canonical map of Issue URL to title (preferred over issue_titles) */
+  issue_titles_by_url?: Record<string, string> | null
   /** Total number of GitHub Issues created */
   issue_count?: number
   /** Number of vulnerabilities skipped (security not resolved) */
@@ -348,6 +352,12 @@ export interface RunSummary {
   issues_validation_warning?: number
   /** Number of issues created due to multi-step CWEs (validation passed, additional steps required) */
   issues_multistep_cwe?: number
+  /** Number of vulnerabilities skipped due to PR deduplication */
+  dedup_skipped_count?: number
+  /** Number of remediation attempts that failed validation */
+  validation_failure_count?: number
+  /** Number of remediation attempts completed with validation warnings */
+  remediation_with_warnings?: number
 }
 
 /**
@@ -363,4 +373,6 @@ export interface StatusResult {
   processTracking?: Partial<RunProcessTracking> | null
   /** Summary of run results (null when not available from API) */
   summary?: Partial<RunSummary> | null
+  /** Dashboard URL returned by the API status endpoint (may be null from Medusa contract) */
+  dashboard_url?: string | null
 }

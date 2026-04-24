@@ -41,6 +41,13 @@ export const StructuredErrorDetailSchema = z.object({
   quota_info: QuotaInfoSchema.optional()
 })
 
+/**
+ * Schema for run summary data from Medusa/Product API.
+ * Nullable fields (issue_titles, issue_titles_by_url) are accepted when null from API
+ * to maintain parser resilience to Medusa contract variations.
+ * Canonical precedence: issue_titles_by_url (preferred) -> issue_titles (legacy).
+ * Consumers should check both fields in precedence order; rendering is URL-only if both are absent/null.
+ */
 export const RunSummarySchema = z.object({
   total_vulnerabilities: z.number().default(0),
   true_positives: z.number().default(0),
@@ -53,12 +60,18 @@ export const RunSummarySchema = z.object({
   remediation_success: z.number().default(0),
   remediation_failed: z.number().default(0),
   pr_urls: z.array(z.string()).default([]),
+  pr_titles: z.record(z.string()).optional(),
   pr_count: z.number().default(0),
   issue_urls: z.array(z.string()).default([]),
+  issue_titles: z.record(z.string()).nullable().optional(),
+  issue_titles_by_url: z.record(z.string()).nullable().optional(),
   issue_count: z.number().default(0),
   skipped_count: z.number().default(0),
   issues_validation_warning: z.number().optional(),
-  issues_multistep_cwe: z.number().optional()
+  issues_multistep_cwe: z.number().optional(),
+  dedup_skipped_count: z.number().default(0),
+  validation_failure_count: z.number().default(0),
+  remediation_with_warnings: z.number().default(0)
 })
 
 /**
@@ -134,7 +147,6 @@ export const ProcessStatusSchema = z.object({
 
 export const RunProcessTrackingSchema = z.object({
   find_status: ProcessStatusSchema.optional(),
-  reconcile_status: ProcessStatusSchema.optional(),
   triage_status: ProcessStatusSchema.optional(),
   remediate_status: ProcessStatusSchema.optional(),
   validate_status: ProcessStatusSchema.optional(),
@@ -150,6 +162,7 @@ export const ResponseStatusSchema = z.object({
   message: z.string(),
   description: z.string().nullable().optional(),
   run_status: z.string().nullable().optional(),
+  dashboard_url: z.string().nullable().optional(),
   results: SolverResultsSchema.nullable(),
   process_tracking: RunProcessTrackingSchema.nullable().optional(),
   summary: RunSummarySchema.nullable().optional()

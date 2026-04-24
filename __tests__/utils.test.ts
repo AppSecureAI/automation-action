@@ -15,6 +15,7 @@ const {
   formatSeverityDistribution,
   formatRemediationResults,
   formatPrLinks,
+  formatIssueLinks,
   formatFinalResults,
   formatDuration,
   logSummary,
@@ -125,7 +126,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatVulnerabilitySummary(summary)
       expect(result).toBe('No vulnerabilities found')
@@ -141,7 +143,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatVulnerabilitySummary(summary)
       expect(result).toContain('Total: 100')
@@ -159,7 +162,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatVulnerabilitySummary(summary)
       expect(result).toContain('True Positives: 50 (100.0%)')
@@ -255,7 +259,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatRemediationResults(summary)
       expect(result).toBe('No remediation attempts')
@@ -271,7 +276,8 @@ describe('utils.ts', () => {
         remediation_success: 75,
         remediation_failed: 25,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatRemediationResults(summary)
       expect(result).toContain('Total Attempts: 100')
@@ -289,7 +295,8 @@ describe('utils.ts', () => {
         remediation_success: 50,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatRemediationResults(summary)
       expect(result).toContain('Successful: 50 (100.0%)')
@@ -351,6 +358,32 @@ describe('utils.ts', () => {
     })
   })
 
+  describe('formatIssueLinks', () => {
+    it('handles no issues', () => {
+      const result = formatIssueLinks([])
+      expect(result).toBe('No issues created')
+    })
+
+    it('formats issue URL and title when title map has an entry', () => {
+      const issueUrl = 'https://github.com/org/repo/issues/1'
+      const issueTitles = new Map([[issueUrl, 'Validation warning follow-up']])
+      const result = formatIssueLinks([issueUrl], issueTitles)
+      expect(result).toContain(
+        'https://github.com/org/repo/issues/1 (Validation warning follow-up)'
+      )
+    })
+
+    it('falls back to URL-only output when title entry is missing', () => {
+      const result = formatIssueLinks([
+        'https://github.com/org/repo/issues/1',
+        'https://github.com/org/repo/issues/2'
+      ])
+      expect(result).toContain('https://github.com/org/repo/issues/1')
+      expect(result).toContain('https://github.com/org/repo/issues/2')
+      expect(result).not.toContain('Validation warning follow-up')
+    })
+  })
+
   describe('formatFinalResults', () => {
     it('handles null summary gracefully', () => {
       const result = formatFinalResults(null, 'run-123', 60000)
@@ -389,7 +422,8 @@ describe('utils.ts', () => {
           'https://github.com/org/repo/pull/1',
           'https://github.com/org/repo/pull/2'
         ],
-        pr_count: 2
+        pr_count: 2,
+        issue_urls: []
       }
       const result = formatFinalResults(summary, 'run-789', 180000)
 
@@ -418,7 +452,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatFinalResults(summary, 'run-999', 30000)
 
@@ -439,7 +474,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
       const result = formatFinalResults(summary, null, 5000)
       expect(result).toContain('Run ID: N/A')
@@ -460,7 +496,8 @@ describe('utils.ts', () => {
           'https://github.com/org/repo/pull/1',
           'https://github.com/org/repo/pull/2'
         ],
-        pr_count: 2
+        pr_count: 2,
+        issue_urls: []
       }
 
       logSummary(summary)
@@ -492,7 +529,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
 
       logSummary(summary)
@@ -516,7 +554,8 @@ describe('utils.ts', () => {
         remediation_success: 0,
         remediation_failed: 0,
         pr_urls: [],
-        pr_count: 0
+        pr_count: 0,
+        issue_urls: []
       }
 
       logSummary(summary)
@@ -732,7 +771,8 @@ describe('utils.ts', () => {
       remediation_success: 75,
       remediation_failed: 25,
       pr_urls: [],
-      pr_count: 0
+      pr_count: 0,
+      issue_urls: []
     }
 
     const createRemediationStatus = () => ({
@@ -822,7 +862,8 @@ describe('utils.ts', () => {
       remediation_success: 70,
       remediation_failed: 10,
       pr_urls: [],
-      pr_count: 0
+      pr_count: 0,
+      issue_urls: []
     }
 
     const createRemediationStatus = () => ({
@@ -881,6 +922,44 @@ describe('utils.ts', () => {
       expect(result).toContain('Remediation Results')
       expect(result).not.toContain('Need Additional Context')
     })
+
+    it('renders GitHub issue title when issue_titles map is provided', () => {
+      const summary = {
+        ...baseSummary,
+        issue_urls: ['https://github.com/org/repo/issues/11'],
+        issue_count: 1
+      }
+      const issueTitles = new Map([
+        [
+          'https://github.com/org/repo/issues/11',
+          'Validation warning follow-up'
+        ]
+      ])
+      const result = formatFinalResults(
+        summary,
+        'run-123',
+        60000,
+        null,
+        undefined,
+        undefined,
+        undefined,
+        issueTitles
+      )
+      expect(result).toContain(
+        'https://github.com/org/repo/issues/11 (Validation warning follow-up)'
+      )
+    })
+
+    it('renders GitHub issue URL-only when issue_titles entry is missing', () => {
+      const summary = {
+        ...baseSummary,
+        issue_urls: ['https://github.com/org/repo/issues/11'],
+        issue_count: 1
+      }
+      const result = formatFinalResults(summary, 'run-123', 60000)
+      expect(result).toContain('https://github.com/org/repo/issues/11')
+      expect(result).not.toContain('Validation warning follow-up')
+    })
   })
 
   describe('writeJobSummary', () => {
@@ -915,6 +994,7 @@ describe('utils.ts', () => {
       remediation_failed: 10,
       pr_urls: ['https://github.com/org/repo/pull/1'],
       pr_count: 1,
+      issue_urls: [],
       ...overrides
     })
 
@@ -1039,6 +1119,67 @@ describe('utils.ts', () => {
       const prRows = prTable![0] as any[]
       // Row 0 is header, Row 1 is the PR
       expect(JSON.stringify(prRows[1])).toContain('github.com/org/repo/pull/1')
+    })
+
+    it('writes issue links with title when issue title map is provided', async () => {
+      const issueUrl = 'https://github.com/org/repo/issues/42'
+      const summary = createSummary({
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [issueUrl],
+        issue_count: 1
+      })
+      const issueTitles = new Map([[issueUrl, 'Security passed, QA failed']])
+
+      await writeJobSummary(
+        null,
+        summary,
+        'run-123',
+        60000,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        issueTitles
+      )
+
+      expect(core.summary.addRaw).toHaveBeenCalledWith(
+        `- ${issueUrl} (Security passed, QA failed)\n`,
+        true
+      )
+    })
+
+    it('writes issue links URL-only when issue title map entry is missing', async () => {
+      const issueUrl = 'https://github.com/org/repo/issues/42'
+      const summary = createSummary({
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: [issueUrl],
+        issue_count: 1
+      })
+
+      await writeJobSummary(null, summary, 'run-123', 60000, true)
+
+      expect(core.summary.addRaw).toHaveBeenCalledWith(`- ${issueUrl}\n`, true)
+    })
+
+    it('renders dashboard link when dashboardUrl is provided', async () => {
+      const url = 'https://portal.cloud.appsecai.io/runs/run-123'
+      await writeJobSummary(null, null, 'run-123', 60000, true, undefined, url)
+
+      expect(core.summary.addLink).toHaveBeenCalledWith(
+        'View detailed results on the dashboard',
+        url
+      )
+    })
+
+    it('does not render dashboard link when dashboardUrl is absent', async () => {
+      await writeJobSummary(null, null, 'run-123', 60000, true)
+
+      expect(core.summary.addLink).not.toHaveBeenCalledWith(
+        'View detailed results on the dashboard',
+        expect.any(String)
+      )
     })
 
     it('writes run metadata at the end', async () => {
