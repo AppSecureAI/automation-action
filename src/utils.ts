@@ -66,11 +66,13 @@ const STATUS_ICONS = {
 
 /**
  * Get the Dashboard URL based on the API URL.
- * Defaults to the integration environment URL unless prod API is detected.
+ * Defaults to the integration environment URL unless a production gateway/API host is detected.
  */
 export function getDashboardUrl(apiUrl: string): string {
   // Check if it's the production API
   if (
+    apiUrl.includes('gh.appsecai.io') ||
+    apiUrl.includes('gh.cloud.appsecai.io') ||
     apiUrl.includes('api.appsecai.io') ||
     apiUrl.includes('api.cloud.appsecai.io')
   ) {

@@ -52,7 +52,12 @@ import {
   getGroupingStage,
   getUpdateContext
 } from './input.js'
-import { writeJobSummary, formatFinalResults } from './utils.js'
+import {
+  writeJobSummary,
+  formatFinalResults,
+  getDashboardUrl
+} from './utils.js'
+import { fetchPrTitles } from './titles.js'
 import { fetchAndLogServerVersion } from './version-service.js'
 import {
   RegressionEvidenceStatus,
@@ -359,17 +364,28 @@ export async function run(): Promise<void> {
     // Write job summary
     const durationMs = Date.now() - startTime
 
-    // Use backend-provided title maps and dashboard URL when available.
-    const prTitles = finalSummary?.pr_titles
+    // Prefer backend-provided title maps, but keep the previous GitHub lookup fallback
+    // so summaries do not regress to URL-only output when older servers omit them.
+    let prTitles = finalSummary?.pr_titles
       ? new Map(Object.entries(finalSummary.pr_titles))
       : undefined
+    if (!prTitles && finalSummary && finalSummary.pr_urls.length > 0) {
+      try {
+        const token = getToken()
+        if (token) {
+          prTitles = await fetchPrTitles(finalSummary.pr_urls, token)
+        }
+      } catch (error) {
+        core.debug(`Failed to fetch PR titles: ${error}`)
+      }
+    }
     // Prefer canonical issue_titles_by_url; fall back to legacy issue_titles for backward compatibility
     const issueTitles = finalSummary?.issue_titles_by_url
       ? new Map(Object.entries(finalSummary.issue_titles_by_url))
       : finalSummary?.issue_titles
         ? new Map(Object.entries(finalSummary.issue_titles))
         : undefined
-    const dashboardUrl = finalDashboardUrl
+    const dashboardUrl = finalDashboardUrl ?? getDashboardUrl(getApiUrl())
 
     // Build grouping config for summary display
     const groupingEnabled = getGroupingEnabled()

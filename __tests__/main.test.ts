@@ -8,6 +8,7 @@
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core'
 import { fileExists, readFile } from '../__fixtures__/file'
+import { fetchPrTitles, parsePrUrl } from '../__fixtures__/titles'
 import {
   submitRun,
   getStatus,
@@ -34,6 +35,10 @@ jest.unstable_mockModule('../src/service', () => ({
   pollStatusUntilComplete,
   finalizeRun
 }))
+jest.unstable_mockModule('../src/titles', () => ({
+  fetchPrTitles,
+  parsePrUrl
+}))
 jest.unstable_mockModule('../src/regression-evidence', () => ({
   generateRegressionEvidence,
   parseRegressionEvidenceArtifactListInput,
@@ -53,6 +58,8 @@ const { run } = await import('../src/main')
 describe('main.ts', () => {
   beforeEach(() => {
     delete process.env.PROCESSING_MODE
+    delete process.env.INPUT_API_URL
+    delete process.env.INPUT_TOKEN
     // Set the action's inputs as return values from core.getInput().
     core.getInput.mockImplementation(() => 'some_file.json')
     readFile.mockImplementation((filePath: string) => {
@@ -77,6 +84,7 @@ describe('main.ts', () => {
       Promise.resolve({ status: 'completed' })
     )
     finalizeRun.mockImplementation(() => Promise.resolve(null))
+    fetchPrTitles.mockResolvedValue(new Map())
     generateRegressionEvidence.mockResolvedValue({
       artifact: {
         status: 'verified'
@@ -116,6 +124,69 @@ describe('main.ts', () => {
       expect(submitRun).toHaveBeenCalledWith(
         expect.any(Buffer),
         'some_file.json'
+      )
+    })
+
+    it('should fall back to fetching PR titles when backend title maps are absent', async () => {
+      core.getInput.mockImplementation((name: string) => {
+        if (name === 'token') {
+          return 'ghs_test'
+        }
+        return 'some_file.json'
+      })
+      const prUrl = 'https://github.com/AppSecureAI/Product/pull/123'
+      pollStatusUntilComplete.mockResolvedValue({
+        status: 'completed',
+        summary: {
+          total_vulnerabilities: 1,
+          true_positives: 1,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 1,
+          remediation_failed: 0,
+          pr_urls: [prUrl],
+          pr_count: 1,
+          issue_urls: [],
+          issue_count: 0
+        }
+      })
+      fetchPrTitles.mockResolvedValue(
+        new Map([[prUrl, 'Fix SQL injection in admin flow']])
+      )
+
+      await run()
+
+      expect(fetchPrTitles).toHaveBeenCalledWith([prUrl], 'ghs_test')
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('Fix SQL injection in admin flow')
+      )
+    })
+
+    it('should derive dashboard URL when polling result omits dashboard_url', async () => {
+      process.env.INPUT_API_URL = 'https://gh.cloud.appsecai.io'
+      pollStatusUntilComplete.mockResolvedValue({
+        status: 'completed',
+        summary: {
+          total_vulnerabilities: 0,
+          true_positives: 0,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 0,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0
+        }
+      })
+
+      await run()
+
+      expect(core.summary.addLink).toHaveBeenCalledWith(
+        'View detailed results on the dashboard',
+        'https://portal.cloud.appsecai.io/'
       )
     })
 

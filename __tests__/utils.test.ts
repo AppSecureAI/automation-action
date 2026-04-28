@@ -18,6 +18,7 @@ const {
   formatIssueLinks,
   formatFinalResults,
   formatDuration,
+  getDashboardUrl,
   logSummary,
   formatStageStatus,
   writeJobSummary
@@ -381,6 +382,26 @@ describe('utils.ts', () => {
       expect(result).toContain('https://github.com/org/repo/issues/1')
       expect(result).toContain('https://github.com/org/repo/issues/2')
       expect(result).not.toContain('Validation warning follow-up')
+    })
+  })
+
+  describe('getDashboardUrl', () => {
+    it('maps production gh gateway hosts to the production dashboard', () => {
+      expect(getDashboardUrl('https://gh.cloud.appsecai.io')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+    })
+
+    it('maps production api hosts to the production dashboard', () => {
+      expect(getDashboardUrl('https://api.cloud.appsecai.io')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+    })
+
+    it('defaults integration gateway hosts to the integration dashboard', () => {
+      expect(getDashboardUrl('https://gh.intg.appsecai.net')).toBe(
+        'https://app.intg.appsecai.net/'
+      )
     })
   })
 
