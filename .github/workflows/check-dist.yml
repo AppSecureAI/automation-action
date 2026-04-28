@@ -1,0 +1,47 @@
+name: Check Transpiled JavaScript
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check-dist:
+    name: Check dist/
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build dist/ directory
+        run: npm run bundle
+
+      - name: Compare dist/ output
+        run: |
+          if [ ! -d dist/ ]; then
+            echo "Expected dist/ directory does not exist."
+            ls -la ./
+            exit 1
+          fi
+
+          if [ "$(git diff --ignore-space-at-eol --text dist/ | wc -l)" -gt "0" ]; then
+            echo "Detected uncommitted dist/ changes after build:"
+            git diff --ignore-space-at-eol --text dist/
+            exit 1
+          fi
