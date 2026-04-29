@@ -72919,6 +72919,10 @@ async function finalizeRun(runId, options = {}) {
 // Source: package.json
 const VERSION = '1.1.14';
 const CLIENT_VERSION = VERSION;
+const VERSION_INFO = {
+    version: VERSION,
+    name: 'automation-action'
+};
 
 var re = {exports: {}};
 
@@ -76332,7 +76336,7 @@ async function runRegressionEvidenceMode() {
     }
 }
 async function run() {
-    coreExports.info(`submit-run-action v${VERSION}`);
+    coreExports.info(`${VERSION_INFO.name} v${VERSION}`);
     // Fetch and log server version information (non-blocking to avoid startup latency)
     fetchAndLogServerVersion(getApiUrl()).catch(() => {
         // Silently ignore - version check is purely informational
@@ -76356,7 +76360,7 @@ async function run() {
         coreExports.info('');
         coreExports.info(getConsoleBranding());
         coreExports.info('');
-        coreExports.info(`submit-run-action v${VERSION}`);
+        coreExports.info(`${VERSION_INFO.name} v${VERSION}`);
         coreExports.info('======== Getting static analysis results for further processing. ========');
         // Log configuration in collapsible group only if debug is enabled
         if (isDebug) {
