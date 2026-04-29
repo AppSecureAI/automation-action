@@ -11,6 +11,14 @@ branding:
 
 # Define your inputs here.
 inputs:
+  api-url:
+    description:
+      The AppSecAI API base URL. Defaults to the AppSecAI production endpoint.
+      Override only when targeting a non-production AppSecAI deployment (for
+      example, an integration or pre-release environment).
+    required: false
+    default: 'https://gh.cloud.appsecai.io'
+
   file:
     description:
       The SARIF, JSON, CSV, or TSV file containing security scan results
@@ -114,7 +122,7 @@ runs:
       env:
         # Required inputs passed directly
         INPUT_FILE: ${{ inputs.file }}
-        INPUT_API_URL: https://gh.cloud.appsecai.io
+        INPUT_API_URL: ${{ inputs.api-url }}
         # Configuration from workflow environment variables (with defaults)
         # Canonical modes: individual_cc (default), group_cc, individual, regression_evidence
         # Legacy aliases (deprecated, emit warning): group_only, group_with_remediation,

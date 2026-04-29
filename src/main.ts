@@ -11,7 +11,6 @@ import {
   submitRun,
   finalizeRun
 } from './service.js'
-import { fetchPrTitles } from './titles.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
 import { VERSION } from './version.js'
@@ -58,6 +57,7 @@ import {
   formatFinalResults,
   getDashboardUrl
 } from './utils.js'
+import { fetchPrTitles } from './titles.js'
 import { fetchAndLogServerVersion } from './version-service.js'
 import {
   RegressionEvidenceStatus,
@@ -194,6 +194,7 @@ export async function run(): Promise<void> {
   let submitOutput: SubmitRunOutput
   let finalProcessTracking: RunProcessTracking | null = null
   let finalSummary: RunSummary | null = null
+  let finalDashboardUrl: string | undefined
   const startTime = Date.now()
   let success = false
   let monitoringIndeterminate = false
@@ -287,6 +288,9 @@ export async function run(): Promise<void> {
         if (pollResult?.summary) {
           finalSummary = pollResult.summary as RunSummary
         }
+        if (pollResult?.dashboard_url) {
+          finalDashboardUrl = pollResult.dashboard_url
+        }
       } catch (pollError) {
         monitoringIndeterminate = true
         // This is a "soft" failure. Log a warning but let the process complete
@@ -360,9 +364,12 @@ export async function run(): Promise<void> {
     // Write job summary
     const durationMs = Date.now() - startTime
 
-    // Fetch PR titles if we have a summary with PRs
-    let prTitles: Map<string, string> | undefined
-    if (finalSummary && finalSummary.pr_urls.length > 0) {
+    // Prefer backend-provided title maps, but keep the previous GitHub lookup fallback
+    // so summaries do not regress to URL-only output when older servers omit them.
+    let prTitles = finalSummary?.pr_titles
+      ? new Map(Object.entries(finalSummary.pr_titles))
+      : undefined
+    if (!prTitles && finalSummary && finalSummary.pr_urls.length > 0) {
       try {
         const token = getToken()
         if (token) {
@@ -372,9 +379,13 @@ export async function run(): Promise<void> {
         core.debug(`Failed to fetch PR titles: ${error}`)
       }
     }
-
-    // Get dashboard URL
-    const dashboardUrl = getDashboardUrl(getApiUrl())
+    // Prefer canonical issue_titles_by_url; fall back to legacy issue_titles for backward compatibility
+    const issueTitles = finalSummary?.issue_titles_by_url
+      ? new Map(Object.entries(finalSummary.issue_titles_by_url))
+      : finalSummary?.issue_titles
+        ? new Map(Object.entries(finalSummary.issue_titles))
+        : undefined
+    const dashboardUrl = finalDashboardUrl ?? getDashboardUrl(getApiUrl())
 
     // Build grouping config for summary display
     const groupingEnabled = getGroupingEnabled()
@@ -396,7 +407,8 @@ export async function run(): Promise<void> {
       success,
       prTitles,
       dashboardUrl,
-      groupingConfig
+      groupingConfig,
+      issueTitles
     )
 
     // Final summary
@@ -408,7 +420,8 @@ export async function run(): Promise<void> {
       finalProcessTracking,
       prTitles,
       dashboardUrl,
-      groupingConfig
+      groupingConfig,
+      issueTitles
     )
     core.info(finalResultsOutput)
     core.endGroup()
