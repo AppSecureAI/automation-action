@@ -40215,7 +40215,7 @@ function requireCore () {
 var coreExports = requireCore();
 
 // src/errors.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 class SubmitRunError extends Error {
@@ -40240,7 +40240,7 @@ class FileReadError extends Error {
 }
 
 // src/constants.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const LogLabels = {
@@ -40327,7 +40327,7 @@ ${APPSECAI_ASCII_LOGO}
 }
 
 // src/file.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
@@ -65640,7 +65640,7 @@ ZodOptional.create;
 ZodNullable.create;
 
 // src/schemas.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const StepSchema = objectType({
@@ -70647,7 +70647,7 @@ function requireGithub () {
 var githubExports = requireGithub();
 
 // src/github.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 async function getIdToken(apiUrl) {
@@ -70670,7 +70670,7 @@ async function getIdToken(apiUrl) {
 }
 
 // src/types.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const ProcessingModeExternal = {
@@ -70748,7 +70748,7 @@ const ProcessStatusValue = {
 };
 
 // src/input.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
@@ -71025,7 +71025,7 @@ function getUpdateContext() {
 }
 
 // src/store.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const store = {
@@ -71092,7 +71092,7 @@ async function fetchPrTitles(urls, token) {
 }
 
 // src/utils.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
@@ -72083,7 +72083,7 @@ function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
 }
 
 // src/service.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const API_TIMEOUT = 8 * 60 * 1000;
@@ -75645,7 +75645,7 @@ function requireSemver () {
 var semverExports = requireSemver();
 
 // src/version-service.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
@@ -75703,7 +75703,7 @@ async function fetchAndLogServerVersion(baseUrl) {
 }
 
 // src/regression-evidence.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const execFile = promisify(execFile$1);
@@ -76256,7 +76256,7 @@ async function publishRegressionEvidenceCommentFromContext(markdown, token) {
 }
 
 // src/main.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
@@ -76543,7 +76543,7 @@ async function run() {
 }
 
 // src/index.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**

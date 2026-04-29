@@ -51,3 +51,8 @@ jobs:
             git diff --ignore-space-at-eol --text dist/
             exit 1
           fi
+
+      - name: Verify 2025 header is removed
+        run: |
+          count=$(rg -l "Copyright \(c\) 2025 AppSecAI, Inc\. All rights reserved\." . | wc -l)
+          test "$count" = "0"
