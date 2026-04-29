@@ -515,7 +515,10 @@ export async function submitRun(
     })
 }
 
-export async function getStatus(id: string, organizationId?: string) {
+export async function getStatus(
+  id: string,
+  organizationId?: string
+): Promise<StatusResult> {
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
   const url = organizationId
@@ -550,12 +553,16 @@ export async function getStatus(id: string, organizationId?: string) {
       const processTracking = parsedResponse.data.process_tracking
       const summary = parsedResponse.data.summary
       const runStatus = parsedResponse.data.run_status
+      const dashboardUrl = parsedResponse.data.dashboard_url
       let totalVulns = 0
 
       // Log process tracking information if available (Issue #181)
       if (processTracking) {
         logProcessTracking(processTracking, prefixLabel)
       }
+
+      // Note: dashboard_url may be null from Medusa contract; rendering layer handles null gracefully
+      // Note: processTracking no longer checks reconcile_status (not part of Medusa contract)
 
       // Check run-level status first (canonical source of truth)
       // The run's top-level status is the authoritative indicator of run state
@@ -565,7 +572,13 @@ export async function getStatus(id: string, organizationId?: string) {
           processTracking?.find_status?.error_message ||
           'Run failed'
         core.error(`${prefixLabel}: Run failed - ${errorMsg}`)
-        return { status: 'failed', error: errorMsg, processTracking, summary }
+        return {
+          status: 'failed',
+          error: errorMsg,
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
       }
 
       if (runStatus === 'completed') {
@@ -595,7 +608,12 @@ export async function getStatus(id: string, organizationId?: string) {
         } else {
           core.info(`${prefixLabel}: Run completed successfully`)
         }
-        return { status: 'completed', processTracking, summary }
+        return {
+          status: 'completed',
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
       }
 
       if (runStatus === 'cancelled') {
@@ -604,7 +622,8 @@ export async function getStatus(id: string, organizationId?: string) {
           status: 'failed',
           error: 'Run was cancelled',
           processTracking,
-          summary
+          summary,
+          dashboard_url: dashboardUrl
         }
       }
 
@@ -668,12 +687,23 @@ export async function getStatus(id: string, organizationId?: string) {
       const overallStatus = processTracking?.overall_status?.status
       if (overallStatus === 'completed') {
         core.info(`${prefixLabel}: Processing completed successfully`)
-        return { status: 'completed', processTracking, summary }
+        return {
+          status: 'completed',
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
       } else if (overallStatus === 'failed') {
         const errorMsg =
           processTracking?.overall_status?.error_message || 'Processing failed'
         core.error(`${prefixLabel}: Processing failed - ${errorMsg}`)
-        return { status: 'failed', error: errorMsg, processTracking, summary }
+        return {
+          status: 'failed',
+          error: errorMsg,
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
       }
 
       // Fallback: Check for individual stage failures (Issue #233)
@@ -685,16 +715,13 @@ export async function getStatus(id: string, organizationId?: string) {
             processTracking.find_status.error_message ||
             'Vulnerability import failed'
           core.error(`${prefixLabel}: Find stage failed - ${errorMsg}`)
-          return { status: 'failed', error: errorMsg, processTracking, summary }
-        }
-
-        // Check reconcile stage failure
-        if (processTracking.reconcile_status?.status === 'failed') {
-          const errorMsg =
-            processTracking.reconcile_status.error_message ||
-            'Finding reconciliation failed'
-          core.error(`${prefixLabel}: Reconcile stage failed - ${errorMsg}`)
-          return { status: 'failed', error: errorMsg, processTracking, summary }
+          return {
+            status: 'failed',
+            error: errorMsg,
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
         }
 
         // Check triage stage failure
@@ -703,7 +730,13 @@ export async function getStatus(id: string, organizationId?: string) {
             processTracking.triage_status.error_message ||
             'Triage analysis failed'
           core.error(`${prefixLabel}: Triage stage failed - ${errorMsg}`)
-          return { status: 'failed', error: errorMsg, processTracking, summary }
+          return {
+            status: 'failed',
+            error: errorMsg,
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
         }
 
         // Check remediation loop failure
@@ -715,7 +748,13 @@ export async function getStatus(id: string, organizationId?: string) {
             processTracking.remediation_validation_loop_status.error_message ||
             'Remediation failed'
           core.error(`${prefixLabel}: Remediation stage failed - ${errorMsg}`)
-          return { status: 'failed', error: errorMsg, processTracking, summary }
+          return {
+            status: 'failed',
+            error: errorMsg,
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
         }
 
         // Check push stage failure
@@ -724,7 +763,13 @@ export async function getStatus(id: string, organizationId?: string) {
             processTracking.push_status.error_message ||
             'Pull request creation failed'
           core.error(`${prefixLabel}: Push stage failed - ${errorMsg}`)
-          return { status: 'failed', error: errorMsg, processTracking, summary }
+          return {
+            status: 'failed',
+            error: errorMsg,
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
         }
       }
 
@@ -743,7 +788,12 @@ export async function getStatus(id: string, organizationId?: string) {
             core.info(
               `${prefixLabel}: Push stage ${pushStatus} - marking run as complete`
             )
-            return { status: 'completed', processTracking, summary }
+            return {
+              status: 'completed',
+              processTracking,
+              summary,
+              dashboard_url: dashboardUrl
+            }
           }
         }
 
@@ -757,11 +807,21 @@ export async function getStatus(id: string, organizationId?: string) {
           core.info(
             `${prefixLabel}: Remediation stage completed (no push) - marking run as complete`
           )
-          return { status: 'completed', processTracking, summary }
+          return {
+            status: 'completed',
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
         }
       }
 
-      return { status: 'progress', processTracking, summary }
+      return {
+        status: 'progress',
+        processTracking,
+        summary,
+        dashboard_url: dashboardUrl
+      }
     })
     .catch((error) => {
       if (
