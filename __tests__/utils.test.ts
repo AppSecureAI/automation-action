@@ -1,5 +1,5 @@
 // __tests__/utils.test.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
@@ -398,9 +398,21 @@ describe('utils.ts', () => {
       )
     })
 
-    it('defaults integration gateway hosts to the integration dashboard', () => {
+    it('maps integration hosts to the integration dashboard', () => {
       expect(getDashboardUrl('https://gh.intg.appsecai.net')).toBe(
         'https://app.intg.appsecai.net/'
+      )
+      expect(getDashboardUrl('https://api.intg.appsecai.net')).toBe(
+        'https://app.intg.appsecai.net/'
+      )
+    })
+
+    it('defaults customer-facing links to the production dashboard', () => {
+      expect(getDashboardUrl('https://localhost:8000')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+      expect(getDashboardUrl('https://unexpected-api.example.com')).toBe(
+        'https://portal.cloud.appsecai.io/'
       )
     })
   })

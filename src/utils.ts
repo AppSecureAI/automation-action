@@ -1,5 +1,5 @@
 // src/utils.ts
-// Copyright (c) 2025 AppSecAI, Inc. All rights reserved.
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
@@ -66,21 +66,17 @@ const STATUS_ICONS = {
 
 /**
  * Get the Dashboard URL based on the API URL.
- * Defaults to the integration environment URL unless a production gateway/API host is detected.
+ * Defaults customer-facing output to production unless an integration host is detected.
  */
 export function getDashboardUrl(apiUrl: string): string {
-  // Check if it's the production API
   if (
-    apiUrl.includes('gh.appsecai.io') ||
-    apiUrl.includes('gh.cloud.appsecai.io') ||
-    apiUrl.includes('api.appsecai.io') ||
-    apiUrl.includes('api.cloud.appsecai.io')
+    apiUrl.includes('gh.intg.appsecai.net') ||
+    apiUrl.includes('api.intg.appsecai.net')
   ) {
-    return 'https://portal.cloud.appsecai.io/'
+    return 'https://app.intg.appsecai.net/'
   }
 
-  // Default to integration for all other cases (including localhost/dev)
-  return 'https://app.intg.appsecai.net/'
+  return 'https://portal.cloud.appsecai.io/'
 }
 
 /**
