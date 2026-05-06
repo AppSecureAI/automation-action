@@ -198,6 +198,7 @@ export async function run(): Promise<void> {
   const startTime = Date.now()
   let success = false
   let monitoringIndeterminate = false
+  let productRunFailureMessage: string | null = null
 
   try {
     // Display AppSecAI branding at run start
@@ -291,6 +292,11 @@ export async function run(): Promise<void> {
         if (pollResult?.dashboard_url) {
           finalDashboardUrl = pollResult.dashboard_url
         }
+        if (pollResult?.status === 'failed') {
+          productRunFailureMessage = pollResult.error
+            ? `Product run failed: ${pollResult.error}`
+            : 'Product run failed.'
+        }
       } catch (pollError) {
         monitoringIndeterminate = true
         // This is a "soft" failure. Log a warning but let the process complete
@@ -298,6 +304,10 @@ export async function run(): Promise<void> {
           `[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`
         )
       }
+    }
+
+    if (productRunFailureMessage) {
+      throw new Error(productRunFailureMessage)
     }
 
     success = true

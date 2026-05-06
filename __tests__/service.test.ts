@@ -1229,15 +1229,16 @@ describe('service.ts', () => {
       })
     })
 
-    it('returns null when processing fails', async () => {
+    it('returns failed status when processing fails', async () => {
       pollStatusUntilComplete(async () => ({ status: 's' }), 1, 10)
-      const mockGetStatus = () => Promise.resolve({ status: 'failed' })
+      const mockGetStatus = () =>
+        Promise.resolve({ status: 'failed', error: 'Run failed' })
       const result = await pollStatusUntilComplete(mockGetStatus, 2, 100)
 
-      expect(result).toBeNull()
+      expect(result).toEqual({ status: 'failed', error: 'Run failed' })
     })
 
-    it('returns null when stage fails (Issue #233)', async () => {
+    it('returns failed status when stage fails (Issue #233)', async () => {
       const mockGetStatus = () =>
         Promise.resolve({
           status: 'failed',
@@ -1245,7 +1246,10 @@ describe('service.ts', () => {
         })
       const result = await pollStatusUntilComplete(mockGetStatus, 2, 100)
 
-      expect(result).toBeNull()
+      expect(result).toEqual({
+        status: 'failed',
+        error: 'Find stage failed - Could not parse SARIF file'
+      })
       expect(core.error).toHaveBeenCalledWith(
         expect.stringContaining(
           'Processing failed: Find stage failed - Could not parse SARIF file'

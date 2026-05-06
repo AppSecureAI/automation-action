@@ -332,6 +332,30 @@ describe('formatStageStatus', () => {
       ).toBe('⏳ Triage Analysis: 8/15 (53%) - 5 confirmed, 3 false positives')
     })
 
+    it('shows queued dispatch state for triage with no worker progress', () => {
+      expect(
+        formatStageStatus('triage', {
+          status: 'in_progress',
+          progress_percentage: 0,
+          total_items: 8,
+          processed_items: 0,
+          success_count: 0,
+          error_count: 0,
+          dispatched_expected_count: 8,
+          dispatched_task_ids: ['task-1', 'task-2', 'task-3'],
+          dispatch_queue_name: 'triage_cc_queue',
+          false_positive_count: 0,
+          self_validation_warning_count: 0,
+          self_validation_failure_count: 0,
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
+        })
+      ).toBe(
+        '⏸️ Triage Analysis: Queued in triage_cc_queue: 0/8 processed, 3/8 tasks dispatched and waiting for worker capacity'
+      )
+    })
+
     it('shows progress without confirmed/FP for non-triage stages', () => {
       expect(
         formatStageStatus('remediation_loop', {

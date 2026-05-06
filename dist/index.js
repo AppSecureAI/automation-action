@@ -65765,6 +65765,12 @@ const ProcessStatusSchema = objectType({
     processed_items: numberType().default(0),
     success_count: numberType().default(0), // Successfully processed items (includes warnings)
     error_count: numberType().default(0), // Actual processing exceptions
+    dispatched_expected_count: numberType().default(0),
+    dispatched_task_ids: arrayType(stringType()).default([]),
+    dispatched_callback_task_id: stringType().nullish(),
+    dispatched_chord_group_ids: arrayType(stringType()).default([]),
+    dispatch_queue_name: stringType().nullish(),
+    dispatch_recorded_at: stringType().nullish(),
     false_positive_count: numberType().default(0), // Items triaged as false positives (triage only)
     needs_manual_review_count: numberType().default(0), // Items routed to manual review (triage only)
     handled_error_count: numberType().default(0), // Handled errors routed to manual review (triage only)
@@ -71118,6 +71124,16 @@ function getTriageBreakdown(status) {
     const confirmed = Math.max(0, (status.success_count || 0) - falsePositives - manualReviewRequired);
     return { confirmed, falsePositives, manualReviewRequired };
 }
+function formatQueuedDispatch(status) {
+    const expected = status.dispatched_expected_count || 0;
+    if (expected <= 0 || status.processed_items > 0) {
+        return null;
+    }
+    const dispatched = status.dispatched_task_ids?.length || expected;
+    const queueName = status.dispatch_queue_name;
+    const queueSuffix = queueName ? ` in ${queueName}` : '';
+    return `Queued${queueSuffix}: ${status.processed_items}/${status.total_items} processed, ${dispatched}/${expected} tasks dispatched and waiting for worker capacity`;
+}
 /**
  * Status icons for visual scanning
  */
@@ -71294,6 +71310,10 @@ function formatStageStatus(name, status, remediationLoopStatus) {
         const pct = status.progress_percentage.toFixed(0);
         // For triage/Analysis, show confirmed vulnerabilities found so far
         if (name === 'triage') {
+            const queuedDispatch = formatQueuedDispatch(status);
+            if (queuedDispatch) {
+                return `${STATUS_ICONS.pending} ${displayName}: ${queuedDispatch}`;
+            }
             const triageBreakdown = getTriageBreakdown(status);
             const triageDetails = [
                 `${triageBreakdown.confirmed} confirmed`,
@@ -72777,7 +72797,7 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
             else if (statusData.status === 'failed') {
                 coreExports.error(`Processing failed: ${statusData.error}. Please review the logs for more details.`);
                 coreExports.endGroup();
-                return null;
+                return statusData;
             }
             else if (statusData.status === 'network_error') {
                 consecutiveNetworkErrors++;
@@ -76347,6 +76367,7 @@ async function run() {
     const startTime = Date.now();
     let success = false;
     let monitoringIndeterminate = false;
+    let productRunFailureMessage = null;
     try {
         // Display AppSecAI branding at run start
         coreExports.info('');
@@ -76426,12 +76447,20 @@ async function run() {
                 if (pollResult?.dashboard_url) {
                     finalDashboardUrl = pollResult.dashboard_url;
                 }
+                if (pollResult?.status === 'failed') {
+                    productRunFailureMessage = pollResult.error
+                        ? `Product run failed: ${pollResult.error}`
+                        : 'Product run failed.';
+                }
             }
             catch (pollError) {
                 monitoringIndeterminate = true;
                 // This is a "soft" failure. Log a warning but let the process complete
                 coreExports.warning(`[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`);
             }
+        }
+        if (productRunFailureMessage) {
+            throw new Error(productRunFailureMessage);
         }
         success = true;
         coreExports.setOutput('message', 'Processing completed successfully.');
