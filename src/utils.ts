@@ -53,6 +53,18 @@ function getTriageBreakdown(status: ProcessStatus): {
   return { confirmed, falsePositives, manualReviewRequired }
 }
 
+function formatQueuedDispatch(status: ProcessStatus): string | null {
+  const expected = status.dispatched_expected_count || 0
+  if (expected <= 0 || status.processed_items > 0) {
+    return null
+  }
+
+  const dispatched = status.dispatched_task_ids?.length || expected
+  const queueName = status.dispatch_queue_name
+  const queueSuffix = queueName ? ` in ${queueName}` : ''
+  return `Queued${queueSuffix}: ${status.processed_items}/${status.total_items} processed, ${dispatched}/${expected} tasks dispatched and waiting for worker capacity`
+}
+
 /**
  * Status icons for visual scanning
  */
@@ -263,6 +275,11 @@ export function formatStageStatus(
     const pct = status.progress_percentage.toFixed(0)
     // For triage/Analysis, show confirmed vulnerabilities found so far
     if (name === 'triage') {
+      const queuedDispatch = formatQueuedDispatch(status)
+      if (queuedDispatch) {
+        return `${STATUS_ICONS.pending} ${displayName}: ${queuedDispatch}`
+      }
+
       const triageBreakdown = getTriageBreakdown(status)
       const triageDetails = [
         `${triageBreakdown.confirmed} confirmed`,
