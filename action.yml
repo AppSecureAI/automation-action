@@ -129,6 +129,7 @@ runs:
       env:
         # Required inputs passed directly
         INPUT_FILE: ${{ inputs.file }}
+        INPUT_FILES: ${{ inputs.files }}
         INPUT_API_URL: ${{ inputs.api-url }}
         # Configuration from workflow environment variables (with defaults)
         # Canonical modes: individual_cc (default), group_cc, individual, regression_evidence
