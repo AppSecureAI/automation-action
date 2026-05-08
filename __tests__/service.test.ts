@@ -356,6 +356,16 @@ describe('service.ts', () => {
         expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
       })
 
+      it('uses repeated files fields for multi-SAST submissions', async () => {
+        await submitRun([
+          { path: 'semgrep.sarif', buffer: Buffer.from('{}') },
+          { path: 'codeql.sarif', buffer: Buffer.from('{}') }
+        ])
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('file')).toBeNull()
+        expect(formData.getAll('files')).toHaveLength(2)
+      })
+
       it('omits deprecated legacy solver fields from submit payload', async () => {
         const buf = Buffer.from('{}')
         await submitRun(buf, 'file.json')

@@ -15,7 +15,8 @@ import {
   validFilePath,
   fileExists,
   asyncReadFile,
-  readFile
+  readFile,
+  resolveInputFilePaths
 } from '../src/file.js'
 
 // ES module equivalent of __dirname
@@ -458,6 +459,26 @@ describe('file.ts', () => {
       await expect(readFile(validFile)).rejects.toThrow('Mock read error')
 
       spy.mockRestore()
+    })
+  })
+
+  describe('resolveInputFilePaths', () => {
+    it('parses comma and newline separated files input', () => {
+      expect(
+        resolveInputFilePaths('', 'semgrep.sarif, codeql.sarif\nbandit.json')
+      ).toEqual(['semgrep.sarif', 'codeql.sarif', 'bandit.json'])
+    })
+
+    it('rejects mixed legacy and multi-file inputs', () => {
+      expect(() =>
+        resolveInputFilePaths('semgrep.sarif', 'codeql.sarif')
+      ).toThrow('Provide either file or files')
+    })
+
+    it('rejects duplicate resolved paths', () => {
+      expect(() =>
+        resolveInputFilePaths('', 'semgrep.sarif,semgrep.sarif')
+      ).toThrow('Duplicate vulnerability result file paths')
     })
   })
 })

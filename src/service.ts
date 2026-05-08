@@ -29,6 +29,7 @@ import {
   getGroupingEnabled,
   getUpdateContext
 } from './input.js'
+import type { SastInputFile } from './file.js'
 import {
   SubmitRunOutput,
   StructuredErrorDetail,
@@ -304,8 +305,8 @@ function formatStructuredError(
 }
 
 export async function submitRun(
-  file: Buffer,
-  fileName: string
+  file: Buffer | SastInputFile[],
+  fileName?: string
 ): Promise<SubmitRunOutput> {
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
@@ -314,8 +315,22 @@ export async function submitRun(
 
   core.info(`Processing mode: ${mode}`)
 
+  const inputFiles = Array.isArray(file)
+    ? file
+    : [{ path: fileName ?? 'results.sarif', buffer: file }]
+
   const formData = new FormData()
-  formData.append('file', new Blob([file]), fileName)
+  if (inputFiles.length === 1) {
+    formData.append(
+      'file',
+      new Blob([inputFiles[0].buffer]),
+      inputFiles[0].path
+    )
+  } else {
+    for (const inputFile of inputFiles) {
+      formData.append('files', new Blob([inputFile.buffer]), inputFile.path)
+    }
+  }
   formData.append('processing_mode', mode)
 
   // Add PR creation flag
@@ -372,7 +387,9 @@ export async function submitRun(
     timeout: API_TIMEOUT
   }
   const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`
-  core.info(`${prefixLabel} Submitting analysis results for processing...`)
+  core.info(
+    `${prefixLabel} Submitting ${inputFiles.length} analysis result file${inputFiles.length === 1 ? '' : 's'} for processing: ${inputFiles.map((inputFile) => inputFile.path).join(', ')}`
+  )
 
   return fetchWithRetry(
     () => axios.post(url, formData, setup),

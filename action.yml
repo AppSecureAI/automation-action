@@ -22,7 +22,14 @@ inputs:
   file:
     description:
       The SARIF, JSON, CSV, or TSV file containing security scan results
-    required: true
+    required: false
+
+  files:
+    description:
+      Comma- or newline-separated SARIF, JSON, CSV, or TSV files to submit as
+      one multi-SAST run. Supports simple * and ** glob patterns.
+    required: false
+    default: ''
 
   update-context:
     description: Trigger fresh security context extraction before the scan

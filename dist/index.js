@@ -1,7 +1,7 @@
 import require$$0$1 from 'os';
 import require$$0$2 from 'crypto';
 import fs from 'fs';
-import require$$1$3, { resolve } from 'path';
+import path, { resolve } from 'path';
 import require$$0$3 from 'http';
 import require$$1 from 'https';
 import 'net';
@@ -16,10 +16,10 @@ import require$$6 from 'timers';
 import stream, { Readable } from 'stream';
 import require$$5$1 from 'url';
 import http2 from 'http2';
-import require$$1$4 from 'tty';
+import require$$1$3 from 'tty';
 import zlib from 'zlib';
 import { readFile as readFile$1, access, mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import path$1 from 'node:path';
 import { execFile as execFile$1, exec as exec$2 } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -38474,7 +38474,7 @@ function requirePathUtils () {
 	};
 	Object.defineProperty(pathUtils, "__esModule", { value: true });
 	pathUtils.toPlatformPath = pathUtils.toWin32Path = pathUtils.toPosixPath = void 0;
-	const path = __importStar(require$$1$3);
+	const path$1 = __importStar(path);
 	/**
 	 * toPosixPath converts the given path to the posix form. On Windows, \\ will be
 	 * replaced with /.
@@ -38506,7 +38506,7 @@ function requirePathUtils () {
 	 * @return string The platform-specific path.
 	 */
 	function toPlatformPath(pth) {
-	    return pth.replace(/[/\\]/g, path.sep);
+	    return pth.replace(/[/\\]/g, path$1.sep);
 	}
 	pathUtils.toPlatformPath = toPlatformPath;
 	
@@ -38561,7 +38561,7 @@ function requireIoUtil () {
 		Object.defineProperty(exports$1, "__esModule", { value: true });
 		exports$1.getCmdPath = exports$1.tryGetExecutablePath = exports$1.isRooted = exports$1.isDirectory = exports$1.exists = exports$1.READONLY = exports$1.UV_FS_O_EXLOCK = exports$1.IS_WINDOWS = exports$1.unlink = exports$1.symlink = exports$1.stat = exports$1.rmdir = exports$1.rm = exports$1.rename = exports$1.readlink = exports$1.readdir = exports$1.open = exports$1.mkdir = exports$1.lstat = exports$1.copyFile = exports$1.chmod = void 0;
 		const fs$1 = __importStar(fs);
-		const path = __importStar(require$$1$3);
+		const path$1 = __importStar(path);
 		_a = fs$1.promises
 		// export const {open} = 'fs'
 		, exports$1.chmod = _a.chmod, exports$1.copyFile = _a.copyFile, exports$1.lstat = _a.lstat, exports$1.mkdir = _a.mkdir, exports$1.open = _a.open, exports$1.readdir = _a.readdir, exports$1.readlink = _a.readlink, exports$1.rename = _a.rename, exports$1.rm = _a.rm, exports$1.rmdir = _a.rmdir, exports$1.stat = _a.stat, exports$1.symlink = _a.symlink, exports$1.unlink = _a.unlink;
@@ -38630,7 +38630,7 @@ function requireIoUtil () {
 		        if (stats && stats.isFile()) {
 		            if (exports$1.IS_WINDOWS) {
 		                // on Windows, test for valid extension
-		                const upperExt = path.extname(filePath).toUpperCase();
+		                const upperExt = path$1.extname(filePath).toUpperCase();
 		                if (extensions.some(validExt => validExt.toUpperCase() === upperExt)) {
 		                    return filePath;
 		                }
@@ -38659,11 +38659,11 @@ function requireIoUtil () {
 		                if (exports$1.IS_WINDOWS) {
 		                    // preserve the case of the actual file (since an extension was appended)
 		                    try {
-		                        const directory = path.dirname(filePath);
-		                        const upperName = path.basename(filePath).toUpperCase();
+		                        const directory = path$1.dirname(filePath);
+		                        const upperName = path$1.basename(filePath).toUpperCase();
 		                        for (const actualName of yield exports$1.readdir(directory)) {
 		                            if (upperName === actualName.toUpperCase()) {
-		                                filePath = path.join(directory, actualName);
+		                                filePath = path$1.join(directory, actualName);
 		                                break;
 		                            }
 		                        }
@@ -38751,7 +38751,7 @@ function requireIo () {
 	Object.defineProperty(io, "__esModule", { value: true });
 	io.findInPath = io.which = io.mkdirP = io.rmRF = io.mv = io.cp = void 0;
 	const assert_1 = require$$5;
-	const path = __importStar(require$$1$3);
+	const path$1 = __importStar(path);
 	const ioUtil = __importStar(requireIoUtil());
 	/**
 	 * Copies a file or folder.
@@ -38771,7 +38771,7 @@ function requireIo () {
 	        }
 	        // If dest is an existing directory, should copy inside.
 	        const newDest = destStat && destStat.isDirectory() && copySourceDirectory
-	            ? path.join(dest, path.basename(source))
+	            ? path$1.join(dest, path$1.basename(source))
 	            : dest;
 	        if (!(yield ioUtil.exists(source))) {
 	            throw new Error(`no such file or directory: ${source}`);
@@ -38786,7 +38786,7 @@ function requireIo () {
 	            }
 	        }
 	        else {
-	            if (path.relative(source, newDest) === '') {
+	            if (path$1.relative(source, newDest) === '') {
 	                // a file cannot be copied to itself
 	                throw new Error(`'${newDest}' and '${source}' are the same file`);
 	            }
@@ -38808,7 +38808,7 @@ function requireIo () {
 	            let destExists = true;
 	            if (yield ioUtil.isDirectory(dest)) {
 	                // If dest is directory copy src into dest
-	                dest = path.join(dest, path.basename(source));
+	                dest = path$1.join(dest, path$1.basename(source));
 	                destExists = yield ioUtil.exists(dest);
 	            }
 	            if (destExists) {
@@ -38820,7 +38820,7 @@ function requireIo () {
 	                }
 	            }
 	        }
-	        yield mkdirP(path.dirname(dest));
+	        yield mkdirP(path$1.dirname(dest));
 	        yield ioUtil.rename(source, dest);
 	    });
 	}
@@ -38915,7 +38915,7 @@ function requireIo () {
 	        // build the list of extensions to try
 	        const extensions = [];
 	        if (ioUtil.IS_WINDOWS && process.env['PATHEXT']) {
-	            for (const extension of process.env['PATHEXT'].split(path.delimiter)) {
+	            for (const extension of process.env['PATHEXT'].split(path$1.delimiter)) {
 	                if (extension) {
 	                    extensions.push(extension);
 	                }
@@ -38930,7 +38930,7 @@ function requireIo () {
 	            return [];
 	        }
 	        // if any path separators, return empty
-	        if (tool.includes(path.sep)) {
+	        if (tool.includes(path$1.sep)) {
 	            return [];
 	        }
 	        // build the list of directories
@@ -38941,7 +38941,7 @@ function requireIo () {
 	        // across platforms.
 	        const directories = [];
 	        if (process.env.PATH) {
-	            for (const p of process.env.PATH.split(path.delimiter)) {
+	            for (const p of process.env.PATH.split(path$1.delimiter)) {
 	                if (p) {
 	                    directories.push(p);
 	                }
@@ -38950,7 +38950,7 @@ function requireIo () {
 	        // find all matches
 	        const matches = [];
 	        for (const directory of directories) {
-	            const filePath = yield ioUtil.tryGetExecutablePath(path.join(directory, tool), extensions);
+	            const filePath = yield ioUtil.tryGetExecutablePath(path$1.join(directory, tool), extensions);
 	            if (filePath) {
 	                matches.push(filePath);
 	            }
@@ -39059,7 +39059,7 @@ function requireToolrunner () {
 	const os = __importStar(require$$0$1);
 	const events = __importStar(require$$4$1);
 	const child = __importStar(require$$2$1);
-	const path = __importStar(require$$1$3);
+	const path$1 = __importStar(path);
 	const io = __importStar(requireIo());
 	const ioUtil = __importStar(requireIoUtil());
 	const timers_1 = require$$6;
@@ -39414,7 +39414,7 @@ function requireToolrunner () {
 	                (this.toolPath.includes('/') ||
 	                    (IS_WINDOWS && this.toolPath.includes('\\')))) {
 	                // prefer options.cwd if it is specified, however options.cwd may also need to be rooted
-	                this.toolPath = path.resolve(process.cwd(), this.options.cwd || process.cwd(), this.toolPath);
+	                this.toolPath = path$1.resolve(process.cwd(), this.options.cwd || process.cwd(), this.toolPath);
 	            }
 	            // if the tool is only a file name, then resolve it from the PATH
 	            // otherwise verify it exists (add extension on Windows if necessary)
@@ -39903,7 +39903,7 @@ function requireCore () {
 		const file_command_1 = requireFileCommand();
 		const utils_1 = requireUtils$3();
 		const os = __importStar(require$$0$1);
-		const path = __importStar(require$$1$3);
+		const path$1 = __importStar(path);
 		const oidc_utils_1 = requireOidcUtils();
 		/**
 		 * The code to exit an action
@@ -39958,7 +39958,7 @@ function requireCore () {
 		    else {
 		        (0, command_1.issueCommand)('add-path', {}, inputPath);
 		    }
-		    process.env['PATH'] = `${inputPath}${path.delimiter}${process.env['PATH']}`;
+		    process.env['PATH'] = `${inputPath}${path$1.delimiter}${process.env['PATH']}`;
 		}
 		exports$1.addPath = addPath;
 		/**
@@ -40340,7 +40340,7 @@ function validFileName(filePath) {
         return false;
     }
     // Extract just the filename from the path
-    const fileName = require$$1$3.basename(filePath);
+    const fileName = path.basename(filePath);
     // Regex pattern to validate filename and extension
     const validFilePattern = new RegExp('^(?!.*\\.\\.)[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*\\.(json|sarif|csv|tsv)$', 'i');
     return validFilePattern.test(fileName);
@@ -40416,6 +40416,60 @@ async function readFile(filePath) {
     return new Promise((resolve, reject) => {
         asyncReadFile(filePath, (data) => resolve(data), (err) => reject(err));
     });
+}
+function splitFileInput(input) {
+    return input
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+}
+function globToRegExp(pattern) {
+    const normalized = pattern.split(path.sep).join('/');
+    const escaped = normalized.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    const regex = escaped.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*');
+    return new RegExp(`^${regex}$`);
+}
+function expandFilePattern(pattern) {
+    if (!pattern.includes('*')) {
+        return [pattern];
+    }
+    const matcher = globToRegExp(pattern);
+    const entries = fs.readdirSync(process.cwd(), { recursive: true });
+    return entries
+        .filter((entryPath) => fs.statSync(path.join(process.cwd(), entryPath)).isFile())
+        .map((entryPath) => entryPath.split(path.sep).join('/'))
+        .filter((entryPath) => matcher.test(entryPath))
+        .sort();
+}
+function resolveInputFilePaths(file, files) {
+    if (file.trim() && files.trim()) {
+        throw new FileReadError('Provide either file or files, not both', 'EINVAL', file);
+    }
+    const candidates = files.trim() ? splitFileInput(files) : splitFileInput(file);
+    if (candidates.length === 0) {
+        throw new FileReadError('No vulnerability result files were provided', 'EINVAL', file || files);
+    }
+    const resolved = candidates.flatMap(expandFilePattern);
+    const seen = new Set();
+    const duplicates = new Set();
+    for (const filePath of resolved) {
+        const key = path.resolve(filePath);
+        if (seen.has(key)) {
+            duplicates.add(filePath);
+        }
+        seen.add(key);
+    }
+    if (duplicates.size > 0) {
+        throw new FileReadError(`Duplicate vulnerability result file paths: ${Array.from(duplicates).join(', ')}`, 'EINVAL', Array.from(duplicates)[0]);
+    }
+    return resolved;
+}
+async function readInputFiles(filePaths) {
+    const readFiles = await Promise.all(filePaths.map(async (filePath) => ({
+        path: filePath,
+        buffer: await readFile(filePath)
+    })));
+    return readFiles;
 }
 
 /**
@@ -52512,7 +52566,7 @@ function requireMimeTypes () {
 		 */
 
 		var db = requireMimeDb();
-		var extname = require$$1$3.extname;
+		var extname = path.extname;
 
 		/**
 		 * Module variables.
@@ -54253,7 +54307,7 @@ function requireForm_data () {
 
 	var CombinedStream = requireCombined_stream();
 	var util = require$$1$1;
-	var path = require$$1$3;
+	var path$1 = path;
 	var http = require$$0$3;
 	var https = require$$1;
 	var parseUrl = require$$5$1.parse;
@@ -54471,17 +54525,17 @@ function requireForm_data () {
 
 	  if (typeof options.filepath === 'string') {
 	    // custom filepath for relative paths
-	    filename = path.normalize(options.filepath).replace(/\\/g, '/');
+	    filename = path$1.normalize(options.filepath).replace(/\\/g, '/');
 	  } else if (options.filename || (value && (value.name || value.path))) {
 	    /*
 	     * custom filename take precedence
 	     * formidable and the browser add a name property
 	     * fs- and request- streams have path property
 	     */
-	    filename = path.basename(options.filename || (value && (value.name || value.path)));
+	    filename = path$1.basename(options.filename || (value && (value.name || value.path)));
 	  } else if (value && value.readable && hasOwn(value, 'httpVersion')) {
 	    // or try http response
-	    filename = path.basename(value.client._httpMessage.path || '');
+	    filename = path$1.basename(value.client._httpMessage.path || '');
 	  }
 
 	  if (filename) {
@@ -56994,7 +57048,7 @@ function requireSupportsColor () {
 	if (hasRequiredSupportsColor) return supportsColor_1;
 	hasRequiredSupportsColor = 1;
 	const os = require$$0$1;
-	const tty = require$$1$4;
+	const tty = require$$1$3;
 	const hasFlag = requireHasFlag();
 
 	const {env} = process;
@@ -57140,7 +57194,7 @@ function requireNode () {
 	if (hasRequiredNode) return node.exports;
 	hasRequiredNode = 1;
 	(function (module, exports$1) {
-		const tty = require$$1$4;
+		const tty = require$$1$3;
 		const util = require$$1$1;
 
 		/**
@@ -70780,6 +70834,12 @@ function getInputValue(name, envName, workflowEnvName) {
 function getApiUrl() {
     return getInputValue('api-url', 'INPUT_API_URL');
 }
+function getFile() {
+    return getInputValue('file', 'INPUT_FILE');
+}
+function getFiles() {
+    return getInputValue('files', 'INPUT_FILES');
+}
 function getToken() {
     return getInputValue('token', 'INPUT_TOKEN');
 }
@@ -72292,8 +72352,18 @@ async function submitRun(file, fileName) {
     const url = `${apiUrl}/api-product/submit`;
     const mode = getMode();
     coreExports.info(`Processing mode: ${mode}`);
+    const inputFiles = Array.isArray(file)
+        ? file
+        : [{ path: 'results.sarif', buffer: file }];
     const formData = new FormData();
-    formData.append('file', new Blob([file]), fileName);
+    if (inputFiles.length === 1) {
+        formData.append('file', new Blob([inputFiles[0].buffer]), inputFiles[0].path);
+    }
+    else {
+        for (const inputFile of inputFiles) {
+            formData.append('files', new Blob([inputFile.buffer]), inputFile.path);
+        }
+    }
     formData.append('processing_mode', mode);
     // Add PR creation flag
     formData.append('auto_create_prs', String(getAutoCreatePrs()));
@@ -72330,7 +72400,7 @@ async function submitRun(file, fileName) {
         timeout: API_TIMEOUT
     };
     const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`;
-    coreExports.info(`${prefixLabel} Submitting analysis results for processing...`);
+    coreExports.info(`${prefixLabel} Submitting ${inputFiles.length} analysis result file${inputFiles.length === 1 ? '' : 's'} for processing: ${inputFiles.map((inputFile) => inputFile.path).join(', ')}`);
     return fetchWithRetry(() => axios.post(url, formData, setup), SUBMIT_RETRY_MAX_RETRIES, SUBMIT_RETRY_BASE_DELAY_MS)
         .then((response) => {
         const parsedResponse = RunResponseSchema.safeParse(response.data);
@@ -75966,7 +76036,7 @@ function mapChangedLinesWithCoverage(changedLines, coverageDocuments) {
 }
 function getCandidateTestPaths(file) {
     const normalized = toPosixFilePath(file);
-    const parsed = path.posix.parse(normalized);
+    const parsed = path$1.posix.parse(normalized);
     const extensions = ['.ts', '.tsx', '.js', '.jsx'];
     const baseWithoutExt = parsed.name;
     const inSourceDir = parsed.dir.startsWith('src/')
@@ -75977,17 +76047,17 @@ function getCandidateTestPaths(file) {
         candidates.add(normalized);
     }
     for (const ext of extensions) {
-        candidates.add(path.posix.join(parsed.dir, `${baseWithoutExt}.test${ext}`));
-        candidates.add(path.posix.join(parsed.dir, `${baseWithoutExt}.spec${ext}`));
-        candidates.add(path.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.test${ext}`));
-        candidates.add(path.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.spec${ext}`));
-        candidates.add(path.posix.join('__tests__', `${baseWithoutExt}.test${ext}`));
-        candidates.add(path.posix.join('__tests__', `${baseWithoutExt}.spec${ext}`));
+        candidates.add(path$1.posix.join(parsed.dir, `${baseWithoutExt}.test${ext}`));
+        candidates.add(path$1.posix.join(parsed.dir, `${baseWithoutExt}.spec${ext}`));
+        candidates.add(path$1.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.test${ext}`));
+        candidates.add(path$1.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.spec${ext}`));
+        candidates.add(path$1.posix.join('__tests__', `${baseWithoutExt}.test${ext}`));
+        candidates.add(path$1.posix.join('__tests__', `${baseWithoutExt}.spec${ext}`));
         if (inSourceDir) {
-            candidates.add(path.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.test${ext}`));
-            candidates.add(path.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.spec${ext}`));
-            candidates.add(path.posix.join('tests', inSourceDir, `${baseWithoutExt}.test${ext}`));
-            candidates.add(path.posix.join('tests', inSourceDir, `${baseWithoutExt}.spec${ext}`));
+            candidates.add(path$1.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.test${ext}`));
+            candidates.add(path$1.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.spec${ext}`));
+            candidates.add(path$1.posix.join('tests', inSourceDir, `${baseWithoutExt}.test${ext}`));
+            candidates.add(path$1.posix.join('tests', inSourceDir, `${baseWithoutExt}.spec${ext}`));
         }
     }
     return Array.from(candidates);
@@ -76000,7 +76070,7 @@ async function applyHeuristicFallback(changedLines, currentlyMapped, cwd) {
     for (const changedLine of changedLines) {
         const candidates = getCandidateTestPaths(changedLine.file);
         for (const candidate of candidates) {
-            const fullPath = path.resolve(cwd, candidate);
+            const fullPath = path$1.resolve(cwd, candidate);
             try {
                 await access(fullPath);
             }
@@ -76138,10 +76208,10 @@ async function executeImpactedTests(cwd, testCommands, mappedTests) {
     };
 }
 async function writeArtifacts(artifact, markdown, outputJsonPath, outputMarkdownPath, cwd) {
-    const jsonPath = path.resolve(cwd, outputJsonPath);
-    const markdownPath = path.resolve(cwd, outputMarkdownPath);
-    await mkdir(path.dirname(jsonPath), { recursive: true });
-    await mkdir(path.dirname(markdownPath), { recursive: true });
+    const jsonPath = path$1.resolve(cwd, outputJsonPath);
+    const markdownPath = path$1.resolve(cwd, outputMarkdownPath);
+    await mkdir(path$1.dirname(jsonPath), { recursive: true });
+    await mkdir(path$1.dirname(markdownPath), { recursive: true });
     await writeFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
     await writeFile(markdownPath, `${markdown}\n`, 'utf8');
     return { jsonPath, markdownPath };
@@ -76254,9 +76324,9 @@ async function publishRegressionEvidenceCommentFromContext(markdown, token) {
 /**
  * Log all input configuration in a collapsible group
  */
-function logConfiguration(file) {
+function logConfiguration(filePaths) {
     coreExports.startGroup('Input Configuration');
-    coreExports.info(`File: ${file}`);
+    coreExports.info(`Files: ${filePaths.join(', ')}`);
     coreExports.info(`API URL: ${getApiUrl()}`);
     coreExports.info(`Processing Mode: ${getMode()}`);
     coreExports.info(`Use Triage CC: ${getUseTriageCc()}`);
@@ -76333,13 +76403,15 @@ async function run() {
     fetchAndLogServerVersion(getApiUrl()).catch(() => {
         // Silently ignore - version check is purely informational
     });
-    const file = coreExports.getInput('file');
+    const file = getFile();
+    const files = getFiles();
     const isDebug = getDebug();
     // Polling configuration for status checks (from constants.ts)
     const pollDelay = PollingConfig.POLL_DELAY_MS;
     const intervalCheck = PollingConfig.INTERVAL_CHECK_MS;
     const retries = PollingConfig.MAX_RETRIES;
-    let fileBuffer;
+    let inputFiles;
+    let filePaths = [];
     let submitOutput;
     let finalProcessTracking = null;
     let finalSummary = null;
@@ -76348,6 +76420,7 @@ async function run() {
     let success = false;
     let monitoringIndeterminate = false;
     try {
+        filePaths = resolveInputFilePaths(file, files);
         // Display AppSecAI branding at run start
         coreExports.info('');
         coreExports.info(getConsoleBranding());
@@ -76356,7 +76429,7 @@ async function run() {
         coreExports.info('======== Getting static analysis results for further processing. ========');
         // Log configuration in collapsible group only if debug is enabled
         if (isDebug) {
-            logConfiguration(file);
+            logConfiguration(filePaths);
         }
         if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
             await runRegressionEvidenceMode();
@@ -76364,11 +76437,11 @@ async function run() {
             coreExports.setOutput('message', 'Regression evidence generated successfully.');
             return;
         }
-        // Step 1: Read the file
-        coreExports.startGroup(`File Processing (${file})`);
+        // Step 1: Read the file inputs
+        coreExports.startGroup(`File Processing (${filePaths.length} file${filePaths.length === 1 ? '' : 's'})`);
         try {
-            fileBuffer = await readFile(file);
-            coreExports.info(`Successfully read file: ${file}`);
+            inputFiles = await readInputFiles(filePaths);
+            coreExports.info(`Successfully read files: ${filePaths.join(', ')}`);
         }
         catch (error) {
             coreExports.debug(`Error reading file: ${error}.`);
@@ -76383,7 +76456,7 @@ async function run() {
             coreExports.info(`[${LogLabels.RUN_SUBMIT}] submit in progress...`);
         }, intervalCheck);
         try {
-            submitOutput = await submitRun(fileBuffer, file);
+            submitOutput = await submitRun(inputFiles);
             coreExports.info(submitOutput.message);
         }
         catch (error) {
@@ -76443,16 +76516,16 @@ async function run() {
             const err = error;
             switch (err.code) {
                 case 'ENOENT':
-                    errorMessage = `File not found: ${file}. Please check if the file path is correct and the file exists.`;
+                    errorMessage = `File not found. Please check if every file path is correct and exists.`;
                     break;
                 case 'ENODATA':
-                    errorMessage = `File is empty or could not be read: ${file}. Please check if the file contains data.`;
+                    errorMessage = `File is empty or could not be read. Please check if every file contains data.`;
                     break;
                 case 'EINVAL':
                     errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv`;
                     break;
                 default:
-                    errorMessage = `An error occurred while processing the file: ${file}. Please verify the file is accessible and properly formatted.`;
+                    errorMessage = `An error occurred while processing files: ${filePaths.join(', ')}. Please verify each file is accessible and properly formatted.`;
             }
             errorMessage = `${errorMessage} Aborting process.`;
         }

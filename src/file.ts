@@ -9,6 +9,11 @@ import path from 'path'
 import { FileReadError } from './errors.js'
 import { LogLabels } from './constants.js'
 
+export interface SastInputFile {
+  path: string
+  buffer: Buffer
+}
+
 /**
  * Check if a file path has a valid name for supported security tools
  * @param filePath - The file path to validate
@@ -127,4 +132,86 @@ export async function readFile(filePath: string): Promise<Buffer> {
       (err) => reject(err)
     )
   })
+}
+
+function splitFileInput(input: string): string[] {
+  return input
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+}
+
+function globToRegExp(pattern: string): RegExp {
+  const normalized = pattern.split(path.sep).join('/')
+  const escaped = normalized.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  const regex = escaped.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')
+  return new RegExp(`^${regex}$`)
+}
+
+function expandFilePattern(pattern: string): string[] {
+  if (!pattern.includes('*')) {
+    return [pattern]
+  }
+
+  const matcher = globToRegExp(pattern)
+  const entries = fs.readdirSync(process.cwd(), { recursive: true }) as string[]
+  return entries
+    .filter((entryPath) =>
+      fs.statSync(path.join(process.cwd(), entryPath)).isFile()
+    )
+    .map((entryPath) => entryPath.split(path.sep).join('/'))
+    .filter((entryPath) => matcher.test(entryPath))
+    .sort()
+}
+
+export function resolveInputFilePaths(file: string, files: string): string[] {
+  if (file.trim() && files.trim()) {
+    throw new FileReadError(
+      'Provide either file or files, not both',
+      'EINVAL',
+      file
+    )
+  }
+
+  const candidates = files.trim() ? splitFileInput(files) : splitFileInput(file)
+  if (candidates.length === 0) {
+    throw new FileReadError(
+      'No vulnerability result files were provided',
+      'EINVAL',
+      file || files
+    )
+  }
+
+  const resolved = candidates.flatMap(expandFilePattern)
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const filePath of resolved) {
+    const key = path.resolve(filePath)
+    if (seen.has(key)) {
+      duplicates.add(filePath)
+    }
+    seen.add(key)
+  }
+
+  if (duplicates.size > 0) {
+    throw new FileReadError(
+      `Duplicate vulnerability result file paths: ${Array.from(duplicates).join(', ')}`,
+      'EINVAL',
+      Array.from(duplicates)[0]
+    )
+  }
+
+  return resolved
+}
+
+export async function readInputFiles(
+  filePaths: string[]
+): Promise<SastInputFile[]> {
+  const readFiles = await Promise.all(
+    filePaths.map(async (filePath) => ({
+      path: filePath,
+      buffer: await readFile(filePath)
+    }))
+  )
+  return readFiles
 }
