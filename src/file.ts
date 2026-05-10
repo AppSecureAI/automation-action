@@ -155,13 +155,23 @@ function expandFilePattern(pattern: string): string[] {
 
   const matcher = globToRegExp(pattern)
   const entries = fs.readdirSync(process.cwd(), { recursive: true }) as string[]
-  return entries
+  const matches = entries
     .filter((entryPath) =>
       fs.statSync(path.join(process.cwd(), entryPath)).isFile()
     )
     .map((entryPath) => entryPath.split(path.sep).join('/'))
     .filter((entryPath) => matcher.test(entryPath))
     .sort()
+
+  if (matches.length === 0) {
+    throw new FileReadError(
+      `No vulnerability result files matched pattern: ${pattern}`,
+      'ENOENT',
+      pattern
+    )
+  }
+
+  return matches
 }
 
 export function resolveInputFilePaths(file: string, files: string): string[] {
@@ -183,6 +193,13 @@ export function resolveInputFilePaths(file: string, files: string): string[] {
   }
 
   const resolved = candidates.flatMap(expandFilePattern)
+  if (resolved.length === 0) {
+    throw new FileReadError(
+      'No vulnerability result files were resolved',
+      'ENOENT',
+      file || files
+    )
+  }
   const seen = new Set<string>()
   const duplicates = new Set<string>()
   for (const filePath of resolved) {

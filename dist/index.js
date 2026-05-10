@@ -40435,11 +40435,15 @@ function expandFilePattern(pattern) {
     }
     const matcher = globToRegExp(pattern);
     const entries = fs.readdirSync(process.cwd(), { recursive: true });
-    return entries
+    const matches = entries
         .filter((entryPath) => fs.statSync(path.join(process.cwd(), entryPath)).isFile())
         .map((entryPath) => entryPath.split(path.sep).join('/'))
         .filter((entryPath) => matcher.test(entryPath))
         .sort();
+    if (matches.length === 0) {
+        throw new FileReadError(`No vulnerability result files matched pattern: ${pattern}`, 'ENOENT', pattern);
+    }
+    return matches;
 }
 function resolveInputFilePaths(file, files) {
     if (file.trim() && files.trim()) {
@@ -40450,6 +40454,9 @@ function resolveInputFilePaths(file, files) {
         throw new FileReadError('No vulnerability result files were provided', 'EINVAL', file || files);
     }
     const resolved = candidates.flatMap(expandFilePattern);
+    if (resolved.length === 0) {
+        throw new FileReadError('No vulnerability result files were resolved', 'ENOENT', file || files);
+    }
     const seen = new Set();
     const duplicates = new Set();
     for (const filePath of resolved) {

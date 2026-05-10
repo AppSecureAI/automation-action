@@ -480,5 +480,11 @@ describe('file.ts', () => {
         resolveInputFilePaths('', 'semgrep.sarif,semgrep.sarif')
       ).toThrow('Duplicate vulnerability result file paths')
     })
+
+    it('rejects glob patterns that match no files', () => {
+      expect(() =>
+        resolveInputFilePaths('', 'no-such-sast-file-*.sarif')
+      ).toThrow('No vulnerability result files matched pattern')
+    })
   })
 })
