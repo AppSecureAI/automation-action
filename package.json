@@ -29,6 +29,7 @@
     "coverage": "npx make-coverage-badge --output-path ./badges/coverage.svg",
     "format:write": "npx prettier --write .",
     "format:check": "npx prettier --check .",
+    "check:dependency-pinning": "node scripts/check-dependency-pinning.mjs",
     "check:types": "tsc --noemit",
     "changelog": "conventional-changelog -p conventionalcommits -i CHANGELOG.md -s",
     "lint": "npx eslint && npm run check:types",
