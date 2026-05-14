@@ -53,6 +53,10 @@ export function getFile() {
   return getInputValue('file', 'INPUT_FILE')
 }
 
+export function getFiles() {
+  return getInputValue('files', 'INPUT_FILES')
+}
+
 export function getToken() {
   return getInputValue('token', 'INPUT_TOKEN')
 }

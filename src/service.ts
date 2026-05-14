@@ -29,6 +29,7 @@ import {
   getGroupingEnabled,
   getUpdateContext
 } from './input.js'
+import type { SastInputFile } from './file.js'
 import {
   SubmitRunOutput,
   StructuredErrorDetail,
@@ -304,8 +305,8 @@ function formatStructuredError(
 }
 
 export async function submitRun(
-  file: Buffer,
-  fileName: string
+  file: Buffer | SastInputFile[],
+  fileName?: string
 ): Promise<SubmitRunOutput> {
   const apiUrl = getApiUrl()
   const token = await getIdToken(apiUrl)
@@ -314,8 +315,22 @@ export async function submitRun(
 
   core.info(`Processing mode: ${mode}`)
 
+  const inputFiles = Array.isArray(file)
+    ? file
+    : [{ path: fileName ?? 'results.sarif', buffer: file }]
+
   const formData = new FormData()
-  formData.append('file', new Blob([file]), fileName)
+  if (inputFiles.length === 1) {
+    formData.append(
+      'file',
+      new Blob([inputFiles[0].buffer]),
+      inputFiles[0].path
+    )
+  } else {
+    for (const inputFile of inputFiles) {
+      formData.append('files', new Blob([inputFile.buffer]), inputFile.path)
+    }
+  }
   formData.append('processing_mode', mode)
 
   // Add PR creation flag
@@ -372,7 +387,9 @@ export async function submitRun(
     timeout: API_TIMEOUT
   }
   const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`
-  core.info(`${prefixLabel} Submitting analysis results for processing...`)
+  core.info(
+    `${prefixLabel} Submitting ${inputFiles.length} analysis result file${inputFiles.length === 1 ? '' : 's'} for processing: ${inputFiles.map((inputFile) => inputFile.path).join(', ')}`
+  )
 
   return fetchWithRetry(
     () => axios.post(url, formData, setup),
@@ -553,6 +570,9 @@ export async function getStatus(
       const processTracking = parsedResponse.data.process_tracking
       const summary = parsedResponse.data.summary
       const runStatus = parsedResponse.data.run_status
+      const canonicalRunStatus =
+        typeof runStatus === 'string' ? runStatus.trim() : ''
+      const hasCanonicalRunStatus = canonicalRunStatus.length > 0
       const dashboardUrl = parsedResponse.data.dashboard_url
       let totalVulns = 0
 
@@ -566,7 +586,7 @@ export async function getStatus(
 
       // Check run-level status first (canonical source of truth)
       // The run's top-level status is the authoritative indicator of run state
-      if (runStatus === 'failed') {
+      if (canonicalRunStatus === 'failed') {
         const errorMsg =
           processTracking?.overall_status?.error_message ||
           processTracking?.find_status?.error_message ||
@@ -581,7 +601,7 @@ export async function getStatus(
         }
       }
 
-      if (runStatus === 'completed') {
+      if (canonicalRunStatus === 'completed') {
         const handledErrors =
           summary?.handled_error_count ??
           processTracking?.triage_status?.handled_error_count ??
@@ -616,7 +636,7 @@ export async function getStatus(
         }
       }
 
-      if (runStatus === 'cancelled') {
+      if (canonicalRunStatus === 'cancelled') {
         core.warning(`${prefixLabel}: Run was cancelled`)
         return {
           status: 'failed',
@@ -681,6 +701,15 @@ export async function getStatus(
         core.info('.......')
       }
       core.info('======= ***** =======')
+
+      if (hasCanonicalRunStatus) {
+        return {
+          status: 'progress',
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
+      }
 
       // Fallback: Check overall_status for backward compatibility with older API responses
       // that may not include run_status
