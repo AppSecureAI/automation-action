@@ -1035,6 +1035,35 @@ describe('service.ts', () => {
     expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
   })
 
+  it('keeps polling when canonical run_status is processing even if push is not scheduled', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Processing',
+        description: 'In progress',
+        run_status: 'processing',
+        results: {
+          description: null,
+          find: { count: 20, extras: {} },
+          triage: { count: 8, extras: {} },
+          remediate: null,
+          validate: null,
+          push: null
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'in_progress', progress_percentage: 80 },
+          push_status: { status: 'not_scheduled' }
+        }
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
+    expect(core.info).not.toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Push stage not_scheduled - marking run as complete'
+    )
+  })
+
   it('uses fallback error message when run_status failed but no error_message', async () => {
     axios.get.mockResolvedValue({
       data: {

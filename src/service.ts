@@ -570,6 +570,9 @@ export async function getStatus(
       const processTracking = parsedResponse.data.process_tracking
       const summary = parsedResponse.data.summary
       const runStatus = parsedResponse.data.run_status
+      const canonicalRunStatus =
+        typeof runStatus === 'string' ? runStatus.trim() : ''
+      const hasCanonicalRunStatus = canonicalRunStatus.length > 0
       const dashboardUrl = parsedResponse.data.dashboard_url
       let totalVulns = 0
 
@@ -583,7 +586,7 @@ export async function getStatus(
 
       // Check run-level status first (canonical source of truth)
       // The run's top-level status is the authoritative indicator of run state
-      if (runStatus === 'failed') {
+      if (canonicalRunStatus === 'failed') {
         const errorMsg =
           processTracking?.overall_status?.error_message ||
           processTracking?.find_status?.error_message ||
@@ -598,7 +601,7 @@ export async function getStatus(
         }
       }
 
-      if (runStatus === 'completed') {
+      if (canonicalRunStatus === 'completed') {
         const handledErrors =
           summary?.handled_error_count ??
           processTracking?.triage_status?.handled_error_count ??
@@ -633,7 +636,7 @@ export async function getStatus(
         }
       }
 
-      if (runStatus === 'cancelled') {
+      if (canonicalRunStatus === 'cancelled') {
         core.warning(`${prefixLabel}: Run was cancelled`)
         return {
           status: 'failed',
@@ -698,6 +701,15 @@ export async function getStatus(
         core.info('.......')
       }
       core.info('======= ***** =======')
+
+      if (hasCanonicalRunStatus) {
+        return {
+          status: 'progress',
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
+      }
 
       // Fallback: Check overall_status for backward compatibility with older API responses
       // that may not include run_status
