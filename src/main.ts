@@ -4,7 +4,8 @@
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
-import { readFile } from './file.js'
+import { readInputFiles, resolveInputFilePaths } from './file.js'
+import type { SastInputFile } from './file.js'
 import {
   getStatus,
   pollStatusUntilComplete,
@@ -50,7 +51,9 @@ import {
   getGroupingStrategy,
   getMaxVulnerabilitiesPerPr,
   getGroupingStage,
-  getUpdateContext
+  getUpdateContext,
+  getFile,
+  getFiles
 } from './input.js'
 import {
   writeJobSummary,
@@ -70,9 +73,9 @@ import {
 /**
  * Log all input configuration in a collapsible group
  */
-function logConfiguration(file: string): void {
+function logConfiguration(filePaths: string[]): void {
   core.startGroup('Input Configuration')
-  core.info(`File: ${file}`)
+  core.info(`Files: ${filePaths.join(', ')}`)
   core.info(`API URL: ${getApiUrl()}`)
   core.info(`Processing Mode: ${getMode()}`)
   core.info(`Use Triage CC: ${getUseTriageCc()}`)
@@ -182,7 +185,8 @@ export async function run(): Promise<void> {
     // Silently ignore - version check is purely informational
   })
 
-  const file: string = core.getInput('file')
+  const file: string = getFile()
+  const files: string = getFiles()
   const isDebug = getDebug()
 
   // Polling configuration for status checks (from constants.ts)
@@ -190,7 +194,8 @@ export async function run(): Promise<void> {
   const intervalCheck = PollingConfig.INTERVAL_CHECK_MS
   const retries = PollingConfig.MAX_RETRIES
 
-  let fileBuffer: Buffer
+  let inputFiles: SastInputFile[]
+  let filePaths: string[] = []
   let submitOutput: SubmitRunOutput
   let finalProcessTracking: RunProcessTracking | null = null
   let finalSummary: RunSummary | null = null
@@ -200,6 +205,8 @@ export async function run(): Promise<void> {
   let monitoringIndeterminate = false
 
   try {
+    filePaths = resolveInputFilePaths(file, files)
+
     // Display AppSecAI branding at run start
     core.info('')
     core.info(getConsoleBranding())
@@ -211,7 +218,7 @@ export async function run(): Promise<void> {
 
     // Log configuration in collapsible group only if debug is enabled
     if (isDebug) {
-      logConfiguration(file)
+      logConfiguration(filePaths)
     }
 
     if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
@@ -221,11 +228,13 @@ export async function run(): Promise<void> {
       return
     }
 
-    // Step 1: Read the file
-    core.startGroup(`File Processing (${file})`)
+    // Step 1: Read the file inputs
+    core.startGroup(
+      `File Processing (${filePaths.length} file${filePaths.length === 1 ? '' : 's'})`
+    )
     try {
-      fileBuffer = await readFile(file)
-      core.info(`Successfully read file: ${file}`)
+      inputFiles = await readInputFiles(filePaths)
+      core.info(`Successfully read files: ${filePaths.join(', ')}`)
     } catch (error) {
       core.debug(`Error reading file: ${error}.`)
       core.endGroup()
@@ -241,7 +250,7 @@ export async function run(): Promise<void> {
     }, intervalCheck)
 
     try {
-      submitOutput = await submitRun(fileBuffer, file)
+      submitOutput = await submitRun(inputFiles)
       core.info(submitOutput.message)
     } catch (error) {
       core.debug(`Error submit run ${error}`)
@@ -311,16 +320,16 @@ export async function run(): Promise<void> {
       const err = error as NodeJS.ErrnoException
       switch (err.code) {
         case 'ENOENT':
-          errorMessage = `File not found: ${file}. Please check if the file path is correct and the file exists.`
+          errorMessage = `File not found. Please check if every file path is correct and exists.`
           break
         case 'ENODATA':
-          errorMessage = `File is empty or could not be read: ${file}. Please check if the file contains data.`
+          errorMessage = `File is empty or could not be read. Please check if every file contains data.`
           break
         case 'EINVAL':
           errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv`
           break
         default:
-          errorMessage = `An error occurred while processing the file: ${file}. Please verify the file is accessible and properly formatted.`
+          errorMessage = `An error occurred while processing files: ${filePaths.join(', ')}. Please verify each file is accessible and properly formatted.`
       }
 
       errorMessage = `${errorMessage} Aborting process.`
