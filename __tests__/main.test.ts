@@ -7,7 +7,12 @@
  */
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core'
-import { fileExists, readFile } from '../__fixtures__/file'
+import {
+  fileExists,
+  readFile,
+  readInputFiles,
+  resolveInputFilePaths
+} from '../__fixtures__/file'
 import { fetchPrTitles, parsePrUrl } from '../__fixtures__/titles'
 import {
   submitRun,
@@ -27,7 +32,9 @@ import {
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('../src/file', () => ({
   fileExists,
-  readFile
+  readFile,
+  readInputFiles,
+  resolveInputFilePaths
 }))
 jest.unstable_mockModule('../src/service', () => ({
   submitRun,
@@ -61,12 +68,30 @@ describe('main.ts', () => {
     delete process.env.INPUT_API_URL
     delete process.env.INPUT_TOKEN
     // Set the action's inputs as return values from core.getInput().
-    core.getInput.mockImplementation(() => 'some_file.json')
+    core.getInput.mockImplementation((name: string) => {
+      if (name === 'file') return 'some_file.json'
+      if (name === 'files') return ''
+      return ''
+    })
     readFile.mockImplementation((filePath: string) => {
       const jsonData = JSON.stringify({ key: filePath })
       const inputBuffer = Buffer.from(jsonData)
       return Promise.resolve(inputBuffer)
     })
+    resolveInputFilePaths.mockImplementation((file: string, files: string) =>
+      (files || file)
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+    readInputFiles.mockImplementation(async (filePaths: string[]) =>
+      Promise.all(
+        filePaths.map(async (filePath) => ({
+          path: filePath,
+          buffer: await readFile(filePath)
+        }))
+      )
+    )
     submitRun.mockImplementation(() =>
       Promise.resolve({
         message: 'This was the received file: some_file.json',
@@ -121,10 +146,9 @@ describe('main.ts', () => {
     it('should process file and call submitRun with correct data', async () => {
       await run()
 
-      expect(submitRun).toHaveBeenCalledWith(
-        expect.any(Buffer),
-        'some_file.json'
-      )
+      expect(submitRun).toHaveBeenCalledWith([
+        { path: 'some_file.json', buffer: expect.any(Buffer) }
+      ])
     })
 
     it('should fall back to fetching PR titles when backend title maps are absent', async () => {
@@ -248,7 +272,7 @@ describe('main.ts', () => {
       await run()
 
       expect(core.error).toHaveBeenCalledWith(
-        'File not found: some_file.json. Please check if the file path is correct and the file exists. Aborting process.'
+        'File not found. Please check if every file path is correct and exists. Aborting process.'
       )
       expect(core.setFailed).toHaveBeenCalledWith(expect.any(String))
     })
@@ -262,7 +286,7 @@ describe('main.ts', () => {
       await run()
 
       expect(core.error).toHaveBeenCalledWith(
-        'File is empty or could not be read: some_file.json. Please check if the file contains data. Aborting process.'
+        'File is empty or could not be read. Please check if every file contains data. Aborting process.'
       )
       expect(core.setFailed).toHaveBeenCalledWith(expect.any(String))
     })
