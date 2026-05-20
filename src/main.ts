@@ -10,7 +10,8 @@ import {
   getStatus,
   pollStatusUntilComplete,
   submitRun,
-  finalizeRun
+  finalizeRun,
+  isSummaryClassificationComplete
 } from './service.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
@@ -355,10 +356,28 @@ export async function run(): Promise<void> {
         organizationId: store.organizationId
       })
 
-      // Use finalize summary if we don't already have one from polling
-      if (finalizeSummary && !finalSummary) {
+      // Prefer the forced finalize summary over polling snapshots so the job
+      // summary reflects the final server-side aggregation.
+      if (finalizeSummary) {
         finalSummary = finalizeSummary
       }
+    }
+
+    if (
+      success &&
+      finalSummary &&
+      !isSummaryClassificationComplete(finalSummary)
+    ) {
+      success = false
+      const classifiedCount =
+        finalSummary.true_positives +
+        finalSummary.false_positives +
+        (finalSummary.needs_manual_review_count ?? 0)
+      const errorMessage =
+        `Run summary is incomplete: classified ${classifiedCount}/` +
+        `${finalSummary.total_vulnerabilities} vulnerabilities.`
+      core.error(errorMessage)
+      core.setFailed(errorMessage)
     }
 
     if (success && store.id && monitoringIndeterminate && !finalSummary) {

@@ -72902,6 +72902,14 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function getClassifiedVulnerabilityCount(summary) {
+    return (summary.true_positives +
+        summary.false_positives +
+        (summary.needs_manual_review_count ?? 0));
+}
+function isSummaryClassificationComplete(summary) {
+    return (getClassifiedVulnerabilityCount(summary) >= summary.total_vulnerabilities);
+}
 /**
  * Finalize a run and retrieve the summary.
  * This triggers on-demand summary computation on the backend and returns the results.
@@ -72921,6 +72929,7 @@ async function finalizeRun(runId, options = {}) {
     const url = organizationId
         ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`)
         : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`);
+    url.searchParams.set('force', 'true');
     const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
     coreExports.debug(`Calling finalize API: POST ${url.pathname}${url.search}`);
     const setup = {
@@ -72949,6 +72958,19 @@ async function finalizeRun(runId, options = {}) {
             }
             const summary = parsed.data;
             lastSummary = summary;
+            const classifiedCount = getClassifiedVulnerabilityCount(summary);
+            if (!isSummaryClassificationComplete(summary)) {
+                coreExports.info(`${prefixLabel}: Summary classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities. ` +
+                    `Retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`);
+                if (attempt < maxRetries) {
+                    await delay(retryDelay);
+                    continue;
+                }
+                coreExports.warning(`${prefixLabel}: Summary is incomplete after ${maxRetries} attempts. ` +
+                    `Classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities.`);
+                logSummary(summary);
+                return summary;
+            }
             // If we have an expected count, verify it matches
             if (expectedPrCount !== undefined && summary.pr_count < expectedPrCount) {
                 coreExports.info(`${prefixLabel}: Summary shows ${summary.pr_count} PRs, expected ${expectedPrCount}. ` +
@@ -76567,10 +76589,23 @@ async function run() {
                 expectedPrCount,
                 organizationId: store.organizationId
             });
-            // Use finalize summary if we don't already have one from polling
-            if (finalizeSummary && !finalSummary) {
+            // Prefer the forced finalize summary over polling snapshots so the job
+            // summary reflects the final server-side aggregation.
+            if (finalizeSummary) {
                 finalSummary = finalizeSummary;
             }
+        }
+        if (success &&
+            finalSummary &&
+            !isSummaryClassificationComplete(finalSummary)) {
+            success = false;
+            const classifiedCount = finalSummary.true_positives +
+                finalSummary.false_positives +
+                (finalSummary.needs_manual_review_count ?? 0);
+            const errorMessage = `Run summary is incomplete: classified ${classifiedCount}/` +
+                `${finalSummary.total_vulnerabilities} vulnerabilities.`;
+            coreExports.error(errorMessage);
+            coreExports.setFailed(errorMessage);
         }
         if (success && store.id && monitoringIndeterminate && !finalSummary) {
             success = false;
