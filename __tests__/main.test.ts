@@ -18,7 +18,8 @@ import {
   submitRun,
   getStatus,
   pollStatusUntilComplete,
-  finalizeRun
+  finalizeRun,
+  isSummaryClassificationComplete
 } from '../__fixtures__/service'
 import store from '../src/store'
 import {
@@ -40,7 +41,8 @@ jest.unstable_mockModule('../src/service', () => ({
   submitRun,
   getStatus,
   pollStatusUntilComplete,
-  finalizeRun
+  finalizeRun,
+  isSummaryClassificationComplete
 }))
 jest.unstable_mockModule('../src/titles', () => ({
   fetchPrTitles,
@@ -109,6 +111,7 @@ describe('main.ts', () => {
       Promise.resolve({ status: 'completed' })
     )
     finalizeRun.mockImplementation(() => Promise.resolve(null))
+    isSummaryClassificationComplete.mockReturnValue(true)
     fetchPrTitles.mockResolvedValue(new Map())
     generateRegressionEvidence.mockResolvedValue({
       artifact: {
@@ -455,7 +458,7 @@ describe('main.ts', () => {
       })
     })
 
-    it('should not override existing summary from polling with finalizeRun summary', async () => {
+    it('should prefer forced finalize summary over polling summary', async () => {
       const pollingSummary = {
         total_vulnerabilities: 20,
         true_positives: 15,
@@ -493,10 +496,12 @@ describe('main.ts', () => {
 
       await run()
 
-      // finalizeRun should still be called
       expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
         expectedPrCount: undefined
       })
+      expect(isSummaryClassificationComplete).toHaveBeenCalledWith(
+        finalizeSummary
+      )
     })
 
     it('should continue execution when finalizeRun returns null', async () => {
@@ -513,6 +518,33 @@ describe('main.ts', () => {
       expect(core.setOutput).toHaveBeenCalledWith(
         'message',
         'Processing completed successfully.'
+      )
+    })
+
+    it('fails when final summary classification is incomplete', async () => {
+      const incompleteSummary = {
+        total_vulnerabilities: 6,
+        true_positives: 0,
+        false_positives: 3,
+        needs_manual_review_count: 0,
+        handled_error_count: 0,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 0,
+        pr_urls: [],
+        pr_count: 0,
+        issue_urls: []
+      }
+      finalizeRun
+        .mockClear()
+        .mockImplementationOnce(() => Promise.resolve(incompleteSummary))
+      isSummaryClassificationComplete.mockReturnValueOnce(false)
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Run summary is incomplete: classified 3/6 vulnerabilities.'
       )
     })
 
