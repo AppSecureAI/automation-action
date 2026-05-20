@@ -1709,6 +1709,41 @@ describe('service.ts', () => {
         )
       })
 
+      it('treats terminal skipped vulnerabilities as complete classifications', async () => {
+        const completeSummary = {
+          total_vulnerabilities: 26,
+          true_positives: 0,
+          false_positives: 1,
+          needs_manual_review_count: 0,
+          handled_error_count: 0,
+          has_handled_errors: false,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 0,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0,
+          skipped_count: 3,
+          dedup_skipped_count: 22,
+          validation_failure_count: 0,
+          remediation_with_warnings: 0
+        }
+
+        axios.post.mockResolvedValue({ data: completeSummary })
+
+        const result = await finalizeRun('test-run-id', {
+          retryDelay: testRetryDelay
+        })
+
+        expect(result).toEqual(completeSummary)
+        expect(axios.post).toHaveBeenCalledTimes(1)
+        expect(core.info).toHaveBeenCalledWith(
+          '[FINALIZE]: Summary computed successfully'
+        )
+      })
+
       it('returns best summary after max retries when count never matches', async () => {
         const incompleteSummary = {
           total_vulnerabilities: 10,

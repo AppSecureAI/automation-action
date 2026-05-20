@@ -72905,7 +72905,9 @@ function delay(ms) {
 function getClassifiedVulnerabilityCount(summary) {
     return (summary.true_positives +
         summary.false_positives +
-        (summary.needs_manual_review_count ?? 0));
+        (summary.needs_manual_review_count ?? 0) +
+        (summary.skipped_count ?? 0) +
+        (summary.dedup_skipped_count ?? 0));
 }
 function isSummaryClassificationComplete(summary) {
     return (getClassifiedVulnerabilityCount(summary) >= summary.total_vulnerabilities);
