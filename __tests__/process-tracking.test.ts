@@ -252,7 +252,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (6 fixes generated, 2 issues created (security passed, functional/quality checks failed))'
+        '✅ Remediation: Completed (6 fixes generated, 2 security-passed warnings (functional/quality checks failed))'
       )
     })
 
@@ -294,7 +294,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (8 fixes generated, 2 issues created (security passed, functional/quality checks failed), 1 skipped (security not resolved), 1 errors)'
+        '✅ Remediation: Completed (8 fixes generated, 2 security-passed warnings (functional/quality checks failed), 1 skipped (security not resolved), 1 errors)'
       )
     })
 

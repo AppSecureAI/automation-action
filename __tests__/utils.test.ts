@@ -805,7 +805,7 @@ describe('utils.ts', () => {
       expect(result).toContain('5 fixes generated')
       expect(result).toContain('2 need additional context')
       expect(result).toContain(
-        '1 issues created (security passed, functional/quality checks failed)'
+        '1 security-passed warnings (functional/quality checks failed)'
       )
       expect(result).toContain('1 skipped (security not resolved)')
     })
@@ -879,7 +879,7 @@ describe('utils.ts', () => {
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain('Need Additional Context: 2')
       expect(result).toContain(
-        'Issues Created: 5 (security passed, functional/quality checks failed)'
+        'Security-Passed Warnings: 5 (functional/quality checks failed)'
       )
       expect(result).toContain('Skipped (Security Not Resolved): 3')
     })
@@ -891,6 +891,7 @@ describe('utils.ts', () => {
       expect(result).toContain('Failed: 25')
       expect(result).not.toContain('Need Additional Context')
       expect(result).not.toContain('Issues Created:')
+      expect(result).not.toContain('Security-Passed Warnings:')
       expect(result).not.toContain('Skipped (Security Not Resolved)')
     })
 
@@ -900,6 +901,7 @@ describe('utils.ts', () => {
       expect(result).toContain('Successful: 75 (75.0%)')
       expect(result).not.toContain('Need Additional Context')
       expect(result).not.toContain('Issues Created:')
+      expect(result).not.toContain('Security-Passed Warnings:')
       expect(result).not.toContain('Skipped (Security Not Resolved)')
     })
 
@@ -911,7 +913,7 @@ describe('utils.ts', () => {
       }
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain(
-        'Issues Created: 2 (security passed, functional/quality checks failed)'
+        'Security-Passed Warnings: 2 (functional/quality checks failed)'
       )
       expect(result).not.toContain('Need Additional Context')
       expect(result).not.toContain('Skipped (Security Not Resolved)')
@@ -961,7 +963,7 @@ describe('utils.ts', () => {
       expect(result).toContain('Remediation Results')
       expect(result).toContain('Need Additional Context: 5')
       expect(result).toContain(
-        'Issues Created: 3 (security passed, functional/quality checks failed)'
+        'Security-Passed Warnings: 3 (functional/quality checks failed)'
       )
       expect(result).toContain('Skipped (Security Not Resolved): 2')
     })

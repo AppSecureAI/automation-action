@@ -576,7 +576,7 @@ export function formatStageStatus(
       const warningCount = status.self_validation_warning_count || 0
       if (warningCount > 0) {
         details.push(
-          `${warningCount} issues created (security passed, functional/quality checks failed)`
+          `${warningCount} security-passed warnings (functional/quality checks failed)`
         )
       }
       // Show self-validation failure count (validation failed - issue created instead of PR)
@@ -822,7 +822,7 @@ function formatSummaryDetails(
     const warningCount = status.self_validation_warning_count || 0
     if (warningCount > 0) {
       parts.push(
-        `${warningCount} issues (security passed, functional/quality checks failed)`
+        `${warningCount} security-passed warnings (functional/quality checks failed)`
       )
     }
     const failureCount = status.self_validation_failure_count || 0
@@ -1391,7 +1391,7 @@ export function formatRemediationResults(
       }
       if (warningCount > 0) {
         lines.push(
-          `├─ Issues Created: ${warningCount} (security passed, functional/quality checks failed)`
+          `├─ Security-Passed Warnings: ${warningCount} (functional/quality checks failed)`
         )
       }
       if (failureCount > 0) {
