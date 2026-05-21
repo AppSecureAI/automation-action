@@ -62,6 +62,7 @@ export const RunSummarySchema = z.object({
   pr_urls: z.array(z.string()).default([]),
   pr_titles: z.record(z.string()).optional(),
   pr_count: z.number().default(0),
+  customer_visible_pr_count: z.number().optional(),
   issue_urls: z.array(z.string()).default([]),
   issue_titles: z.record(z.string()).nullable().optional(),
   issue_titles_by_url: z.record(z.string()).nullable().optional(),
@@ -71,7 +72,24 @@ export const RunSummarySchema = z.object({
   issues_multistep_cwe: z.number().optional(),
   dedup_skipped_count: z.number().default(0),
   validation_failure_count: z.number().default(0),
-  remediation_with_warnings: z.number().default(0)
+  scope_validation_failure_count: z.number().optional(),
+  remediation_with_warnings: z.number().default(0),
+  internal_non_pushed_attempts: z.number().optional(),
+  internal_non_pushed_findings: z.number().optional(),
+  vendor_excluded_count: z.number().optional(),
+  vendor_exclusion_count: z.number().optional(),
+  manual_exclusion_count: z.number().optional(),
+  triaged_false_positive_count: z.number().optional(),
+  scanner_correlated_duplicate_count: z.number().optional(),
+  correlated_duplicate_count: z.number().optional(),
+  remediation_validation_failed_count: z.number().optional(),
+  dropped_from_pr_count: z.number().optional(),
+  remediation_unit_failure_count: z.number().optional(),
+  push_failed_count: z.number().optional(),
+  github_push_failure_count: z.number().optional(),
+  not_attempted_count: z.number().optional(),
+  outcome_breakdown: z.record(z.number()).optional(),
+  push_outcome_breakdown: z.record(z.number()).optional()
 })
 
 /**
@@ -136,12 +154,14 @@ export const ProcessStatusSchema = z.object({
   total_items: z.number().default(0),
   processed_items: z.number().default(0),
   success_count: z.number().default(0), // Successfully processed items (includes warnings)
+  customer_visible_pr_count: z.number().optional(), // Customer-visible PRs created for push status
   error_count: z.number().default(0), // Actual processing exceptions
   false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
   needs_manual_review_count: z.number().default(0), // Items routed to manual review (triage only)
   handled_error_count: z.number().default(0), // Handled errors routed to manual review (triage only)
   self_validation_warning_count: z.number().default(0), // Issues created (validation warnings - security passed, other checks failed)
   self_validation_failure_count: z.number().default(0), // Skipped (security not resolved)
+  scope_validation_failure_count: z.number().default(0), // Deterministic scope validation failures preventing PR creation
   additional_context_required_count: z.number().default(0) // PRs with 'Additional Context Required' prefix
 })
 

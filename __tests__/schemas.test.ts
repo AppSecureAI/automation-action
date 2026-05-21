@@ -327,6 +327,53 @@ describe('schemas.ts', () => {
       expect(parsed.data?.validation_failure_count).toBe(1)
       expect(parsed.data?.remediation_with_warnings).toBe(3)
     })
+
+    test('preserves Product run outcome taxonomy fields', () => {
+      const parsed = RunSummarySchema.safeParse({
+        total_vulnerabilities: 8,
+        true_positives: 4,
+        false_positives: 3,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 4,
+        pr_urls: [],
+        pr_count: 0,
+        customer_visible_pr_count: 0,
+        issue_urls: [],
+        issue_count: 0,
+        vendor_exclusion_count: 1,
+        manual_exclusion_count: 1,
+        triaged_false_positive_count: 3,
+        correlated_duplicate_count: 2,
+        remediation_validation_failed_count: 4,
+        dropped_from_pr_count: 1,
+        push_failed_count: 0,
+        not_attempted_count: 0,
+        outcome_breakdown: {
+          false_positive: 3,
+          duplicate_or_correlated: 2,
+          validation_failed: 4,
+          dropped_from_pr: 1,
+          push_failed: 0
+        },
+        push_outcome_breakdown: {
+          pr_created: 0,
+          validation_failed: 4,
+          dropped_from_pr: 1,
+          github_push_failed: 0
+        }
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.vendor_exclusion_count).toBe(1)
+      expect(parsed.data?.correlated_duplicate_count).toBe(2)
+      expect(parsed.data?.remediation_validation_failed_count).toBe(4)
+      expect(parsed.data?.dropped_from_pr_count).toBe(1)
+      expect(parsed.data?.push_failed_count).toBe(0)
+      expect(parsed.data?.outcome_breakdown?.validation_failed).toBe(4)
+      expect(parsed.data?.push_outcome_breakdown?.github_push_failed).toBe(0)
+    })
   })
 
   describe('ResponseStatusSchema', () => {

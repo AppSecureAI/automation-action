@@ -18,8 +18,7 @@ import {
   submitRun,
   getStatus,
   pollStatusUntilComplete,
-  finalizeRun,
-  isSummaryClassificationComplete
+  finalizeRun
 } from '../__fixtures__/service'
 import store from '../src/store'
 import {
@@ -41,8 +40,7 @@ jest.unstable_mockModule('../src/service', () => ({
   submitRun,
   getStatus,
   pollStatusUntilComplete,
-  finalizeRun,
-  isSummaryClassificationComplete
+  finalizeRun
 }))
 jest.unstable_mockModule('../src/titles', () => ({
   fetchPrTitles,
@@ -111,7 +109,6 @@ describe('main.ts', () => {
       Promise.resolve({ status: 'completed' })
     )
     finalizeRun.mockImplementation(() => Promise.resolve(null))
-    isSummaryClassificationComplete.mockReturnValue(true)
     fetchPrTitles.mockResolvedValue(new Map())
     generateRegressionEvidence.mockResolvedValue({
       artifact: {
@@ -222,7 +219,7 @@ describe('main.ts', () => {
 
       expect(pollStatusUntilComplete).toHaveBeenCalledWith(
         expect.any(Function),
-        100,
+        240,
         30000
       )
     })
@@ -366,10 +363,17 @@ describe('main.ts', () => {
       )
     })
 
-    it('should not fail when polling is indeterminate but finalize returns a summary', async () => {
+    it('should fail and skip finalize when polling limit leaves the run active', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.resolve(null)
       })
+      getStatus.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'in_progress',
+          processTracking: null,
+          summary: null
+        })
+      )
       finalizeRun.mockClear().mockImplementationOnce(() =>
         Promise.resolve({
           total_vulnerabilities: 0,
@@ -388,6 +392,32 @@ describe('main.ts', () => {
 
       await run()
 
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(core.warning).toHaveBeenCalledWith(
+        '[Analysis Processing Status] Polling limit reached and final status check returned "in_progress". Skipping summary finalization because the server run is not known to be terminal.'
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Run monitoring became indeterminate and final summary data was unavailable. The server may have been unreachable or degraded while the run was still in progress.'
+      )
+    })
+
+    it('should finalize when polling limit races with a completed final status check', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
+        return Promise.resolve(null)
+      })
+      getStatus.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'completed',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
+        expectedPrCount: undefined
+      })
       expect(core.setFailed).not.toHaveBeenCalled()
     })
   })
@@ -404,16 +434,14 @@ describe('main.ts', () => {
       )
     })
 
-    it('should call finalizeRun in finally block even on error', async () => {
+    it('should skip finalizeRun when polling fails and the final status check fails', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.reject(new Error('Polling failed'))
       })
 
       await run()
 
-      expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
-        expectedPrCount: undefined
-      })
+      expect(finalizeRun).not.toHaveBeenCalled()
     })
 
     it('should not call finalizeRun when no run_id exists', async () => {
@@ -458,7 +486,7 @@ describe('main.ts', () => {
       })
     })
 
-    it('should prefer forced finalize summary over polling summary', async () => {
+    it('should not override existing summary from polling with finalizeRun summary', async () => {
       const pollingSummary = {
         total_vulnerabilities: 20,
         true_positives: 15,
@@ -496,12 +524,11 @@ describe('main.ts', () => {
 
       await run()
 
+      // finalizeRun should still be called
       expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
-        expectedPrCount: undefined
+        expectedPrCount: 0,
+        organizationId: undefined
       })
-      expect(isSummaryClassificationComplete).toHaveBeenCalledWith(
-        finalizeSummary
-      )
     })
 
     it('should continue execution when finalizeRun returns null', async () => {
@@ -521,34 +548,7 @@ describe('main.ts', () => {
       )
     })
 
-    it('fails when final summary classification is incomplete', async () => {
-      const incompleteSummary = {
-        total_vulnerabilities: 6,
-        true_positives: 0,
-        false_positives: 3,
-        needs_manual_review_count: 0,
-        handled_error_count: 0,
-        cwe_breakdown: {},
-        severity_breakdown: {},
-        remediation_success: 0,
-        remediation_failed: 0,
-        pr_urls: [],
-        pr_count: 0,
-        issue_urls: []
-      }
-      finalizeRun
-        .mockClear()
-        .mockImplementationOnce(() => Promise.resolve(incompleteSummary))
-      isSummaryClassificationComplete.mockReturnValueOnce(false)
-
-      await run()
-
-      expect(core.setFailed).toHaveBeenCalledWith(
-        'Run summary is incomplete: classified 3/6 vulnerabilities.'
-      )
-    })
-
-    it('should pass expectedPrCount from push_status.success_count', async () => {
+    it('should pass expectedPrCount from push_status.success_count when no summary count is available', async () => {
       const processTracking = {
         push_status: {
           status: 'completed',

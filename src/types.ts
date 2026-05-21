@@ -264,6 +264,8 @@ export interface ProcessStatus {
   processed_items: number
   /** Successfully processed items (includes warnings). Defaults to 0 via Zod schema. */
   success_count: number
+  /** Customer-visible PRs created for push status, when provided by Product. */
+  customer_visible_pr_count?: number
   /** Actual processing exceptions. Defaults to 0 via Zod schema. */
   error_count: number
   /** Items triaged as false positives (triage only). Defaults to 0. */
@@ -276,6 +278,8 @@ export interface ProcessStatus {
   self_validation_warning_count: number
   /** Skipped vulnerabilities (security not resolved). Defaults to 0. */
   self_validation_failure_count: number
+  /** Deterministic scope validation failures preventing PR creation. Defaults to 0. */
+  scope_validation_failure_count?: number
   /** PRs created with 'Additional Context Required' prefix (multi-step CWE). Defaults to 0. */
   additional_context_required_count: number
 }
@@ -338,6 +342,8 @@ export interface RunSummary {
   pr_titles?: Record<string, string>
   /** Total number of pull requests created */
   pr_count: number
+  /** Customer-visible pull requests created. Prefer this for customer-facing counts when present. */
+  customer_visible_pr_count?: number
   /** List of GitHub Issue URLs created for validation warnings */
   issue_urls: string[]
   /** Optional map of Issue URL to title (legacy field, use issue_titles_by_url for new code) */
@@ -356,8 +362,42 @@ export interface RunSummary {
   dedup_skipped_count?: number
   /** Number of remediation attempts that failed validation */
   validation_failure_count?: number
+  /** Number of remediation attempts rejected by deterministic scope validation */
+  scope_validation_failure_count?: number
   /** Number of remediation attempts completed with validation warnings */
   remediation_with_warnings?: number
+  /** Number of internal remediation units intentionally retained without a customer artifact */
+  internal_non_pushed_attempts?: number
+  /** Number of findings represented by internal remediation units without a customer artifact */
+  internal_non_pushed_findings?: number
+  /** Number of vendor/excluded findings */
+  vendor_excluded_count?: number
+  /** Number of findings excluded by repository vendor/third-party path policy */
+  vendor_exclusion_count?: number
+  /** Number of findings excluded by explicit customer or manual policy */
+  manual_exclusion_count?: number
+  /** Number of findings triaged as false positives and therefore not remediated */
+  triaged_false_positive_count?: number
+  /** Number of scanner-correlated or deduplicated findings */
+  scanner_correlated_duplicate_count?: number
+  /** Number of raw scanner findings collapsed or marked as correlated duplicates */
+  correlated_duplicate_count?: number
+  /** Number of remediation attempts that failed validation and were not pushed */
+  remediation_validation_failed_count?: number
+  /** Number of remediated findings deliberately dropped from PR output */
+  dropped_from_pr_count?: number
+  /** Number of failed remediation units */
+  remediation_unit_failure_count?: number
+  /** Number of actual push/API failures while creating GitHub artifacts */
+  push_failed_count?: number
+  /** Number of actual GitHub push/API failures */
+  github_push_failure_count?: number
+  /** Number of true-positive findings that were not attempted for remediation or push */
+  not_attempted_count?: number
+  /** Typed customer-readable run outcome counts */
+  outcome_breakdown?: Record<string, number>
+  /** Typed push/remediation delivery outcome counts */
+  push_outcome_breakdown?: Record<string, number>
 }
 
 /**

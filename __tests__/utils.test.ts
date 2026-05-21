@@ -513,6 +513,39 @@ describe('utils.ts', () => {
       const result = formatFinalResults(summary, null, 5000)
       expect(result).toContain('Run ID: N/A')
     })
+
+    it('renders typed taxonomy and no customer-visible PR outcome', () => {
+      const summary = {
+        total_vulnerabilities: 8,
+        true_positives: 4,
+        false_positives: 3,
+        needs_manual_review_count: 1,
+        cwe_breakdown: {},
+        severity_breakdown: {},
+        remediation_success: 0,
+        remediation_failed: 4,
+        pr_urls: [],
+        pr_count: 0,
+        customer_visible_pr_count: 0,
+        issue_urls: [],
+        scope_validation_failure_count: 4,
+        internal_non_pushed_attempts: 4,
+        internal_non_pushed_findings: 4,
+        vendor_excluded_count: 2,
+        scanner_correlated_duplicate_count: 1
+      }
+      const result = formatFinalResults(summary, 'run-377-378', 30000)
+
+      expect(result).toContain('Outcome Breakdown')
+      expect(result).toContain('2 vendor/excluded')
+      expect(result).toContain('3 false positives')
+      expect(result).toContain('1 duplicates/correlated')
+      expect(result).toContain('1 manual review')
+      expect(result).toContain('4 scope validation failures')
+      expect(result).toContain('Pull Requests (0)')
+      expect(result).toContain('No customer-visible PRs created')
+      expect(result).not.toContain('Failed - unknown error')
+    })
   })
 
   describe('logSummary', () => {

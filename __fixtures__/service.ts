@@ -12,5 +12,3 @@ export const pollStatusUntilComplete =
 export const finalizeRun =
   jest.fn<typeof import('../src/service.js').finalizeRun>()
 export const delay = jest.fn<typeof import('../src/service.js').delay>()
-export const isSummaryClassificationComplete =
-  jest.fn<typeof import('../src/service.js').isSummaryClassificationComplete>()

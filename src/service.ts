@@ -578,7 +578,12 @@ export async function getStatus(
 
       // Log process tracking information if available (Issue #181)
       if (processTracking) {
-        logProcessTracking(processTracking, prefixLabel)
+        logProcessTracking(
+          processTracking,
+          prefixLabel,
+          summary,
+          canonicalRunStatus
+        )
       }
 
       // Note: dashboard_url may be null from Medusa contract; rendering layer handles null gracefully
@@ -999,22 +1004,6 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export function getClassifiedVulnerabilityCount(summary: RunSummary): number {
-  return (
-    summary.true_positives +
-    summary.false_positives +
-    (summary.needs_manual_review_count ?? 0) +
-    (summary.skipped_count ?? 0) +
-    (summary.dedup_skipped_count ?? 0)
-  )
-}
-
-export function isSummaryClassificationComplete(summary: RunSummary): boolean {
-  return (
-    getClassifiedVulnerabilityCount(summary) >= summary.total_vulnerabilities
-  )
-}
-
 /**
  * Finalize a run and retrieve the summary.
  * This triggers on-demand summary computation on the backend and returns the results.
@@ -1044,7 +1033,6 @@ export async function finalizeRun(
         `${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`
       )
     : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`)
-  url.searchParams.set('force', 'true')
   const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`
 
   core.debug(`Calling finalize API: POST ${url.pathname}${url.search}`)
@@ -1082,24 +1070,6 @@ export async function finalizeRun(
 
       const summary = parsed.data
       lastSummary = summary
-      const classifiedCount = getClassifiedVulnerabilityCount(summary)
-
-      if (!isSummaryClassificationComplete(summary)) {
-        core.info(
-          `${prefixLabel}: Summary classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities. ` +
-            `Retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`
-        )
-        if (attempt < maxRetries) {
-          await delay(retryDelay)
-          continue
-        }
-        core.warning(
-          `${prefixLabel}: Summary is incomplete after ${maxRetries} attempts. ` +
-            `Classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities.`
-        )
-        logSummary(summary)
-        return summary
-      }
 
       // If we have an expected count, verify it matches
       if (expectedPrCount !== undefined && summary.pr_count < expectedPrCount) {

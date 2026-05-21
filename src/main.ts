@@ -10,8 +10,7 @@ import {
   getStatus,
   pollStatusUntilComplete,
   submitRun,
-  finalizeRun,
-  isSummaryClassificationComplete
+  finalizeRun
 } from './service.js'
 import store from './store.js'
 import { SubmitRunError } from './errors.js'
@@ -204,6 +203,7 @@ export async function run(): Promise<void> {
   const startTime = Date.now()
   let success = false
   let monitoringIndeterminate = false
+  let runStillActiveAfterPollingLimit = false
 
   try {
     filePaths = resolveInputFilePaths(file, files)
@@ -287,7 +287,43 @@ export async function run(): Promise<void> {
           pollDelay
         )
         if (!pollResult) {
-          monitoringIndeterminate = true
+          try {
+            const finalStatus = await getRunStatus()
+            if (finalStatus.status === 'completed') {
+              if (finalStatus.processTracking) {
+                finalProcessTracking =
+                  finalStatus.processTracking as RunProcessTracking
+              }
+              if (finalStatus.summary) {
+                finalSummary = finalStatus.summary as RunSummary
+              }
+              if (finalStatus.dashboard_url) {
+                finalDashboardUrl = finalStatus.dashboard_url
+              }
+            } else {
+              monitoringIndeterminate = true
+              runStillActiveAfterPollingLimit =
+                finalStatus.status !== 'failed' &&
+                finalStatus.status !== 'network_error'
+              const statusDescription =
+                finalStatus.status || 'unknown non-terminal status'
+              core.warning(
+                `[${LogLabels.RUN_STATUS}] Polling limit reached and final status check returned "${statusDescription}". ` +
+                  'Skipping summary finalization because the server run is not known to be terminal.'
+              )
+            }
+          } catch (finalStatusError) {
+            monitoringIndeterminate = true
+            runStillActiveAfterPollingLimit = true
+            const errorMessage =
+              finalStatusError instanceof Error
+                ? finalStatusError.message
+                : String(finalStatusError)
+            core.warning(
+              `[${LogLabels.RUN_STATUS}] Polling limit reached and final status check failed: ${errorMessage}. ` +
+                'Skipping summary finalization because the server run may still be active.'
+            )
+          }
         }
         // Capture final process tracking and summary for job summary
         // Type assertions are safe here because Zod schema validation ensures complete data
@@ -303,6 +339,7 @@ export async function run(): Promise<void> {
         }
       } catch (pollError) {
         monitoringIndeterminate = true
+        runStillActiveAfterPollingLimit = true
         // This is a "soft" failure. Log a warning but let the process complete
         core.warning(
           `[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`
@@ -345,39 +382,29 @@ export async function run(): Promise<void> {
   } finally {
     // Always try to finalize and get summary when we have a run ID
     // This ensures summary data is available even on timeout or failure
-    if (store.id) {
+    if (store.id && !runStillActiveAfterPollingLimit) {
       core.info('Finalizing run and fetching summary...')
 
-      // Get expected PR count from push_status.success_count to verify summary completeness
+      // Get expected customer-visible PR count to verify summary completeness
       // This addresses the race condition where summary may be computed before all PRs are persisted
-      const expectedPrCount = finalProcessTracking?.push_status?.success_count
+      const expectedPrCount =
+        finalSummary?.customer_visible_pr_count ??
+        finalSummary?.pr_count ??
+        finalProcessTracking?.push_status?.customer_visible_pr_count ??
+        finalProcessTracking?.push_status?.success_count
       const finalizeSummary = await finalizeRun(store.id, {
         expectedPrCount,
         organizationId: store.organizationId
       })
 
-      // Prefer the forced finalize summary over polling snapshots so the job
-      // summary reflects the final server-side aggregation.
-      if (finalizeSummary) {
+      // Use finalize summary if we don't already have one from polling
+      if (finalizeSummary && !finalSummary) {
         finalSummary = finalizeSummary
       }
-    }
-
-    if (
-      success &&
-      finalSummary &&
-      !isSummaryClassificationComplete(finalSummary)
-    ) {
-      success = false
-      const classifiedCount =
-        finalSummary.true_positives +
-        finalSummary.false_positives +
-        (finalSummary.needs_manual_review_count ?? 0)
-      const errorMessage =
-        `Run summary is incomplete: classified ${classifiedCount}/` +
-        `${finalSummary.total_vulnerabilities} vulnerabilities.`
-      core.error(errorMessage)
-      core.setFailed(errorMessage)
+    } else if (store.id) {
+      core.warning(
+        'Skipping final summary computation because monitoring ended before the server run reached a terminal state.'
+      )
     }
 
     if (success && store.id && monitoringIndeterminate && !finalSummary) {

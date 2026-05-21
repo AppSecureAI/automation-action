@@ -189,6 +189,33 @@ describe('formatStageStatus', () => {
       ).toBe('✅ Pull Requests: Completed (5 PRs created)')
     })
 
+    it('uses customer-visible PR count for push stage when summary provides it', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'completed',
+            progress_percentage: 100,
+            total_items: 3,
+            processed_items: 3,
+            success_count: 3,
+            error_count: 0,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            pr_count: 1,
+            customer_visible_pr_count: 1
+          }
+        )
+      ).toBe('✅ Pull Requests: Completed (1 PRs created)')
+    })
+
     it('shows fixes generated for remediation stage', () => {
       expect(
         formatStageStatus('remediation_loop', {
@@ -351,13 +378,13 @@ describe('formatStageStatus', () => {
       ).toBe('⏳ Remediation: 5/12 (42%)')
     })
 
-    it('shows "more expected" for push when remediation_loop is in_progress', () => {
+    it('shows PR and vulnerability coverage when remediation_loop is in_progress', () => {
       const remediationLoopStatus = {
         status: 'in_progress',
-        progress_percentage: 50,
-        total_items: 8,
-        processed_items: 4,
-        success_count: 4,
+        progress_percentage: 30,
+        total_items: 10,
+        processed_items: 3,
+        success_count: 3,
         error_count: 0,
         false_positive_count: 0,
         self_validation_warning_count: 0,
@@ -371,10 +398,10 @@ describe('formatStageStatus', () => {
           'push',
           {
             status: 'in_progress',
-            progress_percentage: 100,
-            total_items: 4,
-            processed_items: 4,
-            success_count: 4,
+            progress_percentage: 50,
+            total_items: 2,
+            processed_items: 1,
+            success_count: 1,
             error_count: 0,
             false_positive_count: 0,
             self_validation_warning_count: 0,
@@ -386,7 +413,52 @@ describe('formatStageStatus', () => {
           remediationLoopStatus
         )
       ).toBe(
-        '⏳ Pull Requests: 4 PRs created (more expected as remediation continues)'
+        '⏳ Pull Requests: 1 PR created (3 vulnerabilities, 7 still in remediation)'
+      )
+    })
+
+    it('does not count internal push payloads as customer-visible PR progress', () => {
+      const remediationLoopStatus = {
+        status: 'in_progress',
+        progress_percentage: 75,
+        total_items: 4,
+        processed_items: 3,
+        success_count: 0,
+        error_count: 0,
+        false_positive_count: 0,
+        self_validation_warning_count: 0,
+        self_validation_failure_count: 0,
+        scope_validation_failure_count: 3,
+        additional_context_required_count: 0,
+        needs_manual_review_count: 0,
+        handled_error_count: 0
+      }
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'in_progress',
+            progress_percentage: 50,
+            total_items: 3,
+            processed_items: 1,
+            success_count: 1,
+            error_count: 0,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          remediationLoopStatus,
+          {
+            pr_count: 0,
+            customer_visible_pr_count: 0,
+            scope_validation_failure_count: 3
+          }
+        )
+      ).toBe(
+        '⏳ Pull Requests: 0 PRs created (3 vulnerabilities, 1 still in remediation)'
       )
     })
 
@@ -485,6 +557,191 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe('❌ validate: Failed - unknown error')
+    })
+
+    it('renders terminal no-PR scope failures without unknown push failure', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 1,
+            processed_items: 1,
+            success_count: 1,
+            error_count: 1,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            pr_count: 0,
+            customer_visible_pr_count: 0,
+            scope_validation_failure_count: 1,
+            internal_non_pushed_attempts: 1
+          }
+        )
+      ).toBe(
+        '✅ Pull Requests: Completed (No customer-visible PRs created - 1 scope validation failures, 1 remediation unit failures)'
+      )
+    })
+
+    it('renders Product taxonomy fields for terminal no-PR validation failures', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 4,
+            processed_items: 4,
+            success_count: 0,
+            error_count: 4,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            total_vulnerabilities: 8,
+            true_positives: 4,
+            false_positives: 3,
+            pr_count: 0,
+            customer_visible_pr_count: 0,
+            remediation_validation_failed_count: 4,
+            dropped_from_pr_count: 1,
+            push_failed_count: 0
+          }
+        )
+      ).toBe(
+        '✅ Pull Requests: Completed (No customer-visible PRs created - 3 false positives, 4 remediation validation failures, 1 dropped from PR output)'
+      )
+    })
+
+    it('uses Product breakdown maps when top-level taxonomy fields are absent', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 4,
+            processed_items: 4,
+            success_count: 0,
+            error_count: 4,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            pr_count: 0,
+            customer_visible_pr_count: 0,
+            outcome_breakdown: {
+              duplicate_or_correlated: 2,
+              validation_failed: 4,
+              dropped_from_pr: 1
+            },
+            push_outcome_breakdown: {
+              github_push_failed: 0
+            }
+          }
+        )
+      ).toBe(
+        '✅ Pull Requests: Completed (No customer-visible PRs created - 2 duplicates/correlated, 4 remediation validation failures, 1 dropped from PR output)'
+      )
+    })
+
+    it('still reports actual GitHub push/API failures as failures', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 1,
+            processed_items: 1,
+            success_count: 0,
+            error_count: 1,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            pr_count: 0,
+            customer_visible_pr_count: 0,
+            github_push_failure_count: 1
+          }
+        )
+      ).toBe('❌ Pull Requests: Failed - 1 GitHub push/API failure')
+    })
+
+    it('preserves legacy unknown-error fallback for mixed summaries without typed no-PR reason', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 1,
+            processed_items: 1,
+            success_count: 0,
+            error_count: 1,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            total_vulnerabilities: 4,
+            true_positives: 2,
+            false_positives: 2,
+            pr_count: 0
+          }
+        )
+      ).toBe('❌ Pull Requests: Failed - unknown error')
+    })
+
+    it('renders completed no-PR status for completed runs before typed summary arrives', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'failed',
+            progress_percentage: 100,
+            total_items: 5,
+            processed_items: 5,
+            success_count: 0,
+            error_count: 5,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          null,
+          'completed'
+        )
+      ).toBe('✅ Pull Requests: Completed (No customer-visible PRs created)')
     })
   })
 
@@ -676,7 +933,7 @@ describe('logProcessTracking', () => {
     expect(calls).toContain('[RUN_STATUS]: ⏸️ Pull Requests: Pending')
   })
 
-  it('logs push with "more expected" when remediation_loop is in_progress', () => {
+  it('logs push with PR and vulnerability coverage when remediation_loop is in_progress', () => {
     logProcessTracking(
       {
         find_status: {
@@ -709,10 +966,10 @@ describe('logProcessTracking', () => {
         },
         remediation_validation_loop_status: {
           status: 'in_progress',
-          progress_percentage: 50,
-          total_items: 8,
-          processed_items: 4,
-          success_count: 4,
+          progress_percentage: 30,
+          total_items: 10,
+          processed_items: 3,
+          success_count: 3,
           error_count: 0,
           false_positive_count: 0,
           self_validation_warning_count: 0,
@@ -723,10 +980,10 @@ describe('logProcessTracking', () => {
         },
         push_status: {
           status: 'in_progress',
-          progress_percentage: 100,
-          total_items: 4,
-          processed_items: 4,
-          success_count: 4,
+          progress_percentage: 50,
+          total_items: 2,
+          processed_items: 1,
+          success_count: 1,
           error_count: 0,
           false_positive_count: 0,
           self_validation_warning_count: 0,
@@ -740,9 +997,9 @@ describe('logProcessTracking', () => {
     )
 
     const calls = (core.info as jest.Mock).mock.calls.map((c) => c[0])
-    expect(calls).toContain('[RUN_STATUS]: ⏳ Remediation: 4/8 (50%)')
+    expect(calls).toContain('[RUN_STATUS]: ⏳ Remediation: 3/10 (30%)')
     expect(calls).toContain(
-      '[RUN_STATUS]: ⏳ Pull Requests: 4 PRs created (more expected as remediation continues)'
+      '[RUN_STATUS]: ⏳ Pull Requests: 1 PR created (3 vulnerabilities, 7 still in remediation)'
     )
   })
 
@@ -842,6 +1099,34 @@ describe('logProcessTracking', () => {
     expect(core.info).toHaveBeenCalledTimes(1)
     expect(core.info).toHaveBeenCalledWith(
       '[TEST]: ✅ Vulnerability Import: Completed (10 vulnerabilities found)'
+    )
+  })
+
+  it('passes completed run status into terminal push rendering', () => {
+    logProcessTracking(
+      {
+        push_status: {
+          status: 'failed',
+          progress_percentage: 100,
+          total_items: 5,
+          processed_items: 5,
+          success_count: 0,
+          error_count: 5,
+          false_positive_count: 0,
+          self_validation_warning_count: 0,
+          self_validation_failure_count: 0,
+          additional_context_required_count: 0,
+          needs_manual_review_count: 0,
+          handled_error_count: 0
+        }
+      },
+      '[RUN_STATUS]',
+      null,
+      'completed'
+    )
+
+    expect(core.info).toHaveBeenCalledWith(
+      '[RUN_STATUS]: ✅ Pull Requests: Completed (No customer-visible PRs created)'
     )
   })
 })

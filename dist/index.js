@@ -40296,8 +40296,8 @@ const PollingConfig = {
     POLL_DELAY_MS: 30000,
     /** Display progress messages every 30 seconds during submission */
     INTERVAL_CHECK_MS: 30000,
-    /** Maximum number of polling attempts (100 retries × 30s = ~50 minutes total) */
-    MAX_RETRIES: 100,
+    /** Maximum number of polling attempts (240 retries × 30s = ~2 hours total) */
+    MAX_RETRIES: 240,
     /** HTTP timeout for status endpoint calls (15 seconds) */
     STATUS_TIMEOUT_MS: 15000
 };
@@ -65757,6 +65757,7 @@ const RunSummarySchema = objectType({
     pr_urls: arrayType(stringType()).default([]),
     pr_titles: recordType(stringType()).optional(),
     pr_count: numberType().default(0),
+    customer_visible_pr_count: numberType().optional(),
     issue_urls: arrayType(stringType()).default([]),
     issue_titles: recordType(stringType()).nullable().optional(),
     issue_titles_by_url: recordType(stringType()).nullable().optional(),
@@ -65766,7 +65767,24 @@ const RunSummarySchema = objectType({
     issues_multistep_cwe: numberType().optional(),
     dedup_skipped_count: numberType().default(0),
     validation_failure_count: numberType().default(0),
-    remediation_with_warnings: numberType().default(0)
+    scope_validation_failure_count: numberType().optional(),
+    remediation_with_warnings: numberType().default(0),
+    internal_non_pushed_attempts: numberType().optional(),
+    internal_non_pushed_findings: numberType().optional(),
+    vendor_excluded_count: numberType().optional(),
+    vendor_exclusion_count: numberType().optional(),
+    manual_exclusion_count: numberType().optional(),
+    triaged_false_positive_count: numberType().optional(),
+    scanner_correlated_duplicate_count: numberType().optional(),
+    correlated_duplicate_count: numberType().optional(),
+    remediation_validation_failed_count: numberType().optional(),
+    dropped_from_pr_count: numberType().optional(),
+    remediation_unit_failure_count: numberType().optional(),
+    push_failed_count: numberType().optional(),
+    github_push_failure_count: numberType().optional(),
+    not_attempted_count: numberType().optional(),
+    outcome_breakdown: recordType(numberType()).optional(),
+    push_outcome_breakdown: recordType(numberType()).optional()
 });
 /**
  * Valid values for context_updated field.
@@ -65825,12 +65843,14 @@ const ProcessStatusSchema = objectType({
     total_items: numberType().default(0),
     processed_items: numberType().default(0),
     success_count: numberType().default(0), // Successfully processed items (includes warnings)
+    customer_visible_pr_count: numberType().optional(), // Customer-visible PRs created for push status
     error_count: numberType().default(0), // Actual processing exceptions
     false_positive_count: numberType().default(0), // Items triaged as false positives (triage only)
     needs_manual_review_count: numberType().default(0), // Items routed to manual review (triage only)
     handled_error_count: numberType().default(0), // Handled errors routed to manual review (triage only)
     self_validation_warning_count: numberType().default(0), // Issues created (validation warnings - security passed, other checks failed)
     self_validation_failure_count: numberType().default(0), // Skipped (security not resolved)
+    scope_validation_failure_count: numberType().default(0), // Deterministic scope validation failures preventing PR creation
     additional_context_required_count: numberType().default(0) // PRs with 'Additional Context Required' prefix
 });
 const RunProcessTrackingSchema = objectType({
@@ -71195,6 +71215,226 @@ const STATUS_ICONS = {
     failed: '❌',
     initiated: '🔄'
 };
+function pluralize(count, singular, plural = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+function getNumericField(source, fields) {
+    if (!source)
+        return 0;
+    for (const field of fields) {
+        const value = source[field];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return 0;
+}
+function hasAnyField(source, fields) {
+    if (!source)
+        return false;
+    return fields.some((field) => Object.prototype.hasOwnProperty.call(source, field));
+}
+function getBreakdownField(source, breakdownName, fields) {
+    const breakdown = source?.[breakdownName];
+    if (!breakdown || typeof breakdown !== 'object') {
+        return 0;
+    }
+    return getNumericField(breakdown, fields);
+}
+function getNumericFieldOrBreakdown(source, fields, breakdowns = []) {
+    const direct = getNumericField(source, fields);
+    if (direct > 0 || hasAnyField(source, fields)) {
+        return direct;
+    }
+    for (const breakdown of breakdowns) {
+        const value = getBreakdownField(source, breakdown.name, breakdown.fields);
+        if (value > 0) {
+            return value;
+        }
+    }
+    return 0;
+}
+function hasBreakdownFields(source, breakdownName, fields) {
+    const breakdown = source?.[breakdownName];
+    if (!breakdown || typeof breakdown !== 'object') {
+        return false;
+    }
+    return hasAnyField(breakdown, fields);
+}
+function getCustomerVisiblePrCount(summary, status) {
+    const summaryCount = getNumericField(summary, ['customer_visible_pr_count', 'pr_count']);
+    if (summaryCount > 0 ||
+        Object.prototype.hasOwnProperty.call(summary ?? {}, 'customer_visible_pr_count') ||
+        Object.prototype.hasOwnProperty.call(summary ?? {}, 'pr_count')) {
+        return summaryCount;
+    }
+    return getNumericField(status, [
+        'customer_visible_pr_count',
+        'pr_count',
+        'success_count'
+    ]);
+}
+function getRunTaxonomy(summary) {
+    const source = summary;
+    return {
+        vendorExcluded: getNumericFieldOrBreakdown(source, [
+            'vendor_excluded_count',
+            'vendor_exclusion_count',
+            'vendor_exclusions_count',
+            'excluded_count'
+        ], [{ name: 'outcome_breakdown', fields: ['vendor_exclusion'] }]),
+        falsePositives: getNumericFieldOrBreakdown(source, [
+            'triaged_false_positive_count',
+            'false_positives',
+            'false_positive_count'
+        ], [{ name: 'outcome_breakdown', fields: ['false_positive'] }]),
+        duplicates: getNumericFieldOrBreakdown(source, [
+            'scanner_correlated_duplicate_count',
+            'correlated_duplicate_count',
+            'duplicate_count',
+            'dedup_skipped_count'
+        ], [{ name: 'outcome_breakdown', fields: ['duplicate_or_correlated'] }]),
+        manualReview: getNumericFieldOrBreakdown(source, ['needs_manual_review_count', 'manual_review_count'], [{ name: 'outcome_breakdown', fields: ['needs_manual_review'] }]),
+        validationFailures: getNumericFieldOrBreakdown(source, ['remediation_validation_failed_count', 'validation_failure_count'], [
+            { name: 'outcome_breakdown', fields: ['validation_failed'] },
+            { name: 'push_outcome_breakdown', fields: ['validation_failed'] }
+        ]),
+        scopeFailures: getNumericField(source, ['scope_validation_failure_count']),
+        remediationUnitFailures: getNumericFieldOrBreakdown(source, ['remediation_unit_failure_count', 'internal_non_pushed_attempts'], [
+            { name: 'outcome_breakdown', fields: ['remediation_failed'] },
+            {
+                name: 'push_outcome_breakdown',
+                fields: ['failed_remediation_unit']
+            }
+        ]),
+        droppedFromPr: getNumericFieldOrBreakdown(source, ['dropped_from_pr_count'], [
+            { name: 'outcome_breakdown', fields: ['dropped_from_pr'] },
+            { name: 'push_outcome_breakdown', fields: ['dropped_from_pr'] }
+        ]),
+        pushFailures: getNumericFieldOrBreakdown(source, [
+            'github_push_failure_count',
+            'push_failed_count',
+            'push_failure_count',
+            'github_api_failure_count',
+            'api_failure_count'
+        ], [
+            { name: 'outcome_breakdown', fields: ['push_failed'] },
+            { name: 'push_outcome_breakdown', fields: ['github_push_failed'] }
+        ]),
+        notAttempted: getNumericFieldOrBreakdown(source, ['not_attempted_count'], [
+            { name: 'outcome_breakdown', fields: ['not_attempted'] },
+            { name: 'push_outcome_breakdown', fields: ['not_attempted'] }
+        ]),
+        internalNonPushedAttempts: getNumericField(source, [
+            'internal_non_pushed_attempts'
+        ]),
+        internalNonPushedFindings: getNumericField(source, [
+            'internal_non_pushed_findings'
+        ])
+    };
+}
+function hasAnyTypedTaxonomyField(summary) {
+    const source = summary;
+    return (hasAnyField(source, [
+        'vendor_excluded_count',
+        'vendor_exclusion_count',
+        'vendor_exclusions_count',
+        'excluded_count',
+        'scanner_correlated_duplicate_count',
+        'correlated_duplicate_count',
+        'duplicate_count',
+        'scope_validation_failure_count',
+        'remediation_validation_failed_count',
+        'remediation_unit_failure_count',
+        'dropped_from_pr_count',
+        'push_failed_count',
+        'github_push_failure_count',
+        'internal_non_pushed_attempts',
+        'internal_non_pushed_findings',
+        'not_attempted_count'
+    ]) ||
+        hasBreakdownFields(source, 'outcome_breakdown', [
+            'vendor_exclusion',
+            'duplicate_or_correlated',
+            'validation_failed',
+            'remediation_failed',
+            'dropped_from_pr',
+            'push_failed',
+            'not_attempted'
+        ]) ||
+        hasBreakdownFields(source, 'push_outcome_breakdown', [
+            'failed_remediation_unit',
+            'validation_failed',
+            'dropped_from_pr',
+            'github_push_failed',
+            'not_attempted'
+        ]));
+}
+function formatTaxonomyItems(summary, options = {}) {
+    const taxonomy = getRunTaxonomy(summary);
+    const items = [];
+    if (options.includeExpectedTriage && taxonomy.vendorExcluded > 0) {
+        items.push(`${taxonomy.vendorExcluded} vendor/excluded`);
+    }
+    if (options.includeExpectedTriage && taxonomy.falsePositives > 0) {
+        items.push(`${taxonomy.falsePositives} false positives`);
+    }
+    if (options.includeExpectedTriage && taxonomy.duplicates > 0) {
+        items.push(`${taxonomy.duplicates} duplicates/correlated`);
+    }
+    if (options.includeExpectedTriage && taxonomy.manualReview > 0) {
+        items.push(`${taxonomy.manualReview} manual review`);
+    }
+    if (taxonomy.scopeFailures > 0) {
+        items.push(`${taxonomy.scopeFailures} scope validation failures`);
+    }
+    if (taxonomy.validationFailures > 0) {
+        items.push(`${taxonomy.validationFailures} remediation validation failures`);
+    }
+    if (taxonomy.remediationUnitFailures > 0) {
+        items.push(`${taxonomy.remediationUnitFailures} remediation unit failures`);
+    }
+    if (taxonomy.droppedFromPr > 0) {
+        items.push(`${taxonomy.droppedFromPr} dropped from PR output`);
+    }
+    if (taxonomy.notAttempted > 0) {
+        items.push(`${taxonomy.notAttempted} not attempted`);
+    }
+    if (options.includePushFailures && taxonomy.pushFailures > 0) {
+        items.push(`${taxonomy.pushFailures} GitHub push/API failures`);
+    }
+    return items;
+}
+function hasTypedNoPrReason(summary) {
+    const taxonomy = getRunTaxonomy(summary);
+    const hasTypedTerminalReason = taxonomy.vendorExcluded > 0 ||
+        taxonomy.duplicates > 0 ||
+        taxonomy.validationFailures > 0 ||
+        taxonomy.scopeFailures > 0 ||
+        taxonomy.remediationUnitFailures > 0 ||
+        taxonomy.droppedFromPr > 0 ||
+        taxonomy.notAttempted > 0 ||
+        taxonomy.internalNonPushedFindings > 0 ||
+        hasAnyTypedTaxonomyField(summary);
+    const total = getNumericField(summary, [
+        'total_vulnerabilities'
+    ]);
+    const expectedNoActionCount = taxonomy.falsePositives + taxonomy.manualReview + taxonomy.vendorExcluded;
+    const allFindingsAreNoAction = total > 0 &&
+        getNumericField(summary, [
+            'true_positives'
+        ]) === 0 &&
+        expectedNoActionCount >= total;
+    return hasTypedTerminalReason || allFindingsAreNoAction;
+}
+function formatNoCustomerPrReason(summary) {
+    const items = formatTaxonomyItems(summary, { includeExpectedTriage: true });
+    const internalFindings = getRunTaxonomy(summary).internalNonPushedFindings;
+    if (internalFindings > 0) {
+        items.push(`${internalFindings} internal non-pushed findings`);
+    }
+    return items.length > 0 ? ` - ${items.join(', ')}` : '';
+}
 /**
  * Get the Dashboard URL based on the API URL.
  * Defaults customer-facing output to production unless an integration host is detected.
@@ -71278,7 +71518,7 @@ function logSteps(steps, apiContext) {
  * @param remediationLoopStatus Optional remediation loop status to check if still in progress (for push formatting)
  * @returns A formatted status string with user-friendly names
  */
-function formatStageStatus(name, status, remediationLoopStatus) {
+function formatStageStatus(name, status, remediationLoopStatus, summary, runStatus) {
     const displayName = getDisplayName(name);
     if (!status || status.status === ProcessStatusValue.NOT_STARTED) {
         return `${STATUS_ICONS.pending} ${displayName}: Pending`;
@@ -71306,8 +71546,12 @@ function formatStageStatus(name, status, remediationLoopStatus) {
         }
         else if (name === 'push') {
             // For push, show PRs created
-            if (status.success_count > 0) {
-                details.push(`${status.success_count} PRs created`);
+            const prCount = getCustomerVisiblePrCount(summary, status);
+            if (prCount > 0) {
+                details.push(`${prCount} PRs created`);
+            }
+            else if (hasTypedNoPrReason(summary)) {
+                details.push(`No customer-visible PRs created${formatNoCustomerPrReason(summary)}`);
             }
         }
         else if (name === 'find') {
@@ -71343,6 +71587,10 @@ function formatStageStatus(name, status, remediationLoopStatus) {
             if (failureCount > 0) {
                 details.push(`${failureCount} skipped (security not resolved)`);
             }
+            const scopeFailureCount = status.scope_validation_failure_count || 0;
+            if (scopeFailureCount > 0) {
+                details.push(`${scopeFailureCount} scope validation failures`);
+            }
         }
         else if (status.success_count > 0) {
             // For other stages
@@ -71374,15 +71622,46 @@ function formatStageStatus(name, status, remediationLoopStatus) {
         // Special handling for push/PRs when remediation is still in progress
         if (name === 'push' &&
             remediationLoopStatus?.status === ProcessStatusValue.IN_PROGRESS) {
-            return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items} PRs created (more expected as remediation continues)`;
+            const prCount = getCustomerVisiblePrCount(summary, status);
+            const remediatedVulns = remediationLoopStatus.processed_items || 0;
+            const totalVulns = remediationLoopStatus.total_items || 0;
+            const remainingVulns = Math.max(0, totalVulns - remediatedVulns);
+            const details = [];
+            if (remediatedVulns > 0) {
+                details.push(pluralize(remediatedVulns, 'vulnerability', 'vulnerabilities'));
+            }
+            if (remainingVulns > 0) {
+                details.push(`${remainingVulns} still in remediation`);
+            }
+            else {
+                details.push('more expected as remediation continues');
+            }
+            return `${STATUS_ICONS.in_progress} ${displayName}: ${pluralize(prCount, 'PR')} created (${details.join(', ')})`;
         }
         // For push, use PR terminology
         if (name === 'push') {
-            return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} PRs (${pct}%)`;
+            const prCount = getCustomerVisiblePrCount(summary, status);
+            const totalPrs = summary?.customer_visible_pr_count ?? status.total_items;
+            return `${STATUS_ICONS.in_progress} ${displayName}: ${prCount}/${totalPrs} PRs (${pct}%)`;
         }
         return `${STATUS_ICONS.in_progress} ${displayName}: ${status.processed_items}/${status.total_items} (${pct}%)`;
     }
     if (status.status === ProcessStatusValue.FAILED) {
+        if (name === 'push') {
+            const prCount = getCustomerVisiblePrCount(summary, status);
+            const pushFailureCount = getRunTaxonomy(summary).pushFailures;
+            if (prCount === 0 && pushFailureCount === 0 && !status.error_message) {
+                if (hasTypedNoPrReason(summary)) {
+                    return `${STATUS_ICONS.completed} ${displayName}: Completed (No customer-visible PRs created${formatNoCustomerPrReason(summary)})`;
+                }
+                if (runStatus === 'completed') {
+                    return `${STATUS_ICONS.completed} ${displayName}: Completed (No customer-visible PRs created)`;
+                }
+            }
+            if (pushFailureCount > 0 && !status.error_message) {
+                return `${STATUS_ICONS.failed} ${displayName}: Failed - ${pluralize(pushFailureCount, 'GitHub push/API failure')}`;
+            }
+        }
         const errorMsg = status.error_message || 'unknown error';
         return `${STATUS_ICONS.failed} ${displayName}: Failed - ${errorMsg}`;
     }
@@ -71393,7 +71672,7 @@ function formatStageStatus(name, status, remediationLoopStatus) {
  * @param tracking The RunProcessTracking object
  * @param prefixLabel The log prefix label (e.g., '[RUN_STATUS]')
  */
-function logProcessTracking(tracking, prefixLabel) {
+function logProcessTracking(tracking, prefixLabel, summary, runStatus) {
     if (!tracking) {
         return;
     }
@@ -71410,7 +71689,7 @@ function logProcessTracking(tracking, prefixLabel) {
         if (status) {
             // Pass remediation loop status for special push formatting
             const remediationLoopStatus = tracking.remediation_validation_loop_status;
-            const formatted = formatStageStatus(name, status, remediationLoopStatus);
+            const formatted = formatStageStatus(name, status, remediationLoopStatus, summary, runStatus);
             coreExports.info(`${prefixLabel}: ${formatted}`);
         }
     }
@@ -71460,7 +71739,7 @@ function getStatusText(status) {
 /**
  * Format details for job summary based on stage and status
  */
-function formatSummaryDetails(name, status) {
+function formatSummaryDetails(name, status, summary) {
     if (!status) {
         return '-';
     }
@@ -71483,8 +71762,12 @@ function formatSummaryDetails(name, status) {
         }
     }
     else if (name === 'push') {
-        if (status.success_count > 0) {
-            return `${status.success_count} PRs created`;
+        const prCount = getCustomerVisiblePrCount(summary, status);
+        if (prCount > 0) {
+            return `${prCount} PRs created`;
+        }
+        if (hasTypedNoPrReason(summary)) {
+            return `No customer-visible PRs created${formatNoCustomerPrReason(summary)}`;
         }
     }
     else if (name === 'find') {
@@ -71515,6 +71798,10 @@ function formatSummaryDetails(name, status) {
         const failureCount = status.self_validation_failure_count || 0;
         if (failureCount > 0) {
             parts.push(`${failureCount} skipped (security not resolved)`);
+        }
+        const scopeFailureCount = status.scope_validation_failure_count || 0;
+        if (scopeFailureCount > 0) {
+            parts.push(`${scopeFailureCount} scope validation failures`);
         }
         if (parts.length > 0) {
             return parts.join(', ');
@@ -71604,7 +71891,7 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
             const displayName = getDisplayName(name);
             const icon = getStatusIcon(status?.status);
             const statusText = getStatusText(status?.status);
-            const details = formatSummaryDetails(name, status);
+            const details = formatSummaryDetails(name, status, summary);
             tableData.push([
                 { data: displayName },
                 { data: `${icon} ${statusText}` },
@@ -71616,6 +71903,8 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
     // Add summary metrics if available
     if (summary) {
         coreExports.summary.addHeading('Key Metrics', 3);
+        const taxonomy = getRunTaxonomy(summary);
+        const customerVisiblePrCount = getCustomerVisiblePrCount(summary);
         const metricsData = [
             [
                 { data: 'Metric', header: true },
@@ -71647,6 +71936,18 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
                 { data: (summary.handled_error_count ?? 0).toString() }
             ]);
         }
+        if (taxonomy.vendorExcluded > 0) {
+            metricsData.push([
+                { data: 'Vendor/Excluded Findings' },
+                { data: taxonomy.vendorExcluded.toString() }
+            ]);
+        }
+        if (taxonomy.duplicates > 0) {
+            metricsData.push([
+                { data: 'Scanner-Correlated/Deduplicated Findings' },
+                { data: taxonomy.duplicates.toString() }
+            ]);
+        }
         // Remediation
         if (summary.remediation_success + summary.remediation_failed > 0) {
             metricsData.push([
@@ -71658,11 +71959,41 @@ async function writeJobSummary(tracking, summary, runId, durationMs, success, pr
                 { data: summary.remediation_failed.toString() }
             ]);
         }
+        if (taxonomy.scopeFailures > 0) {
+            metricsData.push([
+                { data: 'Remediation Scope Validation Failures' },
+                { data: taxonomy.scopeFailures.toString() }
+            ]);
+        }
+        if (taxonomy.validationFailures > 0) {
+            metricsData.push([
+                { data: 'Remediation Validation Failures' },
+                { data: taxonomy.validationFailures.toString() }
+            ]);
+        }
+        if (taxonomy.remediationUnitFailures > 0) {
+            metricsData.push([
+                { data: 'Remediation Unit Failures' },
+                { data: taxonomy.remediationUnitFailures.toString() }
+            ]);
+        }
+        if (taxonomy.pushFailures > 0) {
+            metricsData.push([
+                { data: 'GitHub Push/API Failures' },
+                { data: taxonomy.pushFailures.toString() }
+            ]);
+        }
         // PRs
-        if (summary.pr_count > 0) {
+        if (customerVisiblePrCount > 0) {
             metricsData.push([
                 { data: 'Pull Requests Created' },
-                { data: summary.pr_count.toString() }
+                { data: customerVisiblePrCount.toString() }
+            ]);
+        }
+        else if (hasTypedNoPrReason(summary)) {
+            metricsData.push([
+                { data: 'Pull Requests Created' },
+                { data: `0 (${formatNoCustomerPrReason(summary).replace(/^ - /, '')})` }
             ]);
         }
         // Issues - display context-aware metrics
@@ -71931,8 +72262,12 @@ function formatRemediationResults(summary, remediationStatus) {
         const contextCount = remediationStatus.additional_context_required_count || 0;
         const warningCount = remediationStatus.self_validation_warning_count || 0;
         const failureCount = remediationStatus.self_validation_failure_count || 0;
+        const scopeFailureCount = remediationStatus.scope_validation_failure_count || 0;
         // Only show if at least one of these counts is > 0
-        if (contextCount > 0 || warningCount > 0 || failureCount > 0) {
+        if (contextCount > 0 ||
+            warningCount > 0 ||
+            failureCount > 0 ||
+            scopeFailureCount > 0) {
             if (contextCount > 0) {
                 lines.push(`├─ Need Additional Context: ${contextCount}`);
             }
@@ -71942,7 +72277,17 @@ function formatRemediationResults(summary, remediationStatus) {
             if (failureCount > 0) {
                 lines.push(`├─ Skipped (Security Not Resolved): ${failureCount}`);
             }
+            if (scopeFailureCount > 0) {
+                lines.push(`├─ Scope Validation Failures: ${scopeFailureCount}`);
+            }
         }
+    }
+    const taxonomy = getRunTaxonomy(summary);
+    if (taxonomy.internalNonPushedAttempts > 0) {
+        lines.push(`├─ Internal Non-Pushed Attempts: ${taxonomy.internalNonPushedAttempts}`);
+    }
+    if (taxonomy.pushFailures > 0) {
+        lines.push(`├─ GitHub Push/API Failures: ${taxonomy.pushFailures}`);
     }
     lines.push(`└─ Failed: ${summary.remediation_failed}`);
     return lines.join('\n');
@@ -72030,10 +72375,23 @@ function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dash
     lines.push('│');
     const handledErrorCount = summary.handled_error_count ?? 0;
     const manualReviewCount = summary.needs_manual_review_count ?? 0;
+    const taxonomy = getRunTaxonomy(summary);
     if (handledErrorCount > 0 || manualReviewCount > 0) {
         lines.push('├─ Triage Attention');
         lines.push(`│  ├─ Handled Errors: ${handledErrorCount}`);
         lines.push(`│  └─ Manual Review Required: ${manualReviewCount}`);
+        lines.push('│');
+    }
+    const taxonomyLines = formatTaxonomyItems(summary, {
+        includeExpectedTriage: true,
+        includePushFailures: true
+    });
+    if (taxonomyLines.length > 0) {
+        lines.push('├─ Outcome Breakdown');
+        taxonomyLines.forEach((line, index) => {
+            const prefix = index === taxonomyLines.length - 1 ? '└─' : '├─';
+            lines.push(`│  ${prefix} ${line}`);
+        });
         lines.push('│');
     }
     // CWE Breakdown
@@ -72059,10 +72417,19 @@ function formatFinalResults(summary, runId, durationMs, tracking, prTitles, dash
         lines.push('│');
     }
     // Pull Requests
-    if (summary.pr_count > 0) {
-        lines.push(`├─ Pull Requests (${summary.pr_count})`);
+    const customerVisiblePrCount = getCustomerVisiblePrCount(summary);
+    if (customerVisiblePrCount > 0) {
+        lines.push(`├─ Pull Requests (${customerVisiblePrCount})`);
         const prLines = formatPrLinks(summary.pr_urls, prTitles).split('\n');
         prLines.forEach((line) => lines.push(`│  ${line}`));
+        lines.push('│');
+    }
+    else if (hasTypedNoPrReason(summary)) {
+        lines.push('├─ Pull Requests (0)');
+        lines.push(`│  No customer-visible PRs created${formatNoCustomerPrReason(summary)}`);
+        if (taxonomy.internalNonPushedAttempts > 0) {
+            lines.push(`│  Internal non-pushed attempts: ${taxonomy.internalNonPushedAttempts}`);
+        }
         lines.push('│');
     }
     // GitHub Issues (created from failed validations)
@@ -72103,6 +72470,7 @@ function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
     coreExports.info(`${prefixLabel}: False positives: ${summary.false_positives}`);
     const manualReviewCount = summary.needs_manual_review_count ?? 0;
     const handledErrorCount = summary.handled_error_count ?? 0;
+    const taxonomy = getRunTaxonomy(summary);
     if (manualReviewCount > 0) {
         coreExports.warning(`${prefixLabel}: Manual review required: ${manualReviewCount}`);
     }
@@ -72110,7 +72478,16 @@ function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
         coreExports.warning(`${prefixLabel}: Handled errors (admin review recommended): ${handledErrorCount}`);
     }
     coreExports.info(`${prefixLabel}: Remediation: ${summary.remediation_success} successful, ${summary.remediation_failed} failed`);
-    coreExports.info(`${prefixLabel}: PRs created: ${summary.pr_count}`);
+    coreExports.info(`${prefixLabel}: PRs created: ${getCustomerVisiblePrCount(summary)}`);
+    for (const item of formatTaxonomyItems(summary, {
+        includeExpectedTriage: true,
+        includePushFailures: true
+    })) {
+        coreExports.info(`${prefixLabel}: ${item}`);
+    }
+    if (taxonomy.internalNonPushedFindings > 0) {
+        coreExports.info(`${prefixLabel}: Internal non-pushed findings: ${taxonomy.internalNonPushedFindings}`);
+    }
     if (summary.pr_urls.length > 0) {
         coreExports.info(`${prefixLabel}: PR URLs:`);
         for (const url of summary.pr_urls) {
@@ -72571,7 +72948,7 @@ async function getStatus(id, organizationId) {
         let totalVulns = 0;
         // Log process tracking information if available (Issue #181)
         if (processTracking) {
-            logProcessTracking(processTracking, prefixLabel);
+            logProcessTracking(processTracking, prefixLabel, summary, canonicalRunStatus);
         }
         // Note: dashboard_url may be null from Medusa contract; rendering layer handles null gracefully
         // Note: processTracking no longer checks reconcile_status (not part of Medusa contract)
@@ -72902,16 +73279,6 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-function getClassifiedVulnerabilityCount(summary) {
-    return (summary.true_positives +
-        summary.false_positives +
-        (summary.needs_manual_review_count ?? 0) +
-        (summary.skipped_count ?? 0) +
-        (summary.dedup_skipped_count ?? 0));
-}
-function isSummaryClassificationComplete(summary) {
-    return (getClassifiedVulnerabilityCount(summary) >= summary.total_vulnerabilities);
-}
 /**
  * Finalize a run and retrieve the summary.
  * This triggers on-demand summary computation on the backend and returns the results.
@@ -72931,7 +73298,6 @@ async function finalizeRun(runId, options = {}) {
     const url = organizationId
         ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`)
         : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`);
-    url.searchParams.set('force', 'true');
     const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
     coreExports.debug(`Calling finalize API: POST ${url.pathname}${url.search}`);
     const setup = {
@@ -72960,19 +73326,6 @@ async function finalizeRun(runId, options = {}) {
             }
             const summary = parsed.data;
             lastSummary = summary;
-            const classifiedCount = getClassifiedVulnerabilityCount(summary);
-            if (!isSummaryClassificationComplete(summary)) {
-                coreExports.info(`${prefixLabel}: Summary classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities. ` +
-                    `Retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`);
-                if (attempt < maxRetries) {
-                    await delay(retryDelay);
-                    continue;
-                }
-                coreExports.warning(`${prefixLabel}: Summary is incomplete after ${maxRetries} attempts. ` +
-                    `Classified ${classifiedCount}/${summary.total_vulnerabilities} vulnerabilities.`);
-                logSummary(summary);
-                return summary;
-            }
             // If we have an expected count, verify it matches
             if (expectedPrCount !== undefined && summary.pr_count < expectedPrCount) {
                 coreExports.info(`${prefixLabel}: Summary shows ${summary.pr_count} PRs, expected ${expectedPrCount}. ` +
@@ -73024,7 +73377,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.15';
+const VERSION = '1.1.16';
 const CLIENT_VERSION = VERSION;
 
 var re = {exports: {}};
@@ -76460,6 +76813,7 @@ async function run() {
     const startTime = Date.now();
     let success = false;
     let monitoringIndeterminate = false;
+    let runStillActiveAfterPollingLimit = false;
     try {
         filePaths = resolveInputFilePaths(file, files);
         // Display AppSecAI branding at run start
@@ -76526,7 +76880,39 @@ async function run() {
                 const getRunStatus = () => getStatus(store.id, store.organizationId);
                 const pollResult = await pollStatusUntilComplete(getRunStatus, retries, pollDelay);
                 if (!pollResult) {
-                    monitoringIndeterminate = true;
+                    try {
+                        const finalStatus = await getRunStatus();
+                        if (finalStatus.status === 'completed') {
+                            if (finalStatus.processTracking) {
+                                finalProcessTracking =
+                                    finalStatus.processTracking;
+                            }
+                            if (finalStatus.summary) {
+                                finalSummary = finalStatus.summary;
+                            }
+                            if (finalStatus.dashboard_url) {
+                                finalDashboardUrl = finalStatus.dashboard_url;
+                            }
+                        }
+                        else {
+                            monitoringIndeterminate = true;
+                            runStillActiveAfterPollingLimit =
+                                finalStatus.status !== 'failed' &&
+                                    finalStatus.status !== 'network_error';
+                            const statusDescription = finalStatus.status || 'unknown non-terminal status';
+                            coreExports.warning(`[${LogLabels.RUN_STATUS}] Polling limit reached and final status check returned "${statusDescription}". ` +
+                                'Skipping summary finalization because the server run is not known to be terminal.');
+                        }
+                    }
+                    catch (finalStatusError) {
+                        monitoringIndeterminate = true;
+                        runStillActiveAfterPollingLimit = true;
+                        const errorMessage = finalStatusError instanceof Error
+                            ? finalStatusError.message
+                            : String(finalStatusError);
+                        coreExports.warning(`[${LogLabels.RUN_STATUS}] Polling limit reached and final status check failed: ${errorMessage}. ` +
+                            'Skipping summary finalization because the server run may still be active.');
+                    }
                 }
                 // Capture final process tracking and summary for job summary
                 // Type assertions are safe here because Zod schema validation ensures complete data
@@ -76543,6 +76929,7 @@ async function run() {
             }
             catch (pollError) {
                 monitoringIndeterminate = true;
+                runStillActiveAfterPollingLimit = true;
                 // This is a "soft" failure. Log a warning but let the process complete
                 coreExports.warning(`[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`);
             }
@@ -76582,32 +76969,25 @@ async function run() {
     finally {
         // Always try to finalize and get summary when we have a run ID
         // This ensures summary data is available even on timeout or failure
-        if (store.id) {
+        if (store.id && !runStillActiveAfterPollingLimit) {
             coreExports.info('Finalizing run and fetching summary...');
-            // Get expected PR count from push_status.success_count to verify summary completeness
+            // Get expected customer-visible PR count to verify summary completeness
             // This addresses the race condition where summary may be computed before all PRs are persisted
-            const expectedPrCount = finalProcessTracking?.push_status?.success_count;
+            const expectedPrCount = finalSummary?.customer_visible_pr_count ??
+                finalSummary?.pr_count ??
+                finalProcessTracking?.push_status?.customer_visible_pr_count ??
+                finalProcessTracking?.push_status?.success_count;
             const finalizeSummary = await finalizeRun(store.id, {
                 expectedPrCount,
                 organizationId: store.organizationId
             });
-            // Prefer the forced finalize summary over polling snapshots so the job
-            // summary reflects the final server-side aggregation.
-            if (finalizeSummary) {
+            // Use finalize summary if we don't already have one from polling
+            if (finalizeSummary && !finalSummary) {
                 finalSummary = finalizeSummary;
             }
         }
-        if (success &&
-            finalSummary &&
-            !isSummaryClassificationComplete(finalSummary)) {
-            success = false;
-            const classifiedCount = finalSummary.true_positives +
-                finalSummary.false_positives +
-                (finalSummary.needs_manual_review_count ?? 0);
-            const errorMessage = `Run summary is incomplete: classified ${classifiedCount}/` +
-                `${finalSummary.total_vulnerabilities} vulnerabilities.`;
-            coreExports.error(errorMessage);
-            coreExports.setFailed(errorMessage);
+        else if (store.id) {
+            coreExports.warning('Skipping final summary computation because monitoring ended before the server run reached a terminal state.');
         }
         if (success && store.id && monitoringIndeterminate && !finalSummary) {
             success = false;
