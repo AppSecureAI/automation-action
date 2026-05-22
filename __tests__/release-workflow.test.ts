@@ -35,6 +35,8 @@ describe('release workflow', () => {
     expect(content).toContain(
       '| src/version.ts | ${{ steps.meta.outputs.version_ts }} |'
     )
-    expect(content).toContain('softprops/action-gh-release@v2')
+    expect(content).toContain(
+      'softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2'
+    )
   })
 })

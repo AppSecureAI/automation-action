@@ -268,6 +268,18 @@ export interface ProcessStatus {
   customer_visible_pr_count?: number
   /** Actual processing exceptions. Defaults to 0 via Zod schema. */
   error_count: number
+  /** Expected task count recorded when this stage fan-out was dispatched. */
+  dispatched_expected_count?: number
+  /** Celery task IDs recorded for the dispatched fan-out. */
+  dispatched_task_ids?: string[]
+  /** Celery callback task ID for the dispatched fan-out. */
+  dispatched_callback_task_id?: string | null
+  /** Celery chord/group IDs recorded for the dispatched fan-out. */
+  dispatched_chord_group_ids?: string[]
+  /** Queue used for the dispatched stage work. */
+  dispatch_queue_name?: string | null
+  /** When dispatch metadata was recorded for the stage. */
+  dispatch_recorded_at?: string | null
   /** Items triaged as false positives (triage only). Defaults to 0. */
   false_positive_count: number
   /** Items routed to manual review because automated triage was inconclusive. Defaults to 0. */

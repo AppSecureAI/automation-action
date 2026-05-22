@@ -349,6 +349,30 @@ describe('main.ts', () => {
   })
 
   describe('status polling failures', () => {
+    it('should fail when Product reports the run failed', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'failed',
+          error: 'Triage incomplete after 15 attempts',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(core.error).toHaveBeenCalledWith(
+        'Product run failed: Triage incomplete after 15 attempts'
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Product run failed: Triage incomplete after 15 attempts'
+      )
+      expect(core.setOutput).not.toHaveBeenCalledWith(
+        'message',
+        'Processing completed successfully.'
+      )
+    })
+
     it('should fail when polling becomes indeterminate and finalize has no summary', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.reject(new Error('Polling failed'))

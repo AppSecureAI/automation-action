@@ -943,7 +943,7 @@ export async function pollStatusUntilComplete(
           `Processing failed: ${statusData.error}. Please review the logs for more details.`
         )
         core.endGroup()
-        return null
+        return statusData
       } else if (statusData.status === 'network_error') {
         consecutiveNetworkErrors++
         core.warning(

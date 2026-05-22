@@ -156,6 +156,12 @@ export const ProcessStatusSchema = z.object({
   success_count: z.number().default(0), // Successfully processed items (includes warnings)
   customer_visible_pr_count: z.number().optional(), // Customer-visible PRs created for push status
   error_count: z.number().default(0), // Actual processing exceptions
+  dispatched_expected_count: z.number().default(0),
+  dispatched_task_ids: z.array(z.string()).default([]),
+  dispatched_callback_task_id: z.string().nullish(),
+  dispatched_chord_group_ids: z.array(z.string()).default([]),
+  dispatch_queue_name: z.string().nullish(),
+  dispatch_recorded_at: z.string().nullish(),
   false_positive_count: z.number().default(0), // Items triaged as false positives (triage only)
   needs_manual_review_count: z.number().default(0), // Items routed to manual review (triage only)
   handled_error_count: z.number().default(0), // Handled errors routed to manual review (triage only)

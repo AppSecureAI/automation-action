@@ -204,6 +204,7 @@ export async function run(): Promise<void> {
   let success = false
   let monitoringIndeterminate = false
   let runStillActiveAfterPollingLimit = false
+  let productRunFailureMessage: string | null = null
 
   try {
     filePaths = resolveInputFilePaths(file, files)
@@ -337,6 +338,11 @@ export async function run(): Promise<void> {
         if (pollResult?.dashboard_url) {
           finalDashboardUrl = pollResult.dashboard_url
         }
+        if (pollResult?.status === 'failed') {
+          productRunFailureMessage = pollResult.error
+            ? `Product run failed: ${pollResult.error}`
+            : 'Product run failed.'
+        }
       } catch (pollError) {
         monitoringIndeterminate = true
         runStillActiveAfterPollingLimit = true
@@ -345,6 +351,10 @@ export async function run(): Promise<void> {
           `[${LogLabels.RUN_STATUS}] Failed to poll status for run_id: ${store.id}. The analysis may still be running on the server.`
         )
       }
+    }
+
+    if (productRunFailureMessage) {
+      throw new Error(productRunFailureMessage)
     }
 
     success = true
