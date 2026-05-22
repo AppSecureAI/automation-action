@@ -565,7 +565,13 @@ export function formatStageStatus(
     ) {
       // For remediation loop, show success count and validation metrics
       if (status.success_count > 0) {
-        details.push(`${status.success_count} fixes generated`)
+        details.push(
+          `${pluralize(
+            status.success_count,
+            'confirmed vulnerability',
+            'confirmed vulnerabilities'
+          )} processed`
+        )
       }
       // Show additional context required count (multi-step CWE PRs)
       const contextCount = status.additional_context_required_count || 0
@@ -576,7 +582,10 @@ export function formatStageStatus(
       const warningCount = status.self_validation_warning_count || 0
       if (warningCount > 0) {
         details.push(
-          `${warningCount} security-passed warnings (functional/quality checks failed)`
+          `${pluralize(
+            warningCount,
+            'remediation unit'
+          )} passed security with functional/quality warnings`
         )
       }
       // Show self-validation failure count (validation failed - issue created instead of PR)
@@ -813,7 +822,13 @@ function formatSummaryDetails(
     // For remediation loop, show detailed metrics
     const parts: string[] = []
     if (status.success_count > 0) {
-      parts.push(`${status.success_count} fixed`)
+      parts.push(
+        `${pluralize(
+          status.success_count,
+          'confirmed vulnerability',
+          'confirmed vulnerabilities'
+        )} processed`
+      )
     }
     const contextCount = status.additional_context_required_count || 0
     if (contextCount > 0) {
@@ -822,7 +837,10 @@ function formatSummaryDetails(
     const warningCount = status.self_validation_warning_count || 0
     if (warningCount > 0) {
       parts.push(
-        `${warningCount} security-passed warnings (functional/quality checks failed)`
+        `${pluralize(
+          warningCount,
+          'remediation unit'
+        )} passed security with functional/quality warnings`
       )
     }
     const failureCount = status.self_validation_failure_count || 0
@@ -1391,7 +1409,10 @@ export function formatRemediationResults(
       }
       if (warningCount > 0) {
         lines.push(
-          `├─ Security-Passed Warnings: ${warningCount} (functional/quality checks failed)`
+          `├─ Functional/Quality Warnings: ${pluralize(
+            warningCount,
+            'remediation unit'
+          )} passed security`
         )
       }
       if (failureCount > 0) {

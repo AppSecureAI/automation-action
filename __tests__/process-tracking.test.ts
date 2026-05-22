@@ -216,7 +216,7 @@ describe('formatStageStatus', () => {
       ).toBe('✅ Pull Requests: Completed (1 PRs created)')
     })
 
-    it('shows fixes generated for remediation stage', () => {
+    it('shows confirmed vulnerabilities processed for remediation stage', () => {
       expect(
         formatStageStatus('remediation_loop', {
           status: 'completed',
@@ -232,10 +232,10 @@ describe('formatStageStatus', () => {
           needs_manual_review_count: 0,
           handled_error_count: 0
         })
-      ).toBe('✅ Remediation: Completed (5 fixes generated)')
+      ).toBe('✅ Remediation: Completed (5 confirmed vulnerabilities processed)')
     })
 
-    it('shows fixes generated with validation warnings for remediation stage', () => {
+    it('shows remediation units with validation warnings for remediation stage', () => {
       expect(
         formatStageStatus('remediation_loop', {
           status: 'completed',
@@ -252,7 +252,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (6 fixes generated, 2 security-passed warnings (functional/quality checks failed))'
+        '✅ Remediation: Completed (6 confirmed vulnerabilities processed, 2 remediation units passed security with functional/quality warnings)'
       )
     })
 
@@ -273,7 +273,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (7 fixes generated, 3 skipped (security not resolved))'
+        '✅ Remediation: Completed (7 confirmed vulnerabilities processed, 3 skipped (security not resolved))'
       )
     })
 
@@ -294,7 +294,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (8 fixes generated, 2 security-passed warnings (functional/quality checks failed), 1 skipped (security not resolved), 1 errors)'
+        '✅ Remediation: Completed (8 confirmed vulnerabilities processed, 2 remediation units passed security with functional/quality warnings, 1 skipped (security not resolved), 1 errors)'
       )
     })
 
@@ -1068,7 +1068,7 @@ describe('logProcessTracking', () => {
 
     const calls = (core.info as jest.Mock).mock.calls.map((c) => c[0])
     expect(calls).toContain(
-      '[RUN_STATUS]: ✅ Remediation: Completed (8 fixes generated)'
+      '[RUN_STATUS]: ✅ Remediation: Completed (8 confirmed vulnerabilities processed)'
     )
     expect(calls).toContain('[RUN_STATUS]: ⏳ Pull Requests: 6/8 PRs (75%)')
   })
