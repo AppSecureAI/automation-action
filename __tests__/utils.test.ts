@@ -805,7 +805,7 @@ describe('utils.ts', () => {
       expect(result).toContain('5 confirmed vulnerabilities processed')
       expect(result).toContain('2 need additional context')
       expect(result).toContain(
-        '1 remediation unit passed security with functional/quality warnings'
+        '1 confirmed vulnerability passed security; functional/quality checks failed'
       )
       expect(result).toContain('1 skipped (security not resolved)')
     })
@@ -879,7 +879,7 @@ describe('utils.ts', () => {
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain('Need Additional Context: 2')
       expect(result).toContain(
-        'Functional/Quality Warnings: 5 remediation units passed security'
+        'Functional/Quality Warnings: 5 confirmed vulnerabilities passed security; functional/quality checks failed'
       )
       expect(result).toContain('Skipped (Security Not Resolved): 3')
     })
@@ -913,7 +913,7 @@ describe('utils.ts', () => {
       }
       const result = formatRemediationResults(baseSummary, remediationStatus)
       expect(result).toContain(
-        'Functional/Quality Warnings: 2 remediation units passed security'
+        'Functional/Quality Warnings: 2 confirmed vulnerabilities passed security; functional/quality checks failed'
       )
       expect(result).not.toContain('Need Additional Context')
       expect(result).not.toContain('Skipped (Security Not Resolved)')
@@ -963,7 +963,7 @@ describe('utils.ts', () => {
       expect(result).toContain('Remediation Results')
       expect(result).toContain('Need Additional Context: 5')
       expect(result).toContain(
-        'Functional/Quality Warnings: 3 remediation units passed security'
+        'Functional/Quality Warnings: 3 confirmed vulnerabilities passed security; functional/quality checks failed'
       )
       expect(result).toContain('Skipped (Security Not Resolved): 2')
     })

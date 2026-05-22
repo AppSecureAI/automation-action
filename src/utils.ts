@@ -72,6 +72,21 @@ function pluralize(
   return `${count} ${count === 1 ? singular : plural}`
 }
 
+function formatFunctionalQualityWarnings(count: number): string {
+  return `${pluralize(
+    count,
+    'confirmed vulnerability',
+    'confirmed vulnerabilities'
+  )} passed security; functional/quality checks failed`
+}
+
+function formatNonPrRemediationUnits(count: number): string {
+  return `${pluralize(
+    count,
+    'remediation unit'
+  )} did not produce customer-visible PRs`
+}
+
 type CountSource = Record<string, unknown>
 
 function getNumericField(
@@ -541,11 +556,14 @@ export function formatStageStatus(
       // For push, show PRs created
       const prCount = getCustomerVisiblePrCount(summary, status)
       if (prCount > 0) {
-        details.push(`${prCount} PRs created`)
+        details.push(`${pluralize(prCount, 'PR')} created`)
       } else if (hasTypedNoPrReason(summary)) {
         details.push(
           `No customer-visible PRs created${formatNoCustomerPrReason(summary)}`
         )
+      }
+      if (status.error_count > 0) {
+        details.push(formatNonPrRemediationUnits(status.error_count))
       }
     } else if (name === 'find') {
       // For find/scan, show vulnerabilities found
@@ -581,12 +599,7 @@ export function formatStageStatus(
       // Show self-validation warning count (security passed but functional/quality checks failed)
       const warningCount = status.self_validation_warning_count || 0
       if (warningCount > 0) {
-        details.push(
-          `${pluralize(
-            warningCount,
-            'remediation unit'
-          )} passed security with functional/quality warnings`
-        )
+        details.push(formatFunctionalQualityWarnings(warningCount))
       }
       // Show self-validation failure count (validation failed - issue created instead of PR)
       const failureCount = status.self_validation_failure_count || 0
@@ -601,7 +614,7 @@ export function formatStageStatus(
       // For other stages
       details.push(`${status.success_count} fixes generated`)
     }
-    if (status.error_count > 0) {
+    if (status.error_count > 0 && name !== 'push') {
       details.push(`${status.error_count} errors`)
     }
     if (details.length === 0 && status.total_items > 0) {
@@ -802,7 +815,7 @@ function formatSummaryDetails(
   } else if (name === 'push') {
     const prCount = getCustomerVisiblePrCount(summary, status)
     if (prCount > 0) {
-      return `${prCount} PRs created`
+      return `${pluralize(prCount, 'PR')} created`
     }
     if (hasTypedNoPrReason(summary)) {
       return `No customer-visible PRs created${formatNoCustomerPrReason(summary)}`
@@ -836,12 +849,7 @@ function formatSummaryDetails(
     }
     const warningCount = status.self_validation_warning_count || 0
     if (warningCount > 0) {
-      parts.push(
-        `${pluralize(
-          warningCount,
-          'remediation unit'
-        )} passed security with functional/quality warnings`
-      )
+      parts.push(formatFunctionalQualityWarnings(warningCount))
     }
     const failureCount = status.self_validation_failure_count || 0
     if (failureCount > 0) {
@@ -1409,10 +1417,9 @@ export function formatRemediationResults(
       }
       if (warningCount > 0) {
         lines.push(
-          `├─ Functional/Quality Warnings: ${pluralize(
-            warningCount,
-            'remediation unit'
-          )} passed security`
+          `├─ Functional/Quality Warnings: ${formatFunctionalQualityWarnings(
+            warningCount
+          )}`
         )
       }
       if (failureCount > 0) {

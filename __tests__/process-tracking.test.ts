@@ -213,7 +213,36 @@ describe('formatStageStatus', () => {
             customer_visible_pr_count: 1
           }
         )
-      ).toBe('✅ Pull Requests: Completed (1 PRs created)')
+      ).toBe('✅ Pull Requests: Completed (1 PR created)')
+    })
+
+    it('explains push-stage non-PR remediation units', () => {
+      expect(
+        formatStageStatus(
+          'push',
+          {
+            status: 'completed',
+            progress_percentage: 100,
+            total_items: 2,
+            processed_items: 2,
+            success_count: 1,
+            error_count: 1,
+            false_positive_count: 0,
+            self_validation_warning_count: 0,
+            self_validation_failure_count: 0,
+            additional_context_required_count: 0,
+            needs_manual_review_count: 0,
+            handled_error_count: 0
+          },
+          undefined,
+          {
+            pr_count: 1,
+            customer_visible_pr_count: 1
+          }
+        )
+      ).toBe(
+        '✅ Pull Requests: Completed (1 PR created, 1 remediation unit did not produce customer-visible PRs)'
+      )
     })
 
     it('shows confirmed vulnerabilities processed for remediation stage', () => {
@@ -252,7 +281,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (6 confirmed vulnerabilities processed, 2 remediation units passed security with functional/quality warnings)'
+        '✅ Remediation: Completed (6 confirmed vulnerabilities processed, 2 confirmed vulnerabilities passed security; functional/quality checks failed)'
       )
     })
 
@@ -294,7 +323,7 @@ describe('formatStageStatus', () => {
           handled_error_count: 0
         })
       ).toBe(
-        '✅ Remediation: Completed (8 confirmed vulnerabilities processed, 2 remediation units passed security with functional/quality warnings, 1 skipped (security not resolved), 1 errors)'
+        '✅ Remediation: Completed (8 confirmed vulnerabilities processed, 2 confirmed vulnerabilities passed security; functional/quality checks failed, 1 skipped (security not resolved), 1 errors)'
       )
     })
 
