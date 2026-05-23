@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.20",
+  "version": "1.1.21",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -75,7 +75,6 @@
     "jest": "^29.7.0",
     "make-coverage-badge": "^1.2.0",
     "prettier": "^3.8.1",
-    "prettier-eslint": "^16.3.0",
     "rollup": "^4.59.0",
     "ts-jest": "^29.4.6",
     "ts-jest-resolver": "^2.0.1",
