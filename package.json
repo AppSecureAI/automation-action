@@ -41,7 +41,10 @@
     "package:watch": "npm run package -- --watch",
     "pretest": "npm run generate-version",
     "test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
-    "all": "npm run format:write && npm run lint && npm run test && npm run coverage && npm run package"
+    "all": "npm run format:write && npm run lint && npm run test && npm run coverage && npm run package",
+    "check:supply-chain-catalog": "node scripts/supply-chain-guard.mjs",
+    "test:supply-chain-guard": "node scripts/supply-chain-guard.mjs --self-test",
+    "check:dependency-review": "npm audit --package-lock-only --audit-level=high"
   },
   "license": "MIT",
   "dependencies": {
