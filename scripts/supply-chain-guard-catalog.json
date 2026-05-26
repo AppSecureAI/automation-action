@@ -71,11 +71,7 @@
     "ts-dna",
     "wot-api"
   ],
-  "compromised_pypi_names": [
-    "git-tanstack",
-    "guardrails-ai",
-    "mistralai"
-  ],
+  "compromised_pypi_names": ["git-tanstack", "guardrails-ai", "mistralai"],
   "payload_filenames": [
     "gh-token-monitor.sh",
     "kitty-monitor.service",
