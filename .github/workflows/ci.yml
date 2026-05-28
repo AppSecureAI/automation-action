@@ -1,0 +1,31 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify generated version file is up to date
+        run: |
+          npm run generate-version
+          git diff --exit-code src/version.ts
+      - name: Enforce version parity
+        run: ./scripts/check-version-parity.sh
+      - name: Validate mirror sync dry-run
+        run: ./scripts/publish-public.sh --dry-run --verbose
+      - run: npm run format:check
+      - run: npm run check:dependency-pinning
+      - run: npm run lint
+      - run: npm test -- --runInBand
+      - run: npm run package
