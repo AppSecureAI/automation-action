@@ -40297,10 +40297,7 @@ const PollingConfig = {
     /** Display progress messages every 30 seconds during submission */
     INTERVAL_CHECK_MS: 30000,
     /** Maximum number of polling attempts (240 retries × 30s = ~2 hours total) */
-    MAX_RETRIES: 240,
-    /** HTTP timeout for status endpoint calls (15 seconds) */
-    STATUS_TIMEOUT_MS: 15000
-};
+    MAX_RETRIES: 240};
 /**
  * ASCII art logo for console output
  */
@@ -62972,6 +62969,108 @@ const {
   create,
 } = axios;
 
+// src/common/core/index.ts
+// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
+// This software and its source code are the proprietary information of AppSecAI, Inc.
+// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
+const API_TIMEOUT = 8 * 60 * 1000;
+const STATUS_TIMEOUT = 15 * 1000;
+const FINALIZE_TIMEOUT = 30 * 1000;
+const SUBMIT_RETRY_MAX_RETRIES = 4;
+const SUBMIT_RETRY_BASE_DELAY_MS = process.env.NODE_ENV === 'test' ? 10 : 2000;
+function isRetriableError(error) {
+    if (!axios.isAxiosError(error))
+        return false;
+    if (!error.response)
+        return true;
+    return error.response.status >= 500;
+}
+async function fetchWithRetry(fn, maxRetries = 3, baseDelayMs = 1000) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        }
+        catch (error) {
+            if (attempt === maxRetries || !isRetriableError(error)) {
+                throw error;
+            }
+            const delayMs = baseDelayMs * Math.pow(2, attempt);
+            coreExports.debug(`Retriable error on attempt ${attempt + 1}/${maxRetries + 1}, retrying in ${delayMs}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+    throw new Error('fetchWithRetry: unreachable');
+}
+function buildSubmitFormData(inputFiles, payload) {
+    const formData = new FormData();
+    if (inputFiles.length === 1) {
+        formData.append('file', new Blob([inputFiles[0].buffer]), inputFiles[0].path);
+    }
+    else {
+        for (const inputFile of inputFiles) {
+            formData.append('files', new Blob([inputFile.buffer]), inputFile.path);
+        }
+    }
+    formData.append('processing_mode', payload.processingMode);
+    if (payload.llmProfile !== undefined) {
+        formData.append('llm_profile', payload.llmProfile);
+    }
+    formData.append('auto_create_prs', String(payload.autoCreatePrs));
+    formData.append('create_issues_for_incomplete_remediations', String(payload.createIssuesForIncompleteRemediations));
+    formData.append('comment_modification_mode', payload.commentModificationMode);
+    if (payload.maxVulnerabilitiesPerPr !== undefined) {
+        formData.append('max_vulnerabilities_per_pr', String(payload.maxVulnerabilitiesPerPr));
+    }
+    if (payload.groupingStrategy !== undefined) {
+        formData.append('grouping_strategy', payload.groupingStrategy);
+    }
+    if (payload.groupingStage !== undefined) {
+        formData.append('grouping_stage', payload.groupingStage);
+    }
+    return formData;
+}
+class AppSecAIRuntime {
+    apiUrl;
+    getAuthToken;
+    transport;
+    constructor(config) {
+        this.apiUrl = config.apiUrl;
+        this.getAuthToken = config.getAuthToken;
+        this.transport = config.transport ?? axios;
+    }
+    async submitRun(inputFiles, payload) {
+        const formData = buildSubmitFormData(inputFiles, payload);
+        const url = `${this.apiUrl}/api-product/submit`;
+        return fetchWithRetry(async () => this.transport.post(url, formData, await this.buildRequestConfig(API_TIMEOUT)), SUBMIT_RETRY_MAX_RETRIES, SUBMIT_RETRY_BASE_DELAY_MS);
+    }
+    async getStatus(runId, options = {}) {
+        const url = options.organizationId
+            ? new URL(`${this.apiUrl}/api-product/organizations/${options.organizationId}/runs/${runId}/status`)
+            : new URL(`${this.apiUrl}/api-product/submit/status/${runId}`);
+        return fetchWithRetry(async () => this.transport.get(url.toString(), await this.buildRequestConfig(STATUS_TIMEOUT)), 2, 500);
+    }
+    async finalizeRun(runId, options = {}) {
+        const url = options.organizationId
+            ? new URL(`${this.apiUrl}/api-product/organizations/${options.organizationId}/runs/${runId}/compute-summary`)
+            : new URL(`${this.apiUrl}/api-product/runs/${runId}/compute-summary`);
+        return this.transport.post(url.toString(), {}, await this.buildRequestConfig(FINALIZE_TIMEOUT));
+    }
+    async buildRequestConfig(timeout) {
+        const token = await this.getAuthToken(this.apiUrl);
+        return {
+            headers: token
+                ? {
+                    Authorization: `Bearer ${token}`
+                }
+                : undefined,
+            timeout
+        };
+    }
+}
+function createAppSecAIRuntime(config) {
+    return new AppSecAIRuntime(config);
+}
+
 var util;
 (function (util) {
     util.assertEqual = (_) => { };
@@ -71887,6 +71986,13 @@ const RemediateMethod = {
     BASELINE: 'baseline',
     ADVANCED: 'advanced'
 };
+const LlmProfile = {
+    PROD: 'prod',
+    MOCK: 'mock',
+    CHEAP: 'cheap',
+    BALANCED: 'balanced',
+    FINAL: 'final'
+};
 const ValidateMethod = {
     BASELINE: 'baseline',
     ADVANCED: 'advanced'
@@ -72043,6 +72149,17 @@ function getRemediateMethod() {
         return RemediateMethod.ADVANCED;
     }
     return method;
+}
+function getLlmProfile() {
+    const profile = getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE');
+    if (profile === '') {
+        return undefined;
+    }
+    if (!Object.values(LlmProfile).includes(profile)) {
+        const allowedProfiles = Object.values(LlmProfile).join(', ');
+        throw new Error(`Invalid llm-profile "${profile}". Allowed values: ${allowedProfiles}.`);
+    }
+    return profile;
 }
 function getUseValidateCc() {
     const value = getInputValue('use-validate-cc', 'INPUT_USE_VALIDATE_CC', 'USE_VALIDATE_CC') || 'false';
@@ -73666,49 +73783,6 @@ function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
 // Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 // This software and its source code are the proprietary information of AppSecAI, Inc.
 // Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
-const API_TIMEOUT = 8 * 60 * 1000;
-const SUBMIT_RETRY_MAX_RETRIES = 4;
-const SUBMIT_RETRY_BASE_DELAY_MS = process.env.NODE_ENV === 'test' ? 10 : 2000;
-/**
- * Check whether an axios error is retriable (transient network or server error).
- * Retries on network errors (timeout, connection reset) and HTTP 5xx responses.
- * Does NOT retry on 4xx or successful responses with error payloads.
- */
-function isRetriableError(error) {
-    if (!axios.isAxiosError(error))
-        return false;
-    // Network errors without a response (timeout, connection reset, DNS)
-    if (!error.response)
-        return true;
-    // Server errors from load balancer / upstream
-    const status = error.response.status;
-    return status >= 500;
-}
-/**
- * Execute an async function with exponential backoff retry on transient errors.
- *
- * @param fn - The async function to execute
- * @param maxRetries - Maximum number of retry attempts (default: 3)
- * @param baseDelayMs - Base delay in ms before exponential backoff (default: 1000)
- * @returns The result of the function
- */
-async function fetchWithRetry(fn, maxRetries = 3, baseDelayMs = 1000) {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            return await fn();
-        }
-        catch (error) {
-            if (attempt === maxRetries || !isRetriableError(error)) {
-                throw error;
-            }
-            const delayMs = baseDelayMs * Math.pow(2, attempt);
-            coreExports.debug(`Retriable error on attempt ${attempt + 1}/${maxRetries + 1}, retrying in ${delayMs}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-    }
-    // Unreachable, but TypeScript needs it
-    throw new Error('fetchWithRetry: unreachable');
-}
 /**
  * Parse an axios error response into a structured ParsedApiError object.
  * Extracts HTTP status code, error codes, and detailed information from the response body.
@@ -73870,43 +73944,39 @@ function formatStructuredError(errorCode, details, prefixLabel) {
     const description = details.description ?? 'An error occurred. Please try again.';
     return `${prefixLabel} [${errorCode}] ${description}`;
 }
+function getActionRuntime() {
+    return createAppSecAIRuntime({
+        apiUrl: getApiUrl(),
+        getAuthToken: getIdToken
+    });
+}
+function buildSubmitPayloadOptions(mode, llmProfile) {
+    return {
+        processingMode: mode,
+        autoCreatePrs: getAutoCreatePrs(),
+        createIssuesForIncompleteRemediations: getCreateIssuesForIncompleteRemediations(),
+        commentModificationMode: getCommentModificationMode(),
+        llmProfile,
+        maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
+            ? getMaxVulnerabilitiesPerPr()
+            : undefined,
+        groupingStrategy: isGroupingStrategyConfigured()
+            ? getGroupingStrategy()
+            : undefined,
+        groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined
+    };
+}
 async function submitRun(file, fileName) {
-    const apiUrl = getApiUrl();
-    const token = await getIdToken(apiUrl);
-    const url = `${apiUrl}/api-product/submit`;
     const mode = getMode();
+    const llmProfile = getLlmProfile();
     coreExports.info(`Processing mode: ${mode}`);
+    if (llmProfile) {
+        coreExports.info(`LLM profile: ${llmProfile}`);
+    }
     const inputFiles = Array.isArray(file)
         ? file
         : [{ path: 'results.sarif', buffer: file }];
-    const formData = new FormData();
-    if (inputFiles.length === 1) {
-        formData.append('file', new Blob([inputFiles[0].buffer]), inputFiles[0].path);
-    }
-    else {
-        for (const inputFile of inputFiles) {
-            formData.append('files', new Blob([inputFile.buffer]), inputFile.path);
-        }
-    }
-    formData.append('processing_mode', mode);
-    // Add PR creation flag
-    formData.append('auto_create_prs', String(getAutoCreatePrs()));
-    // Add flag for creating issues instead of PRs for incomplete remediations
-    formData.append('create_issues_for_incomplete_remediations', String(getCreateIssuesForIncompleteRemediations()));
-    // Add comment modification mode
-    formData.append('comment_modification_mode', getCommentModificationMode());
-    // max_vulnerabilities_per_pr is supported by Hydra and is forwarded when configured.
-    if (isMaxVulnerabilitiesPerPrConfigured()) {
-        formData.append('max_vulnerabilities_per_pr', String(getMaxVulnerabilitiesPerPr()));
-    }
-    // grouping_enabled remains implicit in processing_mode, but explicit per-run
-    // overrides can now flow through Hydra and Product.
-    if (isGroupingStrategyConfigured()) {
-        formData.append('grouping_strategy', getGroupingStrategy());
-    }
-    if (isGroupingStageConfigured()) {
-        formData.append('grouping_stage', getGroupingStage());
-    }
+    const submitPayload = buildSubmitPayloadOptions(mode, llmProfile);
     if (getGroupingEnabled()) {
         coreExports.debug('grouping-enabled is set; grouping behavior remains inferred from processing_mode.');
     }
@@ -73915,17 +73985,10 @@ async function submitRun(file, fileName) {
         coreExports.warning('update-context is set but is not supported in the current submit contract and will be ignored.');
     }
     coreExports.debug('Calling submit API: POST /api-product/submit');
-    const setup = {
-        headers: token
-            ? {
-                Authorization: `Bearer ${token}`
-            }
-            : undefined,
-        timeout: API_TIMEOUT
-    };
     const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`;
     coreExports.info(`${prefixLabel} Submitting ${inputFiles.length} analysis result file${inputFiles.length === 1 ? '' : 's'} for processing: ${inputFiles.map((inputFile) => inputFile.path).join(', ')}`);
-    return fetchWithRetry(() => axios.post(url, formData, setup), SUBMIT_RETRY_MAX_RETRIES, SUBMIT_RETRY_BASE_DELAY_MS)
+    return getActionRuntime()
+        .submitRun(inputFiles, submitPayload)
         .then((response) => {
         const parsedResponse = RunResponseSchema.safeParse(response.data);
         if (!parsedResponse.success) {
@@ -74056,21 +74119,13 @@ async function submitRun(file, fileName) {
 }
 async function getStatus(id, organizationId) {
     const apiUrl = getApiUrl();
-    const token = await getIdToken(apiUrl);
     const url = organizationId
         ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${id}/status`)
         : new URL(`${apiUrl}/api-product/submit/status/${id}`);
     const prefixLabel = `[${LogLabels.RUN_STATUS}]`;
     coreExports.debug(`Calling status API: GET ${url.pathname}${url.search}`);
-    const setup = {
-        headers: token
-            ? {
-                Authorization: `Bearer ${token}`
-            }
-            : undefined,
-        timeout: PollingConfig.STATUS_TIMEOUT_MS
-    };
-    return fetchWithRetry(() => axios.get(url.toString(), setup), 2, 500)
+    return getActionRuntime()
+        .getStatus(id, { organizationId })
         .then((response) => {
         const parsedResponse = ResponseStatusSchema.safeParse(response.data);
         if (!parsedResponse.success) {
@@ -74434,25 +74489,18 @@ function delay(ms) {
 async function finalizeRun(runId, options = {}) {
     const { expectedPrCount, organizationId, maxRetries = 3, retryDelay = 2000 } = options;
     const apiUrl = getApiUrl();
-    const token = await getIdToken(apiUrl);
     const url = organizationId
         ? new URL(`${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`)
         : new URL(`${apiUrl}/api-product/runs/${runId}/compute-summary`);
     const prefixLabel = `[${LogLabels.RUN_FINALIZE}]`;
     coreExports.debug(`Calling finalize API: POST ${url.pathname}${url.search}`);
-    const setup = {
-        headers: token
-            ? {
-                Authorization: `Bearer ${token}`
-            }
-            : undefined,
-        timeout: 30000
-    };
     let lastSummary = null;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         coreExports.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`);
         try {
-            const response = await axios.post(url.toString(), {}, setup);
+            const response = await getActionRuntime().finalizeRun(runId, {
+                organizationId
+            });
             const parsed = RunSummarySchema.safeParse(response.data);
             if (!parsed.success) {
                 coreExports.warning(`${prefixLabel}: Received unexpected response format from finalize API`);
@@ -74517,7 +74565,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.21';
+const VERSION = '1.1.22';
 const CLIENT_VERSION = VERSION;
 
 var re = {exports: {}};

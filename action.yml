@@ -13,15 +13,15 @@ branding:
 inputs:
   api-url:
     description:
-      The AppSecAI API base URL. Defaults to the AppSecAI production endpoint.
-      Override only when targeting a non-production AppSecAI deployment (for
-      example, an integration or pre-release environment).
+      AppSecAI API base URL. Leave unset unless AppSecAI Support provides a
+      custom endpoint.
     required: false
     default: 'https://gh.cloud.appsecai.io'
 
   file:
     description:
-      The SARIF, JSON, CSV, or TSV file containing security scan results
+      One SARIF, JSON, CSV, or TSV file containing security scan results. Use
+      either file or files, not both.
     required: false
 
   files:

@@ -29,6 +29,7 @@ const mockGetGroupingStrategy = jest.fn()
 const mockIsGroupingStrategyConfigured = jest.fn()
 const mockGetGroupingStage = jest.fn()
 const mockIsGroupingStageConfigured = jest.fn()
+const mockGetLlmProfile = jest.fn()
 const mockGetUpdateContext = jest.fn()
 
 jest.mock('../src/input', () => ({
@@ -46,6 +47,7 @@ jest.mock('../src/input', () => ({
   isGroupingStrategyConfigured: mockIsGroupingStrategyConfigured,
   getGroupingStage: mockGetGroupingStage,
   isGroupingStageConfigured: mockIsGroupingStageConfigured,
+  getLlmProfile: mockGetLlmProfile,
   getUpdateContext: mockGetUpdateContext
 }))
 jest.mock('../src/store', () => ({
@@ -101,6 +103,7 @@ describe('service.ts', () => {
     mockIsGroupingStrategyConfigured.mockReturnValue(false)
     mockGetGroupingStage.mockReturnValue('pre_push')
     mockIsGroupingStageConfigured.mockReturnValue(false)
+    mockGetLlmProfile.mockReturnValue(undefined)
     mockGetUpdateContext.mockReturnValue(false)
     store.finalLogPrinted = {}
     logSteps.mockClear()
@@ -286,7 +289,9 @@ describe('service.ts', () => {
         'AUTO_CREATE_PRS',
         'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
         'COMMENT_MODIFICATION_MODE',
-        'MAX_VULNERABILITIES_PER_PR'
+        'MAX_VULNERABILITIES_PER_PR',
+        'APPSECAI_LLM_PROFILE',
+        'INPUT_LLM_PROFILE'
       ]
 
       beforeEach(() => {
@@ -354,6 +359,36 @@ describe('service.ts', () => {
         await submitRun(buf, 'file.json')
         const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
         expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
+      })
+
+      it('omits llm_profile when LLM profile is omitted', async () => {
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('llm_profile')).toBeNull()
+      })
+
+      it('includes llm_profile when LLM profile is configured', async () => {
+        process.env.APPSECAI_LLM_PROFILE = 'balanced'
+        mockGetLlmProfile.mockReturnValue('balanced')
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('llm_profile')).toBe('balanced')
+      })
+
+      it('fails before submit when LLM profile is invalid', async () => {
+        process.env.APPSECAI_LLM_PROFILE = 'turbo'
+        mockGetLlmProfile.mockImplementation(() => {
+          throw new Error(
+            'Invalid llm-profile "turbo". Allowed values: prod, mock, cheap, balanced, final.'
+          )
+        })
+        const buf = Buffer.from('{}')
+        await expect(submitRun(buf, 'file.json')).rejects.toThrow(
+          'Invalid llm-profile'
+        )
+        expect(axios.post).not.toHaveBeenCalled()
       })
 
       it('uses repeated files fields for multi-SAST submissions', async () => {

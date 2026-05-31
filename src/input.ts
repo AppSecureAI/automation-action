@@ -8,6 +8,7 @@ import {
   ProcessingModeExternal,
   TriageMethod,
   RemediateMethod,
+  LlmProfile,
   ValidateMethod,
   CommentModificationMode,
   GroupingStrategy,
@@ -154,6 +155,27 @@ export function getRemediateMethod(): RemediateMethod {
     return RemediateMethod.ADVANCED
   }
   return method as RemediateMethod
+}
+
+export function getLlmProfile(): LlmProfile | undefined {
+  const profile = getInputValue(
+    'llm-profile',
+    'INPUT_LLM_PROFILE',
+    'APPSECAI_LLM_PROFILE'
+  )
+
+  if (profile === '') {
+    return undefined
+  }
+
+  if (!(Object.values(LlmProfile) as string[]).includes(profile)) {
+    const allowedProfiles = Object.values(LlmProfile).join(', ')
+    throw new Error(
+      `Invalid llm-profile "${profile}". Allowed values: ${allowedProfiles}.`
+    )
+  }
+
+  return profile as LlmProfile
 }
 
 export function getUseValidateCc(): boolean {

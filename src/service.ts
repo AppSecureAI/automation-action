@@ -6,6 +6,11 @@
 import * as core from '@actions/core'
 import axios from 'axios'
 import {
+  createAppSecAIRuntime,
+  type SubmitPayloadOptions
+} from './common/core/index.js'
+export { fetchWithRetry } from './common/core/index.js'
+import {
   RunResponseSchema,
   ResponseStatusSchema,
   StepListSchema,
@@ -22,6 +27,7 @@ import {
   getCommentModificationMode,
   getGroupingStage,
   getGroupingStrategy,
+  getLlmProfile,
   getMaxVulnerabilitiesPerPr,
   isGroupingStageConfigured,
   isGroupingStrategyConfigured,
@@ -45,58 +51,8 @@ import {
   LogLabels,
   BILLING_URL,
   SUPPORT_EMAIL,
-  STATUS_PAGE_URL,
-  PollingConfig
+  STATUS_PAGE_URL
 } from './constants.js'
-
-const API_TIMEOUT = 8 * 60 * 1000
-const SUBMIT_RETRY_MAX_RETRIES = 4
-const SUBMIT_RETRY_BASE_DELAY_MS = process.env.NODE_ENV === 'test' ? 10 : 2000
-
-/**
- * Check whether an axios error is retriable (transient network or server error).
- * Retries on network errors (timeout, connection reset) and HTTP 5xx responses.
- * Does NOT retry on 4xx or successful responses with error payloads.
- */
-function isRetriableError(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false
-  // Network errors without a response (timeout, connection reset, DNS)
-  if (!error.response) return true
-  // Server errors from load balancer / upstream
-  const status = error.response.status
-  return status >= 500
-}
-
-/**
- * Execute an async function with exponential backoff retry on transient errors.
- *
- * @param fn - The async function to execute
- * @param maxRetries - Maximum number of retry attempts (default: 3)
- * @param baseDelayMs - Base delay in ms before exponential backoff (default: 1000)
- * @returns The result of the function
- */
-export async function fetchWithRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = 3,
-  baseDelayMs = 1000
-): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (attempt === maxRetries || !isRetriableError(error)) {
-        throw error
-      }
-      const delayMs = baseDelayMs * Math.pow(2, attempt)
-      core.debug(
-        `Retriable error on attempt ${attempt + 1}/${maxRetries + 1}, retrying in ${delayMs}ms...`
-      )
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-    }
-  }
-  // Unreachable, but TypeScript needs it
-  throw new Error('fetchWithRetry: unreachable')
-}
 
 /**
  * Parse an axios error response into a structured ParsedApiError object.
@@ -304,64 +260,50 @@ function formatStructuredError(
   return `${prefixLabel} [${errorCode}] ${description}`
 }
 
+function getActionRuntime() {
+  return createAppSecAIRuntime({
+    apiUrl: getApiUrl(),
+    getAuthToken: getIdToken
+  })
+}
+
+function buildSubmitPayloadOptions(
+  mode: string,
+  llmProfile?: string
+): SubmitPayloadOptions {
+  return {
+    processingMode: mode,
+    autoCreatePrs: getAutoCreatePrs(),
+    createIssuesForIncompleteRemediations:
+      getCreateIssuesForIncompleteRemediations(),
+    commentModificationMode: getCommentModificationMode(),
+    llmProfile,
+    maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
+      ? getMaxVulnerabilitiesPerPr()
+      : undefined,
+    groupingStrategy: isGroupingStrategyConfigured()
+      ? getGroupingStrategy()
+      : undefined,
+    groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined
+  }
+}
+
 export async function submitRun(
   file: Buffer | SastInputFile[],
   fileName?: string
 ): Promise<SubmitRunOutput> {
-  const apiUrl = getApiUrl()
-  const token = await getIdToken(apiUrl)
-  const url = `${apiUrl}/api-product/submit`
   const mode = getMode()
+  const llmProfile = getLlmProfile()
 
   core.info(`Processing mode: ${mode}`)
+  if (llmProfile) {
+    core.info(`LLM profile: ${llmProfile}`)
+  }
 
   const inputFiles = Array.isArray(file)
     ? file
     : [{ path: fileName ?? 'results.sarif', buffer: file }]
-
-  const formData = new FormData()
-  if (inputFiles.length === 1) {
-    formData.append(
-      'file',
-      new Blob([inputFiles[0].buffer]),
-      inputFiles[0].path
-    )
-  } else {
-    for (const inputFile of inputFiles) {
-      formData.append('files', new Blob([inputFile.buffer]), inputFile.path)
-    }
-  }
-  formData.append('processing_mode', mode)
-
-  // Add PR creation flag
-  formData.append('auto_create_prs', String(getAutoCreatePrs()))
-
-  // Add flag for creating issues instead of PRs for incomplete remediations
-  formData.append(
-    'create_issues_for_incomplete_remediations',
-    String(getCreateIssuesForIncompleteRemediations())
-  )
-
-  // Add comment modification mode
-  formData.append('comment_modification_mode', getCommentModificationMode())
-
-  // max_vulnerabilities_per_pr is supported by Hydra and is forwarded when configured.
-  if (isMaxVulnerabilitiesPerPrConfigured()) {
-    formData.append(
-      'max_vulnerabilities_per_pr',
-      String(getMaxVulnerabilitiesPerPr())
-    )
-  }
-
-  // grouping_enabled remains implicit in processing_mode, but explicit per-run
-  // overrides can now flow through Hydra and Product.
-  if (isGroupingStrategyConfigured()) {
-    formData.append('grouping_strategy', getGroupingStrategy())
-  }
-
-  if (isGroupingStageConfigured()) {
-    formData.append('grouping_stage', getGroupingStage())
-  }
+  const submitPayload = buildSubmitPayloadOptions(mode, llmProfile)
 
   if (getGroupingEnabled()) {
     core.debug(
@@ -378,24 +320,13 @@ export async function submitRun(
 
   core.debug('Calling submit API: POST /api-product/submit')
 
-  const setup = {
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`
-        }
-      : undefined,
-    timeout: API_TIMEOUT
-  }
   const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`
   core.info(
     `${prefixLabel} Submitting ${inputFiles.length} analysis result file${inputFiles.length === 1 ? '' : 's'} for processing: ${inputFiles.map((inputFile) => inputFile.path).join(', ')}`
   )
 
-  return fetchWithRetry(
-    () => axios.post(url, formData, setup),
-    SUBMIT_RETRY_MAX_RETRIES,
-    SUBMIT_RETRY_BASE_DELAY_MS
-  )
+  return getActionRuntime()
+    .submitRun(inputFiles, submitPayload)
     .then((response) => {
       const parsedResponse = RunResponseSchema.safeParse(response.data)
 
@@ -537,7 +468,6 @@ export async function getStatus(
   organizationId?: string
 ): Promise<StatusResult> {
   const apiUrl = getApiUrl()
-  const token = await getIdToken(apiUrl)
   const url = organizationId
     ? new URL(
         `${apiUrl}/api-product/organizations/${organizationId}/runs/${id}/status`
@@ -547,16 +477,8 @@ export async function getStatus(
 
   core.debug(`Calling status API: GET ${url.pathname}${url.search}`)
 
-  const setup = {
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`
-        }
-      : undefined,
-    timeout: PollingConfig.STATUS_TIMEOUT_MS
-  }
-
-  return fetchWithRetry(() => axios.get(url.toString(), setup), 2, 500)
+  return getActionRuntime()
+    .getStatus(id, { organizationId })
     .then((response) => {
       const parsedResponse = ResponseStatusSchema.safeParse(response.data)
 
@@ -1027,7 +949,6 @@ export async function finalizeRun(
     retryDelay = 2000
   } = options
   const apiUrl = getApiUrl()
-  const token = await getIdToken(apiUrl)
   const url = organizationId
     ? new URL(
         `${apiUrl}/api-product/organizations/${organizationId}/runs/${runId}/compute-summary`
@@ -1037,22 +958,15 @@ export async function finalizeRun(
 
   core.debug(`Calling finalize API: POST ${url.pathname}${url.search}`)
 
-  const setup = {
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`
-        }
-      : undefined,
-    timeout: 30000
-  }
-
   let lastSummary: RunSummary | null = null
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     core.debug(`${prefixLabel}: Finalize attempt ${attempt}/${maxRetries}`)
 
     try {
-      const response = await axios.post(url.toString(), {}, setup)
+      const response = await getActionRuntime().finalizeRun(runId, {
+        organizationId
+      })
       const parsed = RunSummarySchema.safeParse(response.data)
 
       if (!parsed.success) {

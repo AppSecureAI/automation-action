@@ -21,6 +21,7 @@ const {
   getTriageMethod,
   getUseRemediateCc,
   getRemediateMethod,
+  getLlmProfile,
   getUseValidateCc,
   getValidateMethod,
   getUseRemediateLoopCc,
@@ -47,6 +48,7 @@ const {
 const {
   ProcessingModeExternal,
   CommentModificationMode,
+  LlmProfile,
   GroupingStrategy,
   GroupingStage
 } = await import('../src/types.js')
@@ -71,6 +73,7 @@ describe('input.ts', () => {
       'INPUT_TRIAGE_METHOD',
       'INPUT_USE_REMEDIATE_CC',
       'INPUT_REMEDIATE_METHOD',
+      'INPUT_LLM_PROFILE',
       'INPUT_USE_VALIDATE_CC',
       'INPUT_VALIDATE_METHOD',
       'INPUT_USE_REMEDIATE_LOOP_CC',
@@ -97,6 +100,7 @@ describe('input.ts', () => {
       'TRIAGE_METHOD',
       'USE_REMEDIATE_CC',
       'REMEDIATE_METHOD',
+      'APPSECAI_LLM_PROFILE',
       'USE_VALIDATE_CC',
       'VALIDATE_METHOD',
       'USE_REMEDIATE_LOOP_CC',
@@ -655,6 +659,47 @@ describe('input.ts', () => {
         expect(getCommentModificationMode()).toBe(
           CommentModificationMode.VERBOSE
         )
+      })
+    })
+
+    describe('getLlmProfile', () => {
+      it('returns undefined when omitted', () => {
+        core.getInput.mockReturnValue('')
+        expect(getLlmProfile()).toBeUndefined()
+      })
+
+      it.each([
+        LlmProfile.PROD,
+        LlmProfile.MOCK,
+        LlmProfile.CHEAP,
+        LlmProfile.BALANCED,
+        LlmProfile.FINAL
+      ])('returns valid profile %s', (profile) => {
+        core.getInput.mockImplementation((name) => {
+          if (name === 'llm-profile') return profile
+          return ''
+        })
+        expect(getLlmProfile()).toBe(profile)
+      })
+
+      it('throws for invalid value', () => {
+        core.getInput.mockImplementation((name) => {
+          if (name === 'llm-profile') return 'turbo'
+          return ''
+        })
+        expect(() => getLlmProfile()).toThrow('Invalid llm-profile')
+      })
+
+      it('prefers APPSECAI_LLM_PROFILE workflow env var', () => {
+        process.env.APPSECAI_LLM_PROFILE = LlmProfile.CHEAP
+        core.getInput.mockReturnValue(LlmProfile.FINAL)
+        expect(getLlmProfile()).toBe(LlmProfile.CHEAP)
+      })
+
+      it('prefers INPUT_LLM_PROFILE environment variable over core.getInput', () => {
+        process.env.INPUT_LLM_PROFILE = LlmProfile.BALANCED
+        core.getInput.mockReturnValue(LlmProfile.FINAL)
+        expect(getLlmProfile()).toBe(LlmProfile.BALANCED)
       })
     })
 

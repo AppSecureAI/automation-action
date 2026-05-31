@@ -47,6 +47,16 @@ export const RemediateMethod = {
 export type RemediateMethod =
   (typeof RemediateMethod)[keyof typeof RemediateMethod]
 
+export const LlmProfile = {
+  PROD: 'prod',
+  MOCK: 'mock',
+  CHEAP: 'cheap',
+  BALANCED: 'balanced',
+  FINAL: 'final'
+} as const
+
+export type LlmProfile = (typeof LlmProfile)[keyof typeof LlmProfile]
+
 export const ValidateMethod = {
   BASELINE: 'baseline',
   ADVANCED: 'advanced'
