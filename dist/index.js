@@ -72351,6 +72351,27 @@ function formatFunctionalQualityWarnings(count) {
 function formatNonPrRemediationUnits(count) {
     return `${pluralize(count, 'remediation unit')} did not produce customer-visible PRs`;
 }
+function getRemainingRemediationUnits(status) {
+    return Math.max(0, (status.total_items || 0) - (status.processed_items || 0));
+}
+function formatPushCreatedProgress(status, prCount) {
+    if ((status.total_items || 0) <= 0) {
+        return null;
+    }
+    return `${prCount} of ~${status.total_items} created`;
+}
+function appendPushUnitProgressDetails(details, status) {
+    if ((status.total_items || 0) <= 0) {
+        return;
+    }
+    details.unshift(`${pluralize(getRemainingRemediationUnits(status), 'remediation unit')} remaining`);
+}
+function appendPushCompletionUnitTotal(details, status) {
+    if ((status.total_items || 0) <= 0 || details.length === 0) {
+        return;
+    }
+    details.push(`across ${pluralize(status.total_items, 'remediation unit')}`);
+}
 function getNumericField(source, fields) {
     if (!source)
         return 0;
@@ -72689,6 +72710,7 @@ function formatStageStatus(name, status, remediationLoopStatus, summary, runStat
             if (status.error_count > 0) {
                 details.push(formatNonPrRemediationUnits(status.error_count));
             }
+            appendPushCompletionUnitTotal(details, status);
         }
         else if (name === 'find') {
             // For find/scan, show vulnerabilities found
@@ -72773,14 +72795,23 @@ function formatStageStatus(name, status, remediationLoopStatus, summary, runStat
             if (remainingVulns > 0) {
                 details.push(`${remainingVulns} still in remediation`);
             }
-            else {
+            else if ((status.total_items || 0) <= 0) {
                 details.push('more expected as remediation continues');
+            }
+            const pushProgress = formatPushCreatedProgress(status, prCount);
+            if (pushProgress) {
+                appendPushUnitProgressDetails(details, status);
+                return `${STATUS_ICONS.in_progress} ${displayName}: ${pushProgress} (${details.join(', ')})`;
             }
             return `${STATUS_ICONS.in_progress} ${displayName}: ${pluralize(prCount, 'PR')} created (${details.join(', ')})`;
         }
         // For push, use PR terminology
         if (name === 'push') {
             const prCount = getCustomerVisiblePrCount(summary, status);
+            const pushProgress = formatPushCreatedProgress(status, prCount);
+            if (pushProgress) {
+                return `${STATUS_ICONS.in_progress} ${displayName}: ${pushProgress} (${pluralize(getRemainingRemediationUnits(status), 'remediation unit')} remaining, ${pct}%)`;
+            }
             const totalPrs = summary?.customer_visible_pr_count ?? status.total_items;
             return `${STATUS_ICONS.in_progress} ${displayName}: ${prCount}/${totalPrs} PRs (${pct}%)`;
         }
@@ -72903,8 +72934,16 @@ function formatSummaryDetails(name, status, summary) {
     }
     else if (name === 'push') {
         const prCount = getCustomerVisiblePrCount(summary, status);
+        const parts = [];
         if (prCount > 0) {
-            return `${pluralize(prCount, 'PR')} created`;
+            parts.push(`${pluralize(prCount, 'PR')} created`);
+        }
+        if (status.error_count > 0) {
+            parts.push(formatNonPrRemediationUnits(status.error_count));
+        }
+        appendPushCompletionUnitTotal(parts, status);
+        if (parts.length > 0) {
+            return parts.join(', ');
         }
         if (hasTypedNoPrReason(summary)) {
             return `No customer-visible PRs created${formatNoCustomerPrReason(summary)}`;

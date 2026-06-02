@@ -186,7 +186,7 @@ describe('formatStageStatus', () => {
           needs_manual_review_count: 0,
           handled_error_count: 0
         })
-      ).toBe('✅ Pull Requests: Completed (5 PRs created)')
+      ).toBe('✅ Pull Requests: Completed (5 PRs created, across 5 remediation units)')
     })
 
     it('uses customer-visible PR count for push stage when summary provides it', () => {
@@ -213,7 +213,7 @@ describe('formatStageStatus', () => {
             customer_visible_pr_count: 1
           }
         )
-      ).toBe('✅ Pull Requests: Completed (1 PR created)')
+      ).toBe('✅ Pull Requests: Completed (1 PR created, across 3 remediation units)')
     })
 
     it('explains push-stage non-PR remediation units', () => {
@@ -241,7 +241,7 @@ describe('formatStageStatus', () => {
           }
         )
       ).toBe(
-        '✅ Pull Requests: Completed (1 PR created, 1 remediation unit did not produce customer-visible PRs)'
+        '✅ Pull Requests: Completed (1 PR created, 1 remediation unit did not produce customer-visible PRs, across 2 remediation units)'
       )
     })
 
@@ -468,7 +468,7 @@ describe('formatStageStatus', () => {
           remediationLoopStatus
         )
       ).toBe(
-        '⏳ Pull Requests: 1 PR created (3 vulnerabilities, 7 still in remediation)'
+        '⏳ Pull Requests: 1 of ~2 created (1 remediation unit remaining, 3 vulnerabilities, 7 still in remediation)'
       )
     })
 
@@ -513,7 +513,7 @@ describe('formatStageStatus', () => {
           }
         )
       ).toBe(
-        '⏳ Pull Requests: 0 PRs created (3 vulnerabilities, 1 still in remediation)'
+        '⏳ Pull Requests: 0 of ~3 created (2 remediation units remaining, 3 vulnerabilities, 1 still in remediation)'
       )
     })
 
@@ -551,7 +551,7 @@ describe('formatStageStatus', () => {
           },
           remediationLoopStatus
         )
-      ).toBe('⏳ Pull Requests: 6/8 PRs (75%)')
+      ).toBe('⏳ Pull Requests: 6 of ~8 created (2 remediation units remaining, 75%)')
     })
 
     it('shows normal progress for push when remediation_loop status is not provided', () => {
@@ -570,7 +570,7 @@ describe('formatStageStatus', () => {
           needs_manual_review_count: 0,
           handled_error_count: 0
         })
-      ).toBe('⏳ Pull Requests: 6/8 PRs (75%)')
+      ).toBe('⏳ Pull Requests: 6 of ~8 created (2 remediation units remaining, 75%)')
     })
   })
 
@@ -1054,7 +1054,7 @@ describe('logProcessTracking', () => {
     const calls = (core.info as jest.Mock).mock.calls.map((c) => c[0])
     expect(calls).toContain('[RUN_STATUS]: ⏳ Remediation: 3/10 (30%)')
     expect(calls).toContain(
-      '[RUN_STATUS]: ⏳ Pull Requests: 1 PR created (3 vulnerabilities, 7 still in remediation)'
+      '[RUN_STATUS]: ⏳ Pull Requests: 1 of ~2 created (1 remediation unit remaining, 3 vulnerabilities, 7 still in remediation)'
     )
   })
 
@@ -1125,7 +1125,7 @@ describe('logProcessTracking', () => {
     expect(calls).toContain(
       '[RUN_STATUS]: ✅ Remediation: Completed (8 confirmed vulnerabilities processed)'
     )
-    expect(calls).toContain('[RUN_STATUS]: ⏳ Pull Requests: 6/8 PRs (75%)')
+    expect(calls).toContain('[RUN_STATUS]: ⏳ Pull Requests: 6 of ~8 created (2 remediation units remaining, 75%)')
   })
 
   it('skips stages without status data', () => {
