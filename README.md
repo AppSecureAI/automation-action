@@ -8,27 +8,27 @@
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-AppSecAI Vulnerability Analysis submits SAST results from GitHub Actions to
-AppSecAI for vulnerability triage, remediation, and validation. It accepts
-SARIF, JSON, CSV, and TSV reports from common scanners, can combine multiple
-scanner outputs in one run, and can open remediation pull requests when
+AppSecAI runs after your SAST scanner. Your workflow runs a scanner, writes a
+SARIF, JSON, CSV, or TSV report file, then submits that report file to AppSecAI
+for vulnerability triage, remediation, and validation. AppSecAI can combine
+multiple scanner outputs in one run and can open remediation pull requests when
 configured to do so.
 
 For the full setup guide, supported scanner examples, and troubleshooting, see
 [AppSecAI GitHub Action documentation](https://portal.cloud.appsecai.io/docs/configuration).
 
-## Quick Start
+## First Workflow
 
 Install the [AppSecAI GitHub App](https://github.com/apps/appsecai-app), grant
-it access to the repository, then add the action after your scanner step:
+it access to the repository, then create `.github/workflows/appsecai-scan.yml`
+with this starter workflow:
 
 ```yaml
 name: AppSecAI Security Analysis
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
 
 permissions:
@@ -39,11 +39,16 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Run scanner
+      - name: Install Semgrep
+        run: python -m pip install semgrep
+
+      - name: Run Semgrep
         run: |
-          # Replace this with your scanner command.
           semgrep scan --config auto --sarif --output semgrep-results.sarif .
 
       - name: AppSecAI Vulnerability Analysis
@@ -54,6 +59,11 @@ jobs:
         with:
           file: semgrep-results.sarif
 ```
+
+Run the workflow manually from the GitHub Actions tab for the first scan. The
+scanner step creates `semgrep-results.sarif`; AppSecAI reads that file and may
+open remediation pull requests for fixable vulnerabilities because
+`AUTO_CREATE_PRS` is set to `"true"`.
 
 ## Multi-Scanner Runs
 
@@ -97,6 +107,10 @@ with:
 Advanced settings such as grouping strategy, maximum vulnerabilities per PR, and
 regression evidence are documented in the
 [configuration guide](https://portal.cloud.appsecai.io/docs/configuration).
+Scanner-specific examples are in the
+[scanner examples](https://portal.cloud.appsecai.io/docs/configuration#scanner-examples),
+and grouping details are in the
+[grouping strategies guide](https://portal.cloud.appsecai.io/docs/grouping-strategies).
 
 ## Supported Inputs
 
@@ -106,9 +120,9 @@ export compatible vulnerability reports.
 
 ## Results
 
-After a run completes, review results in the AppSecAI portal and in any pull
-requests or issues created by the action. For help interpreting findings and fix
-outcomes, see the
+After a run completes, review GitHub Actions logs, AppSecAI portal results, and
+any pull requests or issues created by the action. For help interpreting
+findings and fix outcomes, see the
 [results guide](https://portal.cloud.appsecai.io/docs/results).
 
 ## Troubleshooting
