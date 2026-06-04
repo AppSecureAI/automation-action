@@ -54,7 +54,7 @@ function warnIfClientVersionBelowMinimum(
     const message =
       context === 'header'
         ? `Client version ${CLIENT_VERSION} is below minimum required version ${minClientVersion}. ` +
-          `Please update submit-run-action.`
+          `Please update automation-action.`
         : `Client version ${CLIENT_VERSION} may not be compatible with server. ` +
           `Minimum: ${minClientVersion}`
     core.warning(message)

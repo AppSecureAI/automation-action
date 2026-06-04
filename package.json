@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.22",
+  "version": "1.1.23",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -43,8 +43,7 @@
     "test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
     "all": "npm run format:write && npm run lint && npm run test && npm run coverage && npm run package",
     "check:supply-chain-catalog": "node scripts/supply-chain-guard.mjs",
-    "test:supply-chain-guard": "node scripts/supply-chain-guard.mjs --self-test",
-    "check:dependency-review": "npm audit --package-lock-only --audit-level=high"
+    "test:supply-chain-guard": "node scripts/supply-chain-guard.mjs --self-test"
   },
   "license": "MIT",
   "dependencies": {

@@ -48,7 +48,7 @@ describe('version-service.ts', () => {
 
       expect(core.warning).toHaveBeenCalledWith(
         'Client version 1.0.0 is below minimum required version 2.0.0. ' +
-          'Please update submit-run-action.'
+          'Please update automation-action.'
       )
       expect(core.debug).toHaveBeenCalledWith(
         'Server API: v2, X-Min-Client-Version: 2.0.0'
