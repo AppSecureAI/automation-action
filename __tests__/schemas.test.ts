@@ -424,6 +424,32 @@ describe('schemas.ts', () => {
       expect(parsed.success).toBe(true)
       expect(parsed.data?.dashboard_url).toBeNull()
     })
+
+    test('accepts a paused run_status without a schema error', () => {
+      const testData = createResponseStatus({ results: null })
+      const parsed = ResponseStatusSchema.safeParse({
+        ...testData,
+        run_status: 'paused',
+        status_reason: 'sustained Bedrock throttling'
+      })
+
+      // A paused status must validate; otherwise it would surface as an error.
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.run_status).toBe('paused')
+      expect(parsed.data?.status_reason).toBe('sustained Bedrock throttling')
+    })
+
+    test('accepts pause_reason on a paused run_status', () => {
+      const testData = createResponseStatus({ results: null })
+      const parsed = ResponseStatusSchema.safeParse({
+        ...testData,
+        run_status: 'paused',
+        pause_reason: 'capacity exhausted'
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.pause_reason).toBe('capacity exhausted')
+    })
   })
 
   describe('RunResponseSchema description', () => {

@@ -30,7 +30,9 @@ const mockIsGroupingStrategyConfigured = jest.fn()
 const mockGetGroupingStage = jest.fn()
 const mockIsGroupingStageConfigured = jest.fn()
 const mockGetLlmProfile = jest.fn()
+const mockGetPrAudience = jest.fn()
 const mockGetUpdateContext = jest.fn()
+const mockGetAllowMissingRepoAccess = jest.fn()
 
 jest.mock('../src/input', () => ({
   __esModule: true,
@@ -48,7 +50,9 @@ jest.mock('../src/input', () => ({
   getGroupingStage: mockGetGroupingStage,
   isGroupingStageConfigured: mockIsGroupingStageConfigured,
   getLlmProfile: mockGetLlmProfile,
-  getUpdateContext: mockGetUpdateContext
+  getPrAudience: mockGetPrAudience,
+  getUpdateContext: mockGetUpdateContext,
+  getAllowMissingRepoAccess: mockGetAllowMissingRepoAccess
 }))
 jest.mock('../src/store', () => ({
   __esModule: true,
@@ -76,7 +80,8 @@ const {
   finalizeRun,
   delay,
   MAX_CONSECUTIVE_NETWORK_ERRORS,
-  fetchWithRetry
+  fetchWithRetry,
+  cancelRun
 } = serviceModule
 
 // Note: We keep the serviceModule import to access named exports
@@ -104,7 +109,9 @@ describe('service.ts', () => {
     mockGetGroupingStage.mockReturnValue('pre_push')
     mockIsGroupingStageConfigured.mockReturnValue(false)
     mockGetLlmProfile.mockReturnValue(undefined)
+    mockGetPrAudience.mockReturnValue('')
     mockGetUpdateContext.mockReturnValue(false)
+    mockGetAllowMissingRepoAccess.mockReturnValue(false)
     store.finalLogPrinted = {}
     logSteps.mockClear()
     logProcessTracking.mockClear()
@@ -289,6 +296,7 @@ describe('service.ts', () => {
         'AUTO_CREATE_PRS',
         'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
         'COMMENT_MODIFICATION_MODE',
+        'PR_AUDIENCE',
         'MAX_VULNERABILITIES_PER_PR',
         'APPSECAI_LLM_PROFILE',
         'INPUT_LLM_PROFILE'
@@ -359,6 +367,22 @@ describe('service.ts', () => {
         await submitRun(buf, 'file.json')
         const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
         expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
+      })
+
+      it('includes pr_audience when configured', async () => {
+        process.env.PR_AUDIENCE = 'security,engineering'
+        mockGetPrAudience.mockReturnValue('security,engineering')
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('pr_audience')).toBe('security,engineering')
+      })
+
+      it('omits pr_audience when unconfigured', async () => {
+        const buf = Buffer.from('{}')
+        await submitRun(buf, 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('pr_audience')).toBeNull()
       })
 
       it('omits llm_profile when LLM profile is omitted', async () => {
@@ -466,8 +490,189 @@ describe('service.ts', () => {
       })
     })
 
+    describe('allow_missing_repo_access form field and fail-fast handling', () => {
+      const savedAllowEnv: Record<string, string | undefined> = {}
+      const allowEnvKeys = [
+        'ALLOW_MISSING_REPO_ACCESS',
+        'INPUT_ALLOW_MISSING_REPO_ACCESS'
+      ]
+
+      beforeEach(() => {
+        for (const k of allowEnvKeys) {
+          savedAllowEnv[k] = process.env[k]
+          delete process.env[k]
+        }
+        core.getInput.mockImplementation((name: string) => {
+          if (name === 'api-url') return 'https://some-url'
+          if (name === 'comment-modification-mode') return 'basic'
+          return ''
+        })
+      })
+
+      afterEach(() => {
+        for (const k of allowEnvKeys) {
+          if (savedAllowEnv[k] === undefined) {
+            delete process.env[k]
+          } else {
+            process.env[k] = savedAllowEnv[k]
+          }
+        }
+      })
+
+      it('forwards allow_missing_repo_access=false by default', async () => {
+        axios.post.mockResolvedValue({
+          data: {
+            message: 'File processed successfully',
+            run_id: 'run-1',
+            steps: []
+          }
+        })
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('allow_missing_repo_access')).toBe('false')
+      })
+
+      it('forwards allow_missing_repo_access=true and warns when override is set', async () => {
+        process.env.ALLOW_MISSING_REPO_ACCESS = 'true'
+        axios.post.mockResolvedValue({
+          data: {
+            message: 'File processed successfully',
+            run_id: 'run-1',
+            steps: []
+          }
+        })
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
+        expect(formData.get('allow_missing_repo_access')).toBe('true')
+
+        const warningCalls = (core.warning as jest.Mock).mock.calls.map(
+          (c) => c[0] as string
+        )
+        expect(
+          warningCalls.some(
+            (msg) =>
+              msg.includes('allow-missing-repo-access is set') &&
+              msg.includes('will NOT be delivered')
+          )
+        ).toBe(true)
+      })
+
+      it('fails fast with the verbatim Hydra message on 403 github_app_repo_access_missing', async () => {
+        const hydraMessage =
+          'The AppSecAI GitHub App is installed on MC-Demo-For-Me but the repository ' +
+          'BenchmarkJava25-demo has not been added to the installation. Add the repository ' +
+          'to the AppSecAI GitHub App, then re-run the workflow.'
+        const error = new Error('Request failed with status code 403')
+        Object.assign(error, {
+          isAxiosError: true,
+          response: {
+            status: 403,
+            data: {
+              detail: {
+                code: 'github_app_repo_access_missing',
+                message: hydraMessage,
+                owner: 'MC-Demo-For-Me',
+                repo: 'BenchmarkJava25-demo',
+                reason: 'repo not in App installation',
+                source: 'preflight'
+              }
+            }
+          }
+        })
+        axios.post.mockRejectedValue(error)
+
+        await expect(submitRun(Buffer.from('{}'), 'file.json')).rejects.toThrow(
+          hydraMessage
+        )
+
+        // It must be framed as a repo-access failure, not a generic error.
+        const errorCalls = (core.error as jest.Mock).mock.calls.map(
+          (c) => c[0] as string
+        )
+        const surfaced = errorCalls.find((msg) =>
+          msg.includes('GITHUB APP CANNOT PUSH')
+        )
+        expect(surfaced).toBeDefined()
+        expect(surfaced).toContain(hydraMessage)
+        expect(surfaced).toContain('allow-missing-repo-access')
+        // Must not look like a generic network/server error
+        expect(surfaced).not.toContain('SERVER ERROR')
+        expect(surfaced).not.toContain('An unexpected error occurred')
+      })
+
+      it('does not retry the 403 repo-access rejection', async () => {
+        const error = new Error('Request failed with status code 403')
+        Object.assign(error, {
+          isAxiosError: true,
+          response: {
+            status: 403,
+            data: {
+              detail: {
+                code: 'github_app_repo_access_missing',
+                message: 'Repo not accessible.'
+              }
+            }
+          }
+        })
+        axios.post.mockRejectedValue(error)
+
+        await expect(
+          submitRun(Buffer.from('{}'), 'file.json')
+        ).rejects.toThrow()
+        expect(axios.post).toHaveBeenCalledTimes(1)
+      })
+
+      it('falls through to generic handling for a 403 without the repo-access code', async () => {
+        const error = new Error('Request failed with status code 403')
+        Object.assign(error, {
+          isAxiosError: true,
+          response: {
+            status: 403,
+            data: { detail: 'Forbidden for some other reason' }
+          }
+        })
+        axios.post.mockRejectedValue(error)
+
+        await expect(submitRun(Buffer.from('{}'), 'file.json')).rejects.toThrow(
+          'Forbidden for some other reason'
+        )
+        const errorCalls = (core.error as jest.Mock).mock.calls.map(
+          (c) => c[0] as string
+        )
+        expect(
+          errorCalls.some((msg) => msg.includes('GITHUB APP CANNOT PUSH'))
+        ).toBe(false)
+      })
+    })
+
     // Note: 402 Payment Required tests are in error-formatting.test.ts
     // PR #248 introduced new comprehensive error formatting with detailed user guidance
+  })
+
+  describe('cancelRun', () => {
+    it('calls the organization cancel endpoint with the action identity token', async () => {
+      core.getIDToken.mockResolvedValue('oidc-token')
+      axios.post.mockResolvedValue({ data: {} })
+
+      await cancelRun('run-123', 'org-456', 'https://gh.intg.appsecai.net')
+
+      expect(axios.post).toHaveBeenCalledWith(
+        'https://gh.intg.appsecai.net/api/organizations/org-456/runs/run-123/cancel',
+        { reason: 'workflow_cancelled' },
+        {
+          headers: { Authorization: 'Bearer oidc-token' },
+          timeout: expect.any(Number)
+        }
+      )
+    })
+
+    it('rejects missing cancellation identifiers before calling the API', async () => {
+      await expect(
+        cancelRun('run-123', '', 'https://gh.intg.appsecai.net')
+      ).rejects.toThrow('runId and organizationId are required')
+
+      expect(axios.post).not.toHaveBeenCalled()
+    })
   })
 
   describe('getStatus', () => {
@@ -608,6 +813,228 @@ describe('service.ts', () => {
         'Calling status API: GET /api-product/organizations/org-123/runs/test-id/status'
       )
     })
+
+    it.each([
+      {
+        name: 'handled errors and manual review from summary',
+        summary: { handled_error_count: 2, needs_manual_review_count: 3 },
+        process_tracking: null,
+        expectedSummary: expect.objectContaining({
+          handled_error_count: 2,
+          needs_manual_review_count: 3
+        }),
+        expectedWarning:
+          '[Analysis Processing Status]: Run completed with handled triage errors (2) and manual review required (3).'
+      },
+      {
+        name: 'handled errors from tracking',
+        summary: null,
+        process_tracking: {
+          triage_status: { status: 'completed', handled_error_count: 2 }
+        },
+        expectedSummary: null,
+        expectedWarning:
+          '[Analysis Processing Status]: Run completed with handled triage errors (2).'
+      },
+      {
+        name: 'manual review from tracking',
+        summary: null,
+        process_tracking: {
+          triage_status: { status: 'completed', needs_manual_review_count: 4 }
+        },
+        expectedSummary: null,
+        expectedWarning:
+          '[Analysis Processing Status]: Run completed with manual review required (4).'
+      }
+    ])(
+      'logs completed canonical status with $name',
+      async ({
+        summary,
+        process_tracking,
+        expectedSummary,
+        expectedWarning
+      }) => {
+        axios.get.mockResolvedValue({
+          data: {
+            message: 'Scan complete',
+            run_status: 'completed',
+            results: null,
+            process_tracking,
+            summary
+          }
+        })
+
+        const result = await getStatus('test-id')
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            status: 'completed',
+            summary: expectedSummary
+          })
+        )
+        expect(core.warning).toHaveBeenCalledWith(expectedWarning)
+      }
+    )
+
+    it('logs manual review counts from legacy result extras', async () => {
+      axios.get.mockResolvedValue({
+        data: {
+          message: 'Scan in progress',
+          results: {
+            find: { count: 7, extras: {} },
+            triage: {
+              count: 7,
+              extras: {
+                true_positives: 5,
+                false_positives: 1,
+                needs_manual_review: 1
+              }
+            },
+            remediate: null,
+            validate: null,
+            push: null
+          }
+        }
+      })
+
+      const result = await getStatus('test-id')
+
+      expect(result).toEqual({ status: 'progress' })
+      expect(core.warning).toHaveBeenCalledWith(
+        '[Analysis Processing Status]: Manual review required: 1 vulnerabilities'
+      )
+    })
+
+    it.each([
+      {
+        process_tracking: { overall_status: { status: 'completed' } },
+        expected: { status: 'completed' },
+        expectedLog:
+          '[Analysis Processing Status]: Processing completed successfully'
+      },
+      {
+        process_tracking: { overall_status: { status: 'failed' } },
+        expected: { status: 'failed', error: 'Processing failed' },
+        expectedLog:
+          '[Analysis Processing Status]: Processing failed - Processing failed'
+      }
+    ])(
+      'uses overall_status fallback %#',
+      async ({ process_tracking, expected, expectedLog }) => {
+        axios.get.mockResolvedValue({
+          data: {
+            message: 'Scan fallback',
+            results: null,
+            process_tracking,
+            summary: null
+          }
+        })
+
+        const result = await getStatus('test-id')
+
+        expect(result).toEqual(expect.objectContaining(expected))
+        const logger = expected.status === 'completed' ? core.info : core.error
+        expect(logger).toHaveBeenCalledWith(expectedLog)
+      }
+    )
+
+    it.each([
+      {
+        process_tracking: { find_status: { status: 'failed' } },
+        expectedError: 'Vulnerability import failed'
+      },
+      {
+        process_tracking: { triage_status: { status: 'failed' } },
+        expectedError: 'Triage analysis failed'
+      },
+      {
+        process_tracking: {
+          remediation_validation_loop_status: { status: 'failed' }
+        },
+        expectedError: 'Remediation failed'
+      },
+      {
+        process_tracking: { push_status: { status: 'failed' } },
+        expectedError: 'Pull request creation failed'
+      }
+    ])(
+      'returns stage failure defaults %#',
+      async ({ process_tracking, expectedError }) => {
+        axios.get.mockResolvedValue({
+          data: {
+            message: 'Scan fallback',
+            results: null,
+            process_tracking,
+            summary: null
+          }
+        })
+
+        const result = await getStatus('test-id')
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            status: 'failed',
+            error: expectedError
+          })
+        )
+      }
+    )
+
+    it.each(['completed', 'not_scheduled'])(
+      'marks terminal push status %s complete',
+      async (pushStatus) => {
+        axios.get.mockResolvedValue({
+          data: {
+            message: 'Scan fallback',
+            results: null,
+            process_tracking: { push_status: { status: pushStatus } },
+            summary: null
+          }
+        })
+
+        const result = await getStatus('test-id')
+
+        expect(result).toEqual(expect.objectContaining({ status: 'completed' }))
+        expect(core.info).toHaveBeenCalledWith(
+          `[Analysis Processing Status]: Push stage ${pushStatus} - marking run as complete`
+        )
+      }
+    )
+
+    it('leaves failed terminal push status in progress for retry detection', async () => {
+      axios.get.mockResolvedValue({
+        data: {
+          message: 'Scan fallback',
+          results: null,
+          process_tracking: { push_status: { status: 'failed' } },
+          summary: null
+        }
+      })
+
+      const result = await getStatus('test-id')
+
+      expect(result).toEqual(expect.objectContaining({ status: 'failed' }))
+    })
+
+    it('marks completed remediation without push as complete', async () => {
+      axios.get.mockResolvedValue({
+        data: {
+          message: 'Scan fallback',
+          results: null,
+          process_tracking: {
+            remediation_validation_loop_status: { status: 'completed' }
+          },
+          summary: null
+        }
+      })
+
+      const result = await getStatus('test-id')
+
+      expect(result).toEqual(expect.objectContaining({ status: 'completed' }))
+      expect(core.info).toHaveBeenCalledWith(
+        '[Analysis Processing Status]: Remediation stage completed (no push) - marking run as complete'
+      )
+    })
   })
 
   it('handles timeout errors as network_error not failed', async () => {
@@ -733,7 +1160,8 @@ describe('service.ts', () => {
       processTracking: undefined
     })
     expect(core.warning).toHaveBeenCalledWith(
-      '[Analysis Processing Status] Call failed with status code: 404. Please try again later.'
+      '[Analysis Processing Status] Run status not found (HTTP 404). ' +
+        'The run may not exist yet or the status endpoint is unavailable.'
     )
   })
 
@@ -991,6 +1419,132 @@ describe('service.ts', () => {
     )
   })
 
+  it('keeps polling when run_status is completed but push reconciliation is active', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Reconciling artifacts',
+        description: 'Completed analysis, pending push',
+        run_status: 'completed',
+        results: {
+          description: null,
+          find: { count: 5, extras: {} },
+          triage: { count: 5, extras: {} },
+          remediate: { count: 5, extras: {} },
+          validate: { count: 5, extras: {} },
+          push: { count: 1, extras: {} }
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'completed', progress_percentage: 100 },
+          remediation_validation_loop_status: {
+            status: 'completed',
+            progress_percentage: 100
+          },
+          push_status: {
+            status: 'in_progress',
+            processed_items: 1,
+            total_items: 3,
+            success_count: 1,
+            progress_percentage: 33
+          }
+        },
+        summary: {
+          total_vulnerabilities: 5,
+          true_positives: 5,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 5,
+          remediation_failed: 0,
+          pr_urls: ['https://github.com/org/repo/pull/1'],
+          pr_count: 1,
+          issue_urls: [],
+          issue_count: 0
+        }
+      }
+    })
+
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'progress',
+        reasonCode: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED',
+        diagnostic: expect.stringContaining('push=in_progress')
+      })
+    )
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED')
+    )
+  })
+
+  it('does not keep polling for unused not_started artifact stages', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Done',
+        description: 'Completed',
+        run_status: 'completed',
+        results: {
+          description: null,
+          find: { count: 5, extras: {} },
+          triage: { count: 5, extras: {} },
+          remediate: null,
+          validate: null,
+          push: null
+        },
+        process_tracking: {
+          find_status: { status: 'completed', progress_percentage: 100 },
+          triage_status: { status: 'completed', progress_percentage: 100 },
+          group_remediate_status: {
+            status: 'not_started',
+            processed_items: 0,
+            total_items: 0,
+            success_count: 0,
+            progress_percentage: 0
+          },
+          group_validate_status: {
+            status: 'not_started',
+            processed_items: 0,
+            total_items: 0,
+            success_count: 0,
+            progress_percentage: 0
+          },
+          push_status: {
+            status: 'not_started',
+            processed_items: 0,
+            total_items: 0,
+            success_count: 0,
+            progress_percentage: 0
+          }
+        },
+        summary: {
+          total_vulnerabilities: 5,
+          true_positives: 5,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 0,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0
+        }
+      }
+    })
+
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed'
+      })
+    )
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED')
+    )
+  })
+
   it('returns failed status when run_status is cancelled', async () => {
     axios.get.mockResolvedValue({
       data: {
@@ -1012,6 +1566,69 @@ describe('service.ts', () => {
     expect(core.warning).toHaveBeenCalledWith(
       '[Analysis Processing Status]: Run was cancelled'
     )
+  })
+
+  it('returns paused status (not failed) when run_status is paused', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Paused',
+        description: 'Run paused',
+        run_status: 'paused',
+        status_reason: 'sustained Bedrock throttling',
+        results: null,
+        process_tracking: null
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'paused',
+        reasonCode: 'RUN_PAUSED',
+        diagnostic: 'run_status=paused: sustained Bedrock throttling',
+        pauseReason: 'sustained Bedrock throttling'
+      })
+    )
+    // Must not be classified as failed.
+    expect(result.status).not.toBe('failed')
+    expect(result.error).toBeUndefined()
+    expect(core.warning).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Run paused: sustained Bedrock throttling'
+    )
+  })
+
+  it('falls back to pause_reason then description for paused runs', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Paused',
+        description: 'fallback description reason',
+        run_status: 'paused',
+        pause_reason: 'capacity exhausted',
+        results: null,
+        process_tracking: null
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result.status).toBe('paused')
+    expect(result.pauseReason).toBe('capacity exhausted')
+  })
+
+  it('uses a default reason when paused run provides none', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Paused',
+        run_status: 'paused',
+        description: null,
+        results: null,
+        process_tracking: null
+      }
+    })
+    const result = await getStatus('test-id')
+
+    expect(result.status).toBe('paused')
+    expect(result.pauseReason).toContain('Bedrock throttling')
+    expect(result.pauseReason).toContain('resume automatically')
   })
 
   it('run_status takes precedence over stage statuses', async () => {
@@ -1310,6 +1927,108 @@ describe('service.ts', () => {
       const result = await pollStatusUntilComplete(mockGetStatus, 2, 100)
 
       expect(result).toEqual({ status: 'failed', error: 'Run failed' })
+    })
+
+    it('stops polling and returns paused result without failing', async () => {
+      const pausedStatus = {
+        status: 'paused',
+        reasonCode: 'RUN_PAUSED',
+        diagnostic: 'run_status=paused: sustained Bedrock throttling',
+        pauseReason: 'sustained Bedrock throttling'
+      }
+      const mockGetStatus = jest.fn(() => Promise.resolve(pausedStatus))
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
+
+      // Paused is terminal for this pass: it stops after the first observation
+      // (does not poll for all 5 attempts) and is not treated as a failure.
+      expect(result).toEqual(pausedStatus)
+      expect(mockGetStatus).toHaveBeenCalledTimes(1)
+      expect(core.error).not.toHaveBeenCalledWith(
+        expect.stringContaining('Processing failed')
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('Run paused: sustained Bedrock throttling')
+      )
+    })
+
+    it('logs the diagnostic for a paused result lacking a pauseReason', async () => {
+      const mockGetStatus = jest.fn(() =>
+        Promise.resolve({
+          status: 'paused',
+          diagnostic: 'run_status=paused: capacity exhausted'
+        })
+      )
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
+
+      expect(result?.status).toBe('paused')
+      expect(mockGetStatus).toHaveBeenCalledTimes(1)
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('run_status=paused: capacity exhausted')
+      )
+    })
+
+    it('uses a default message for a paused result without reason or diagnostic', async () => {
+      const mockGetStatus = jest.fn(() => Promise.resolve({ status: 'paused' }))
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
+
+      expect(result?.status).toBe('paused')
+      expect(mockGetStatus).toHaveBeenCalledTimes(1)
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('resume automatically when capacity returns')
+      )
+    })
+
+    it('extends polling for bounded reconciliation windows', async () => {
+      const mockGetStatus = jest
+        .fn<
+          () => Promise<{
+            status: string
+            reasonCode?: string
+            diagnostic?: string
+          }>
+        >()
+        .mockResolvedValueOnce({
+          status: 'progress',
+          reasonCode: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED',
+          diagnostic: 'run_status=completed but push=in_progress'
+        })
+        .mockResolvedValueOnce({
+          status: 'progress',
+          reasonCode: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED',
+          diagnostic: 'run_status=completed but push=in_progress'
+        })
+        .mockResolvedValueOnce({ status: 'completed' })
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 1, 0)
+
+      expect(result).toEqual({ status: 'completed' })
+      expect(mockGetStatus).toHaveBeenCalledTimes(3)
+      expect(core.info).toHaveBeenCalledWith(
+        'Extending polling for reconciliation (1/20).'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        'Extending polling for reconciliation (2/20).'
+      )
+    })
+
+    it('includes reconciliation reason in timeout diagnostics', async () => {
+      const mockGetStatus = jest.fn(() =>
+        Promise.resolve({
+          status: 'progress',
+          reasonCode: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED',
+          diagnostic: 'run_status=completed but push=in_progress'
+        })
+      )
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 1, 0)
+
+      expect(result).toBeNull()
+      expect(mockGetStatus).toHaveBeenCalledTimes(21)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Last reason: RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED'
+        )
+      )
     })
 
     it('returns failed status when stage fails (Issue #233)', async () => {

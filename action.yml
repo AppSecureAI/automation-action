@@ -20,14 +20,14 @@ inputs:
 
   file:
     description:
-      One SARIF, JSON, CSV, or TSV file containing security scan results. Use
-      either file or files, not both.
+      One SARIF, JSON, CSV, TSV, or XML file containing security scan results.
+      Use either file or files, not both.
     required: false
 
   files:
     description:
-      Comma- or newline-separated SARIF, JSON, CSV, or TSV files to submit as
-      one multi-SAST run. Supports simple * and ** glob patterns.
+      Comma- or newline-separated SARIF, JSON, CSV, TSV, or XML files to submit
+      as one multi-SAST run. Supports simple * and ** glob patterns.
     required: false
     default: ''
 
@@ -35,6 +35,25 @@ inputs:
     description: Trigger fresh security context extraction before the scan
     required: false
     default: 'false'
+
+  allow-missing-repo-access:
+    description:
+      Start the run even when the AppSecAI GitHub App cannot yet push to the
+      target repository. Use this when the organization is licensed and the App
+      is installed, but the specific repository simply has not been added to the
+      App installation yet — the run starts now and remediation pull requests
+      are delivered once the repository is granted to the App. When left at the
+      default, the action fails fast with an actionable message if the App lacks
+      push access.
+    required: false
+    default: 'false'
+
+  pr-audience:
+    description:
+      Comma-separated ordered PR reviewer audiences to emphasize in generated
+      remediation PR content, for example security,engineering
+    required: false
+    default: ''
 
   regression-evidence-base-ref:
     description: Base git ref for regression evidence diff calculation
@@ -101,97 +120,17 @@ inputs:
 outputs:
   message:
     description: Processed message
-    value: ${{ steps.run-action.outputs.message }}
   context-updated:
     description: Whether context was updated (true/false/rate-limited)
-    value: ${{ steps.run-action.outputs.context-updated }}
   regression-evidence-status:
     description: Regression evidence status (verified|partial|at_risk)
-    value: ${{ steps.run-action.outputs.regression-evidence-status }}
   regression-evidence-json-path:
     description: Path to generated regression evidence JSON artifact
-    value: ${{ steps.run-action.outputs.regression-evidence-json-path }}
   regression-evidence-markdown-path:
     description: Path to generated regression evidence markdown artifact
-    value: ${{ steps.run-action.outputs.regression-evidence-markdown-path }}
 
 runs:
-  using: composite
-  steps:
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '22.14.0'
-
-    - name: Run submit action
-      id: run-action
-      shell: bash
-      env:
-        # Required inputs passed directly
-        INPUT_FILE: ${{ inputs.file }}
-        INPUT_FILES: ${{ inputs.files }}
-        INPUT_API_URL: ${{ inputs.api-url }}
-        # Configuration from workflow environment variables (with defaults)
-        # Canonical modes: individual_cc (default), group_cc, individual, regression_evidence
-        # Legacy aliases (deprecated, emit warning): group_only, group_with_remediation,
-        #   group_with_validation_consistency -> group_cc;
-        #   individual_without_push -> individual
-        # Push control: use AUTO_CREATE_PRS=false to suppress PR creation (all modes)
-        # GROUPING_STRATEGY and GROUPING_STAGE are forwarded when explicitly set.
-        # GROUPING_ENABLED remains implicit in PROCESSING_MODE. UPDATE_CONTEXT is unsupported.
-        INPUT_PROCESSING_MODE: ${{ env.PROCESSING_MODE || 'individual_cc' }}
-        INPUT_USE_TRIAGE_CC: ${{ env.USE_TRIAGE_CC || 'true' }}
-        INPUT_TRIAGE_METHOD: ${{ env.TRIAGE_METHOD || 'ml_based' }}
-        INPUT_USE_REMEDIATE_CC: ${{ env.USE_REMEDIATE_CC || 'false' }}
-        INPUT_REMEDIATE_METHOD: ${{ env.REMEDIATE_METHOD || 'advanced' }}
-        INPUT_USE_VALIDATE_CC: ${{ env.USE_VALIDATE_CC || 'false' }}
-        INPUT_VALIDATE_METHOD: ${{ env.VALIDATE_METHOD || 'baseline' }}
-        INPUT_USE_REMEDIATE_LOOP_CC: ${{ env.USE_REMEDIATE_LOOP_CC || 'true' }}
-        INPUT_AUTO_CREATE_PRS: ${{ env.AUTO_CREATE_PRS || 'false' }}
-        INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS:
-          ${{ env.CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS || 'false' }}
-        INPUT_COMMENT_MODIFICATION_MODE:
-          ${{ env.COMMENT_MODIFICATION_MODE || 'basic' }}
-        INPUT_REGRESSION_EVIDENCE_PUBLISH_COMMENT:
-          ${{ inputs.regression-evidence-publish-comment ||
-          env.REGRESSION_EVIDENCE_PUBLISH_COMMENT || 'false' }}
-        INPUT_GROUPING_ENABLED: ${{ env.GROUPING_ENABLED || 'false' }}
-        INPUT_GROUPING_STRATEGY: ${{ env.GROUPING_STRATEGY || 'cwe_category' }}
-        INPUT_MAX_VULNERABILITIES_PER_PR:
-          ${{ env.MAX_VULNERABILITIES_PER_PR || '' }}
-        INPUT_GROUPING_STAGE: ${{ env.GROUPING_STAGE || 'pre_push' }}
-        INPUT_UPDATE_CONTEXT:
-          ${{ inputs.update-context || env.UPDATE_CONTEXT || 'false' }}
-        INPUT_REGRESSION_EVIDENCE_BASE_REF:
-          ${{ inputs.regression-evidence-base-ref ||
-          env.REGRESSION_EVIDENCE_BASE_REF || '' }}
-        INPUT_REGRESSION_EVIDENCE_BASE_SHA:
-          ${{ inputs.regression-evidence-base-sha ||
-          env.REGRESSION_EVIDENCE_BASE_SHA || '' }}
-        INPUT_REGRESSION_EVIDENCE_HEAD_REF:
-          ${{ inputs.regression-evidence-head-ref ||
-          env.REGRESSION_EVIDENCE_HEAD_REF || '' }}
-        INPUT_REGRESSION_EVIDENCE_HEAD_SHA:
-          ${{ inputs.regression-evidence-head-sha ||
-          env.REGRESSION_EVIDENCE_HEAD_SHA || '' }}
-        INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS:
-          ${{ inputs.regression-evidence-coverage-artifacts ||
-          env.REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS || '' }}
-        INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS:
-          ${{ inputs.regression-evidence-test-commands ||
-          env.REGRESSION_EVIDENCE_TEST_COMMANDS || '' }}
-        INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH:
-          ${{ inputs.regression-evidence-output-json-path ||
-          env.REGRESSION_EVIDENCE_OUTPUT_JSON_PATH || 'regression-evidence.json'
-          }}
-        INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH:
-          ${{ inputs.regression-evidence-output-markdown-path ||
-          env.REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH ||
-          'regression-evidence.md' }}
-        INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL:
-          ${{ inputs.regression-evidence-allow-partial ||
-          env.REGRESSION_EVIDENCE_ALLOW_PARTIAL || 'true' }}
-        INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK:
-          ${{ inputs.regression-evidence-fail-on-at-risk ||
-          env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK || 'false' }}
-      run: node ${{ github.action_path }}/dist/index.js
+  using: node24
+  main: dist/index.js
+  post: dist/cleanup.js
+  post-if: cancelled()

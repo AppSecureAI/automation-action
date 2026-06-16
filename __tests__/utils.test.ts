@@ -97,6 +97,22 @@ describe('utils.ts', () => {
     expect(core.error).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['Upload SARIF', 'SARIF'],
+    ['Upload source code', 'repository'],
+    ['Verify installation token', 'token'],
+    ['Unexpected worker failure', 'No details provided by server']
+  ])('adds troubleshooting guidance for failed %s steps', (name, marker) => {
+    logSteps([{ name, status: 'failed', detail: '   ' }], 'API')
+
+    const output = (core.error as jest.Mock).mock.calls
+      .map((call) => String(call[0]))
+      .join('\n')
+    expect(output).toContain('[API] detail: [No details provided by server]')
+    expect(output).toContain('Troubleshooting steps:')
+    expect(output).toContain(marker)
+  })
+
   describe('formatDuration', () => {
     it('formats seconds correctly', () => {
       expect(formatDuration(5000)).toBe('5s')
@@ -1229,6 +1245,90 @@ describe('utils.ts', () => {
       await writeJobSummary(null, summary, 'run-123', 60000, true)
 
       expect(core.summary.addRaw).toHaveBeenCalledWith(`- ${issueUrl}\n`, true)
+    })
+
+    it('renders rich no-PR taxonomy, stage details, and grouping fallbacks', async () => {
+      const tracking = {
+        find_status: createProcessStatus({ success_count: 12 }),
+        reconcile_status: createProcessStatus({
+          total_items: 8,
+          processed_items: 6,
+          success_count: 6
+        }),
+        triage_status: createProcessStatus({
+          success_count: 10,
+          false_positive_count: 2,
+          needs_manual_review_count: 1,
+          handled_error_count: 1
+        }),
+        remediation_validation_loop_status: createProcessStatus({
+          success_count: 4,
+          additional_context_required_count: 1,
+          self_validation_warning_count: 2,
+          self_validation_failure_count: 3,
+          scope_validation_failure_count: 4
+        }),
+        push_status: createProcessStatus({
+          success_count: 0,
+          customer_visible_pr_count: 0,
+          total_items: 5,
+          processed_items: 5
+        })
+      }
+      const summary = createSummary({
+        total_vulnerabilities: 12,
+        true_positives: 0,
+        false_positives: 2,
+        needs_manual_review_count: 1,
+        handled_error_count: 1,
+        has_handled_errors: true,
+        remediation_success: 4,
+        remediation_failed: 7,
+        pr_urls: [],
+        pr_count: 0,
+        customer_visible_pr_count: 0,
+        issue_urls: [],
+        vendor_excluded_count: 2,
+        scanner_correlated_duplicate_count: 1,
+        scope_validation_failure_count: 4,
+        remediation_validation_failed_count: 3,
+        remediation_unit_failure_count: 2,
+        dropped_from_pr_count: 1,
+        push_failed_count: 1,
+        not_attempted_count: 1,
+        internal_non_pushed_findings: 5
+      })
+
+      await writeJobSummary(
+        tracking,
+        summary,
+        'run-123',
+        60000,
+        true,
+        undefined,
+        undefined,
+        {
+          enabled: true,
+          strategy: 'custom_strategy',
+          maxVulnerabilitiesPerPr: 4,
+          stage: 'custom_stage'
+        } as any
+      )
+
+      const rawOutput = JSON.stringify({
+        tables: (core.summary.addTable as jest.Mock).mock.calls,
+        raw: (core.summary.addRaw as jest.Mock).mock.calls
+      })
+      expect(rawOutput).toContain('Completed with handled triage errors (1)')
+      expect(rawOutput).toContain('1 manual review')
+      expect(rawOutput).toContain('6/8 findings validated')
+      expect(rawOutput).toContain('4 scope validation failures')
+      expect(rawOutput).toContain('No customer-visible PRs created')
+      expect(rawOutput).toContain('2 vendor/excluded')
+      expect(rawOutput).toContain('3 remediation validation failures')
+      expect(rawOutput).toContain('GitHub Push/API Failures')
+      expect(rawOutput).toContain('custom_strategy')
+      expect(rawOutput).toContain('custom_stage')
     })
 
     it('renders dashboard link when dashboardUrl is provided', async () => {

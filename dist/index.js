@@ -40257,9 +40257,18 @@ const APPSECAI_WEBSITE_URL = 'https://www.appsecai.io/';
 /**
  * URLs and contact info for user guidance in error messages
  */
-const BILLING_URL = 'https://app.appsecai.net/settings/billing';
 const SUPPORT_EMAIL = 'support@appsecai.io';
-const STATUS_PAGE_URL = 'https://status.appsecai.net';
+/**
+ * Public install page for the AppSecAI GitHub App. Linked from authentication
+ * and access guidance so users can install/verify the App directly.
+ */
+const APP_INSTALL_URL = 'https://github.com/apps/appsecai-app';
+/**
+ * Machine-readable error code returned by Hydra (HTTP 403) when the AppSecAI
+ * GitHub App cannot push to the target repository. Locked contract shared with
+ * Hydra (AppSecureAI/Hydra#1025).
+ */
+const REPO_ACCESS_MISSING_CODE = 'github_app_repo_access_missing';
 /**
  * Troubleshooting guidance for common error scenarios
  */
@@ -40268,14 +40277,12 @@ const TroubleshootingGuidance = {
         'Verify your SARIF file is valid JSON and follows the SARIF 2.1.0 schema',
         'Ensure the file size is under 50MB',
         'Check that your organization has an active AppSecAI subscription',
-        `Check service status at ${STATUS_PAGE_URL}`,
         `Contact support at ${SUPPORT_EMAIL} if the issue persists`
     ],
     CODE_UPLOAD: [
         'Verify the repository is accessible with the provided credentials',
         'Check that the branch exists and is not protected',
-        'Ensure the repository is not empty',
-        `Check service status at ${STATUS_PAGE_URL}`
+        'Ensure the repository is not empty'
     ],
     AUTHENTICATION: [
         'Verify your GitHub App installation is active',
@@ -40283,7 +40290,6 @@ const TroubleshootingGuidance = {
         'Ensure your API credentials are valid and not expired'
     ],
     GENERIC: [
-        `Check service status at ${STATUS_PAGE_URL}`,
         'Wait a few minutes and retry your request',
         `Contact support at ${SUPPORT_EMAIL} if the issue persists`
     ]
@@ -40339,7 +40345,7 @@ function validFileName(filePath) {
     // Extract just the filename from the path
     const fileName = path.basename(filePath);
     // Regex pattern to validate filename and extension
-    const validFilePattern = new RegExp('^(?!.*\\.\\.)[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*\\.(json|sarif|csv|tsv)$', 'i');
+    const validFilePattern = new RegExp('^(?!.*\\.\\.)[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*\\.(json|sarif|csv|tsv|xml)$', 'i');
     return validFilePattern.test(fileName);
 }
 /**
@@ -40377,7 +40383,7 @@ function fileExists(filePath) {
 function asyncReadFile(fileName, successCallback, failureCallback) {
     // Validate input first
     if (!validFilePath(fileName)) {
-        const error = new FileReadError('Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv', 'EINVAL', fileName);
+        const error = new FileReadError('Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv, .xml', 'EINVAL', fileName);
         failureCallback(error);
         return;
     }
@@ -54886,6 +54892,18 @@ function requireForm_data () {
 	var populate = requirePopulate();
 
 	/**
+	 * Escape CR, LF, and `"` in a multipart `name`/`filename` parameter, so a field
+	 * name or filename can not break out of its header line to inject headers or
+	 * smuggle additional parts. Matches the WHATWG HTML multipart/form-data encoding.
+	 *
+	 * @param {string} str - the parameter value to escape
+	 * @returns {string} the escaped value
+	 */
+	function escapeHeaderParam(str) {
+	  return String(str).replace(/\r/g, '%0D').replace(/\n/g, '%0A').replace(/"/g, '%22');
+	}
+
+	/**
 	 * Create readable "multipart/form-data" streams.
 	 * Can be used to submit forms
 	 * and file uploads to other web applications.
@@ -55050,7 +55068,7 @@ function requireForm_data () {
 	  var contents = '';
 	  var headers = {
 	    // add custom disposition as third element or keep it two elements if not
-	    'Content-Disposition': ['form-data', 'name="' + field + '"'].concat(contentDisposition || []),
+	    'Content-Disposition': ['form-data', 'name="' + escapeHeaderParam(field) + '"'].concat(contentDisposition || []),
 	    // if no content type. allow it to be empty array
 	    'Content-Type': [].concat(contentType || [])
 	  };
@@ -55104,7 +55122,7 @@ function requireForm_data () {
 	  }
 
 	  if (filename) {
-	    return 'filename="' + filename + '"';
+	    return 'filename="' + escapeHeaderParam(filename) + '"';
 	  }
 	};
 
@@ -63018,6 +63036,9 @@ function buildSubmitFormData(inputFiles, payload) {
     formData.append('auto_create_prs', String(payload.autoCreatePrs));
     formData.append('create_issues_for_incomplete_remediations', String(payload.createIssuesForIncompleteRemediations));
     formData.append('comment_modification_mode', payload.commentModificationMode);
+    if (payload.prAudience !== undefined) {
+        formData.append('pr_audience', payload.prAudience);
+    }
     if (payload.maxVulnerabilitiesPerPr !== undefined) {
         formData.append('max_vulnerabilities_per_pr', String(payload.maxVulnerabilitiesPerPr));
     }
@@ -63026,6 +63047,9 @@ function buildSubmitFormData(inputFiles, payload) {
     }
     if (payload.groupingStage !== undefined) {
         formData.append('grouping_stage', payload.groupingStage);
+    }
+    if (payload.allowMissingRepoAccess !== undefined) {
+        formData.append('allow_missing_repo_access', String(payload.allowMissingRepoAccess));
     }
     return formData;
 }
@@ -66939,12 +66963,36 @@ const StructuredErrorDetailSchema = objectType({
     organization_id: stringType().optional(),
     assignment_id: stringType().optional(),
     expires_at: stringType().optional(),
+    period_start: stringType().optional(),
     period_end: stringType().optional(),
     status: stringType().optional(),
     steps: StepListSchema.optional(),
     owner: stringType().optional(),
     owner_type: stringType().optional(),
-    quota_info: QuotaInfoSchema.optional()
+    quota_info: QuotaInfoSchema.optional(),
+    // Flat-code 402 plan/quota denial fields returned by POST /api-product/submit
+    // (e.g. code=QUOTA_EXCEEDED with usage numbers). Surfaced so the usage block
+    // renders and the numbers are not dropped.
+    quota_used: numberType().optional(),
+    quota_limit: numberType().optional(),
+    quota_remaining: numberType().optional(),
+    // Future ENTITLEMENT_DENIED envelope fields. reason_code maps to a canonical
+    // plan/quota code and remediation provides ready-to-display guidance.
+    reason_code: stringType().optional(),
+    remediation: stringType().optional()
+});
+/**
+ * Schema for the structured 403 error detail returned by Hydra when the
+ * AppSecAI GitHub App cannot push to the target repository.
+ * The locked contract (AppSecureAI/Hydra#1025) guarantees these fields.
+ */
+const RepoAccessErrorDetailSchema = objectType({
+    code: stringType(),
+    message: stringType(),
+    owner: stringType().optional(),
+    repo: stringType().optional(),
+    reason: stringType().optional(),
+    source: stringType().optional()
 });
 /**
  * Schema for run summary data from Medusa/Product API.
@@ -67085,6 +67133,11 @@ const ResponseStatusSchema = objectType({
     message: stringType(),
     description: stringType().nullable().optional(),
     run_status: stringType().nullable().optional(),
+    // Machine-readable reason for non-terminal run states (e.g. why a run is
+    // paused). Product may send either `status_reason` or `pause_reason`; both
+    // are accepted so a paused run validates without surfacing a schema error.
+    status_reason: stringType().nullable().optional(),
+    pause_reason: stringType().nullable().optional(),
     dashboard_url: stringType().nullable().optional(),
     results: SolverResultsSchema.nullable(),
     process_tracking: RunProcessTrackingSchema.nullable().optional(),
@@ -72032,6 +72085,14 @@ const GroupingStage = {
  * Includes plan-related errors, quota errors, and account validation errors.
  */
 const PlanErrorCode = {
+    // Plan-related errors
+    PLAN_EXPIRED: 'PLAN_EXPIRED',
+    NO_PLAN_ASSIGNED: 'NO_PLAN_ASSIGNED',
+    PLAN_INACTIVE: 'PLAN_INACTIVE',
+    // Authorization / access errors (HTTP 403)
+    NO_ELIGIBLE_ORG: 'NO_ELIGIBLE_ORG',
+    // Account validation errors
+    PERSONAL_ACCOUNT_NOT_SUPPORTED: 'PERSONAL_ACCOUNT_NOT_SUPPORTED',
     // Quota-related errors
     QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
     PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',
@@ -72151,7 +72212,11 @@ function getRemediateMethod() {
     return method;
 }
 function getLlmProfile() {
-    const profile = getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE');
+    // LLM_PROFILE is a legacy workflow env var alias kept for compatibility
+    // with the previous composite-action env mapping.
+    const profile = getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE') ||
+        process.env.LLM_PROFILE ||
+        '';
     if (profile === '') {
         return undefined;
     }
@@ -72217,6 +72282,9 @@ function getCommentModificationMode() {
         throw new Error(`Invalid comment-modification-mode "${mode}". Allowed values: ${allowedModes}.`);
     }
     return mode;
+}
+function getPrAudience() {
+    return getInputValue('pr-audience', 'INPUT_PR_AUDIENCE', 'PR_AUDIENCE');
 }
 function getRegressionEvidenceBaseRef() {
     return getInputValue('regression-evidence-base-ref', 'INPUT_REGRESSION_EVIDENCE_BASE_REF', 'REGRESSION_EVIDENCE_BASE_REF');
@@ -72344,6 +72412,14 @@ function getUpdateContext() {
     }
     return value === 'true';
 }
+function getAllowMissingRepoAccess() {
+    const value = getInputValue('allow-missing-repo-access', 'INPUT_ALLOW_MISSING_REPO_ACCESS', 'ALLOW_MISSING_REPO_ACCESS') || 'false';
+    if (value !== 'true' && value !== 'false') {
+        coreExports.warning(`Invalid allow-missing-repo-access value "${value}". Must be "true" or "false". Using default: false`);
+        return false;
+    }
+    return value === 'true';
+}
 
 // src/store.ts
 // Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
@@ -72467,6 +72543,27 @@ function formatFunctionalQualityWarnings(count) {
 }
 function formatNonPrRemediationUnits(count) {
     return `${pluralize(count, 'remediation unit')} did not produce customer-visible PRs`;
+}
+function getRemainingRemediationUnits(status) {
+    return Math.max(0, (status.total_items || 0) - (status.processed_items || 0));
+}
+function formatPushCreatedProgress(status, prCount) {
+    if ((status.total_items || 0) <= 0) {
+        return null;
+    }
+    return `${prCount} of ~${status.total_items} created`;
+}
+function appendPushUnitProgressDetails(details, status) {
+    if ((status.total_items || 0) <= 0) {
+        return;
+    }
+    details.unshift(`${pluralize(getRemainingRemediationUnits(status), 'remediation unit')} remaining`);
+}
+function appendPushCompletionUnitTotal(details, status) {
+    if ((status.total_items || 0) <= 0 || details.length === 0) {
+        return;
+    }
+    details.push(`across ${pluralize(status.total_items, 'remediation unit')}`);
 }
 function getNumericField(source, fields) {
     if (!source)
@@ -72806,6 +72903,7 @@ function formatStageStatus(name, status, remediationLoopStatus, summary, runStat
             if (status.error_count > 0) {
                 details.push(formatNonPrRemediationUnits(status.error_count));
             }
+            appendPushCompletionUnitTotal(details, status);
         }
         else if (name === 'find') {
             // For find/scan, show vulnerabilities found
@@ -72890,14 +72988,23 @@ function formatStageStatus(name, status, remediationLoopStatus, summary, runStat
             if (remainingVulns > 0) {
                 details.push(`${remainingVulns} still in remediation`);
             }
-            else {
+            else if ((status.total_items || 0) <= 0) {
                 details.push('more expected as remediation continues');
+            }
+            const pushProgress = formatPushCreatedProgress(status, prCount);
+            if (pushProgress) {
+                appendPushUnitProgressDetails(details, status);
+                return `${STATUS_ICONS.in_progress} ${displayName}: ${pushProgress} (${details.join(', ')})`;
             }
             return `${STATUS_ICONS.in_progress} ${displayName}: ${pluralize(prCount, 'PR')} created (${details.join(', ')})`;
         }
         // For push, use PR terminology
         if (name === 'push') {
             const prCount = getCustomerVisiblePrCount(summary, status);
+            const pushProgress = formatPushCreatedProgress(status, prCount);
+            if (pushProgress) {
+                return `${STATUS_ICONS.in_progress} ${displayName}: ${pushProgress} (${pluralize(getRemainingRemediationUnits(status), 'remediation unit')} remaining, ${pct}%)`;
+            }
             const totalPrs = summary?.customer_visible_pr_count ?? status.total_items;
             return `${STATUS_ICONS.in_progress} ${displayName}: ${prCount}/${totalPrs} PRs (${pct}%)`;
         }
@@ -73020,8 +73127,16 @@ function formatSummaryDetails(name, status, summary) {
     }
     else if (name === 'push') {
         const prCount = getCustomerVisiblePrCount(summary, status);
+        const parts = [];
         if (prCount > 0) {
-            return `${pluralize(prCount, 'PR')} created`;
+            parts.push(`${pluralize(prCount, 'PR')} created`);
+        }
+        if (status.error_count > 0) {
+            parts.push(formatNonPrRemediationUnits(status.error_count));
+        }
+        appendPushCompletionUnitTotal(parts, status);
+        if (parts.length > 0) {
+            return parts.join(', ');
         }
         if (hasTypedNoPrReason(summary)) {
             return `No customer-visible PRs created${formatNoCustomerPrReason(summary)}`;
@@ -73805,10 +73920,16 @@ function parseApiError(error) {
     if (!responseData) {
         return parsedError;
     }
-    // Try to parse as quota error detail (for 429 responses)
+    // Try to parse as quota error detail (for 429 responses). 429 may carry
+    // usage at the top level (legacy) or nested in `detail` (envelope). Only
+    // adopt the top-level shape when it actually carries usage numbers, so an
+    // empty match does not preempt the structured-detail block below (which
+    // would otherwise leave quotaDetails an empty object and drop the numbers).
     if (statusCode === 429) {
         const quotaParsed = QuotaErrorDetailSchema.safeParse(responseData);
-        if (quotaParsed.success) {
+        if (quotaParsed.success &&
+            (quotaParsed.data.quota_used !== undefined ||
+                quotaParsed.data.quota_limit !== undefined)) {
             parsedError.quotaDetails = quotaParsed.data;
             parsedError.message =
                 quotaParsed.data.message ||
@@ -73816,8 +73937,20 @@ function parseApiError(error) {
                     parsedError.message;
             parsedError.errorCode = PlanErrorCode.QUOTA_EXCEEDED;
         }
+        else if (quotaParsed.success) {
+            // No usage numbers but the legacy message/error fields may still be the
+            // best available message, and the code is still QUOTA_EXCEEDED for 429.
+            parsedError.message =
+                quotaParsed.data.message ||
+                    quotaParsed.data.error ||
+                    parsedError.message;
+            parsedError.errorCode = PlanErrorCode.QUOTA_EXCEEDED;
+        }
     }
-    // Try to parse as payment required error (for 402 responses)
+    // Try to parse as payment required error (for 402 responses). This is the
+    // default code; the structured-detail block below may override it with the
+    // flat code carried in `detail.code` (QUOTA_EXCEEDED / NO_PLAN_ASSIGNED /
+    // PLAN_EXPIRED / PLAN_INACTIVE / PAYMENT_REQUIRED).
     if (statusCode === 402) {
         parsedError.errorCode = PlanErrorCode.PAYMENT_REQUIRED;
         if (typeof responseData === 'object' && responseData.message) {
@@ -73840,17 +73973,44 @@ function parseApiError(error) {
                     : responseData.detail.description || 'Internal server error';
         }
     }
-    // Try to parse structured error detail from detail field
+    // Try to parse structured error detail from the detail field. This is the
+    // authoritative source for plan/quota/entitlement denials (flat-code 402/403
+    // shape and the future ENTITLEMENT_DENIED envelope). Runs last so the
+    // structured code/description/remediation override the status-based defaults
+    // set above.
     const detail = responseData.detail;
     if (typeof detail === 'object' && detail !== null) {
         const structuredParsed = StructuredErrorDetailSchema.safeParse(detail);
         if (structuredParsed.success) {
-            parsedError.structuredDetails = structuredParsed.data;
-            if (structuredParsed.data.code) {
-                parsedError.errorCode = structuredParsed.data.code;
+            const sd = structuredParsed.data;
+            parsedError.structuredDetails = sd;
+            // Resolve the effective error code. For the future ENTITLEMENT_DENIED
+            // envelope, map reason_code to a canonical plan/quota code so a single
+            // set of renderers serves both contracts; otherwise use the flat code.
+            const envelopeCode = sd.code === ENTITLEMENT_DENIED_CODE
+                ? reasonCodeToPlanCode(sd.reason_code)
+                : undefined;
+            const effectiveCode = envelopeCode ?? sd.code;
+            if (effectiveCode) {
+                parsedError.errorCode = effectiveCode;
             }
-            if (structuredParsed.data.description) {
-                parsedError.message = structuredParsed.data.description;
+            // Body line precedence: server description, then envelope remediation.
+            if (sd.description) {
+                parsedError.message = sd.description;
+            }
+            else if (sd.remediation) {
+                parsedError.message = sd.remediation;
+            }
+            // Populate quota usage from a flat-code 402 quota denial (or any detail
+            // carrying usage) so the QUOTA EXCEEDED usage block can render.
+            if (!parsedError.quotaDetails &&
+                (sd.quota_used !== undefined || sd.quota_limit !== undefined)) {
+                parsedError.quotaDetails = {
+                    quota_used: sd.quota_used,
+                    quota_limit: sd.quota_limit,
+                    period_start: sd.period_start,
+                    period_end: sd.period_end
+                };
             }
         }
     }
@@ -73860,8 +74020,79 @@ function parseApiError(error) {
     return parsedError;
 }
 /**
- * Format a user-friendly error message based on the parsed API error.
- * Provides specific guidance for quota (429), payment (402), and server (500) errors.
+ * Code used by the future ENTITLEMENT_DENIED envelope contract. When the
+ * structured detail carries this code, the actionable reason is in
+ * `reason_code` and the guidance in `remediation`.
+ */
+const ENTITLEMENT_DENIED_CODE = 'ENTITLEMENT_DENIED';
+/**
+ * Map an ENTITLEMENT_DENIED envelope reason_code to the canonical flat
+ * plan/quota code so a single set of renderers can serve both contracts.
+ */
+function reasonCodeToPlanCode(reasonCode) {
+    switch (reasonCode) {
+        case 'no_plan':
+            return PlanErrorCode.NO_PLAN_ASSIGNED;
+        case 'plan_inactive':
+            return PlanErrorCode.PLAN_INACTIVE;
+        case 'quota_exceeded':
+            return PlanErrorCode.QUOTA_EXCEEDED;
+        case 'invite_required':
+            return ONBOARDING_CODE;
+        default:
+            return undefined;
+    }
+}
+/**
+ * Canonical code for the onboarding/invite-required denial (maps from the
+ * envelope reason_code `invite_required`).
+ */
+const ONBOARDING_CODE = 'ONBOARDING_REQUIRED';
+/**
+ * Determine whether a message returned by the server (or axios) is specific
+ * enough to surface to the user as-is.
+ *
+ * Axios's default failure messages ("Request failed with status code 403"),
+ * bare HTTP reason phrases ("Forbidden"), and generic placeholders
+ * ("An error occurred...") carry no actionable context, so callers should
+ * substitute mapped, status-specific guidance instead of echoing them.
+ *
+ * @param message - The candidate message text
+ * @returns true if the message is specific/actionable, false otherwise
+ */
+function isActionableServerMessage(message) {
+    if (!message)
+        return false;
+    const trimmed = message.trim();
+    if (trimmed === '')
+        return false;
+    // Axios default network/HTTP error messages
+    if (/^Request failed with status code \d+/i.test(trimmed))
+        return false;
+    // Generic placeholders that imply nothing actionable
+    if (/^An (unexpected )?error occurred/i.test(trimmed))
+        return false;
+    // Bare HTTP reason phrases provide no detail beyond the status code
+    const bareReasons = new Set([
+        'forbidden',
+        'unauthorized',
+        'not found',
+        'bad request',
+        'payment required',
+        'unprocessable entity',
+        'internal server error',
+        'request timeout'
+    ]);
+    if (bareReasons.has(trimmed.toLowerCase()))
+        return false;
+    return true;
+}
+/**
+ * Format a user-friendly, actionable error message based on the parsed API error.
+ *
+ * Dispatches on HTTP status code so every documented failure path (401, 402,
+ * 403, 404, 408, 422, 429, 5xx) produces clear guidance. Non-retriable
+ * authorization/validation failures never instruct the user to "try again".
  *
  * @param error - The parsed API error
  * @param prefixLabel - Label prefix for the error message (e.g., "[Submit Analysis for Processing]")
@@ -73869,24 +74100,226 @@ function parseApiError(error) {
  */
 function formatErrorMessage(error, prefixLabel) {
     const { statusCode, errorCode, message, quotaDetails, structuredDetails } = error;
-    // Handle quota exceeded (429)
-    if (statusCode === 429) {
-        return formatQuotaExceededError(quotaDetails, prefixLabel);
+    switch (statusCode) {
+        case 401:
+            return formatAuthenticationError(message, prefixLabel);
+        case 402:
+            // The submit channel returns ALL plan/quota/billing denials at HTTP 402
+            // with a flat structured code. Branch on that code so each denial gets an
+            // accurate header and tailored guidance instead of a blanket
+            // "PAYMENT REQUIRED".
+            return formatPaymentRequiredFamily(errorCode, message, quotaDetails, prefixLabel);
+        case 403:
+            return formatAuthorizationError(message, errorCode, prefixLabel);
+        case 404:
+            return formatNotFoundError(message, prefixLabel);
+        case 408:
+            return formatRequestTimeoutError(message, prefixLabel);
+        case 422:
+            return formatValidationError(message, prefixLabel);
+        case 429:
+            return formatQuotaExceededError(quotaDetails, prefixLabel);
     }
-    // Handle payment required (402)
-    if (statusCode === 402) {
-        return formatPaymentRequiredError(message, prefixLabel);
-    }
-    // Handle server error (500)
-    if (statusCode === 500) {
+    // Handle server errors (500 and other 5xx)
+    if (statusCode >= 500) {
         return formatServerError(message, prefixLabel);
     }
-    // Handle structured errors with error codes
+    // Handle structured errors with error codes (e.g., 400 with a plan code)
     if (errorCode && structuredDetails) {
         return formatStructuredError(errorCode, structuredDetails, prefixLabel);
     }
     // Default error format
     return `${prefixLabel} ${message}`;
+}
+/**
+ * Dispatch an HTTP 402 (and envelope-mapped) denial to the correct renderer
+ * based on the flat structured code. The submit channel returns every
+ * plan/quota/billing denial at 402, so a blanket "PAYMENT REQUIRED" would
+ * mislabel a quota exhaustion as a billing problem and drop its usage numbers.
+ *
+ * Routing:
+ * - QUOTA_EXCEEDED -> formatQuotaExceededError (labeled QUOTA EXCEEDED, usage)
+ * - NO_PLAN_ASSIGNED / PLAN_EXPIRED / PLAN_INACTIVE / ONBOARDING_REQUIRED ->
+ *   formatAuthorizationError ([<CODE>] ACCESS DENIED + plan-specific guidance)
+ * - PAYMENT_REQUIRED / unknown / absent -> formatPaymentRequiredError
+ */
+function formatPaymentRequiredFamily(errorCode, message, quotaDetails, prefixLabel) {
+    switch (errorCode) {
+        case PlanErrorCode.QUOTA_EXCEEDED:
+            return formatQuotaExceededError(quotaDetails, prefixLabel);
+        case PlanErrorCode.NO_PLAN_ASSIGNED:
+        case PlanErrorCode.PLAN_EXPIRED:
+        case PlanErrorCode.PLAN_INACTIVE:
+        case ONBOARDING_CODE:
+            return formatAuthorizationError(message, errorCode, prefixLabel);
+        default:
+            return formatPaymentRequiredError(message, prefixLabel);
+    }
+}
+/**
+ * Format an authentication failure (HTTP 401) with actionable guidance.
+ * This is a non-retriable error; the message never instructs the user to retry.
+ */
+function formatAuthenticationError(message, prefixLabel) {
+    const detail = isActionableServerMessage(message)
+        ? message.trim()
+        : 'Your request could not be authenticated.';
+    const lines = [];
+    lines.push(`${prefixLabel} AUTHENTICATION FAILED`);
+    lines.push(detail);
+    lines.push('');
+    lines.push('This is not a transient error and will not be fixed by retrying.');
+    lines.push('To resolve:');
+    lines.push(`- Verify the AppSecAI GitHub App is installed on this repository: ${APP_INSTALL_URL}`);
+    lines.push("- Ensure the workflow grants 'id-token: write' permission for OIDC authentication");
+    lines.push('- Confirm your AppSecAI account is active');
+    lines.push(`- Contact support: ${SUPPORT_EMAIL}`);
+    return lines.join('\n');
+}
+/**
+ * Format an authorization / plan denial (HTTP 403) with actionable guidance.
+ *
+ * Surfaces the server-provided detail when present; otherwise maps the known
+ * plan/authorization error codes to specific guidance. Never instructs the user
+ * to "try again" because these denials are permanent until access is granted.
+ */
+function formatAuthorizationError(message, errorCode, prefixLabel) {
+    const codeLabel = errorCode && errorCode !== PlanErrorCode.UNKNOWN ? ` [${errorCode}]` : '';
+    // Per-code detail (the second line). The server description is always
+    // preferred when it is specific enough to surface.
+    const serverDetail = isActionableServerMessage(message)
+        ? message.trim()
+        : undefined;
+    let detail;
+    switch (errorCode) {
+        case PlanErrorCode.NO_PLAN_ASSIGNED:
+            detail =
+                serverDetail || 'No subscription plan is assigned to your organization.';
+            break;
+        case PlanErrorCode.PLAN_EXPIRED:
+            detail = serverDetail || "Your organization's plan has expired.";
+            break;
+        case PlanErrorCode.PLAN_INACTIVE:
+            detail = serverDetail || "Your organization's plan is not active.";
+            break;
+        case ONBOARDING_CODE:
+            detail =
+                serverDetail || 'Onboarding is required before you can submit runs.';
+            break;
+        case PlanErrorCode.NO_ELIGIBLE_ORG:
+            detail =
+                serverDetail ||
+                    'Your organization does not have an active plan or the access required to run AppSecAI. ' +
+                        'Contact your AppSecAI representative.';
+            break;
+        case PlanErrorCode.PERSONAL_ACCOUNT_NOT_SUPPORTED:
+            detail =
+                serverDetail ||
+                    'Personal GitHub accounts are not supported. ' +
+                        'Run AppSecAI under a GitHub organization that has an active plan.';
+            break;
+        default:
+            detail =
+                serverDetail ||
+                    'Your request was not authorized. This usually means your organization does not have ' +
+                        'an active plan or the access required to run AppSecAI. Contact your AppSecAI representative.';
+    }
+    // Per-code resolution lines. NO_PLAN_ASSIGNED / PLAN_EXPIRED / PLAN_INACTIVE /
+    // ONBOARDING_REQUIRED get distinct, specific guidance; all other codes keep
+    // the established generic plan/access guidance.
+    let resolutionLines;
+    switch (errorCode) {
+        case PlanErrorCode.NO_PLAN_ASSIGNED:
+            resolutionLines = [
+                "- Assign a plan to your organization (ask your admin if you don't manage billing).",
+                `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+            ];
+            break;
+        case PlanErrorCode.PLAN_EXPIRED:
+            resolutionLines = [
+                "- Renew your organization's plan.",
+                `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+            ];
+            break;
+        case PlanErrorCode.PLAN_INACTIVE:
+            resolutionLines = [
+                '- Ask your organization admin to reactivate the plan.',
+                `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+            ];
+            break;
+        case ONBOARDING_CODE:
+            resolutionLines = [
+                '- Complete onboarding / redeem your invite code.',
+                `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+            ];
+            break;
+        default:
+            resolutionLines = [
+                '- Verify your organization has an active AppSecAI plan and access',
+                `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+            ];
+    }
+    const lines = [];
+    lines.push(`${prefixLabel}${codeLabel} ACCESS DENIED`);
+    lines.push(detail);
+    lines.push('');
+    lines.push('This is not a transient error and will not be fixed by retrying.');
+    lines.push('To resolve:');
+    lines.push(...resolutionLines);
+    return lines.join('\n');
+}
+/**
+ * Format a not-found error (HTTP 404) with actionable guidance.
+ */
+function formatNotFoundError(message, prefixLabel) {
+    const detail = isActionableServerMessage(message)
+        ? message.trim()
+        : 'The requested resource was not found.';
+    const lines = [];
+    lines.push(`${prefixLabel} NOT FOUND`);
+    lines.push(detail);
+    lines.push('');
+    lines.push('To resolve:');
+    lines.push("- Verify the 'api-url' input points to the correct AppSecAI endpoint");
+    lines.push(`- Confirm the AppSecAI GitHub App is installed on this repository: ${APP_INSTALL_URL}`);
+    lines.push(`- Contact support: ${SUPPORT_EMAIL}`);
+    return lines.join('\n');
+}
+/**
+ * Format a server-side request timeout (HTTP 408). This condition is transient,
+ * so retry guidance is appropriate here.
+ */
+function formatRequestTimeoutError(message, prefixLabel) {
+    const detail = isActionableServerMessage(message)
+        ? message.trim()
+        : 'The server took too long to respond.';
+    const lines = [];
+    lines.push(`${prefixLabel} REQUEST TIMEOUT`);
+    lines.push(detail);
+    lines.push('');
+    lines.push('This is usually transient. To resolve:');
+    lines.push('- Wait a few minutes and retry your request');
+    lines.push(`- If the problem persists, contact support: ${SUPPORT_EMAIL}`);
+    return lines.join('\n');
+}
+/**
+ * Format a validation error (HTTP 422) with actionable guidance.
+ * Non-retriable: the submission must be corrected before resubmitting.
+ */
+function formatValidationError(message, prefixLabel) {
+    const detail = isActionableServerMessage(message)
+        ? message.trim()
+        : 'The submitted analysis results were rejected as invalid.';
+    const lines = [];
+    lines.push(`${prefixLabel} INVALID SUBMISSION`);
+    lines.push(detail);
+    lines.push('');
+    lines.push('This is not a transient error and will not be fixed by retrying.');
+    lines.push('To resolve:');
+    lines.push('- Verify your analysis file is valid JSON/SARIF and follows the expected schema');
+    lines.push('- Ensure the file is not empty and is within the size limit');
+    lines.push(`- Contact support: ${SUPPORT_EMAIL} if the file appears valid`);
+    return lines.join('\n');
 }
 /**
  * Format a quota exceeded error message with usage details and upgrade guidance.
@@ -73896,17 +74329,20 @@ function formatQuotaExceededError(quotaDetails, prefixLabel) {
     lines.push(`${prefixLabel} QUOTA EXCEEDED`);
     lines.push('Your organization has reached its run limit for this billing period.');
     lines.push('');
-    if (quotaDetails) {
-        const used = quotaDetails.quota_used ?? 'N/A';
-        const limit = quotaDetails.quota_limit ?? 'N/A';
-        lines.push(`Current Usage: ${used} runs used / ${limit} runs available`);
+    // Only render the usage line when BOTH numbers are present. Printing
+    // "N/A runs used / N/A runs available" from a partial/empty detail is
+    // noise, so it is suppressed entirely.
+    if (quotaDetails &&
+        quotaDetails.quota_used !== undefined &&
+        quotaDetails.quota_limit !== undefined) {
+        lines.push(`Current Usage: ${quotaDetails.quota_used} runs used / ${quotaDetails.quota_limit} runs available`);
         if (quotaDetails.period_start && quotaDetails.period_end) {
             lines.push(`Period: ${quotaDetails.period_start} to ${quotaDetails.period_end}`);
         }
         lines.push('');
     }
     lines.push('To resolve:');
-    lines.push(`- Upgrade your plan at ${BILLING_URL}`);
+    lines.push('- Contact your AppSecAI representative to upgrade or renew your plan');
     lines.push(`- Contact support: ${SUPPORT_EMAIL}`);
     return lines.join('\n');
 }
@@ -73919,7 +74355,7 @@ function formatPaymentRequiredError(message, prefixLabel) {
     lines.push(message || 'A payment is required to continue using this service.');
     lines.push('');
     lines.push('To resolve:');
-    lines.push(`- Update your payment method at ${BILLING_URL}`);
+    lines.push('- Contact your AppSecAI representative to upgrade or renew your plan');
     lines.push(`- Contact support: ${SUPPORT_EMAIL}`);
     return lines.join('\n');
 }
@@ -73933,16 +74369,69 @@ function formatServerError(message, prefixLabel) {
     lines.push('');
     lines.push('To resolve:');
     lines.push('- Wait a few minutes and retry your request');
-    lines.push(`- Check ${STATUS_PAGE_URL} for service status`);
     lines.push(`- If the problem persists, contact support: ${SUPPORT_EMAIL}`);
     return lines.join('\n');
 }
 /**
  * Format a structured error message with error code context.
+ *
+ * Used for structured errors that don't map to a dedicated HTTP-status handler.
+ * When the server omits a description, falls back to neutral, support-oriented
+ * guidance rather than a misleading "please try again" (the condition may be
+ * permanent).
  */
 function formatStructuredError(errorCode, details, prefixLabel) {
-    const description = details.description ?? 'An error occurred. Please try again.';
+    const description = details.description && details.description.trim() !== ''
+        ? details.description
+        : `The request could not be completed. Contact support: ${SUPPORT_EMAIL} if this persists.`;
     return `${prefixLabel} [${errorCode}] ${description}`;
+}
+/**
+ * Build the fail-fast error message for the Hydra repo-access pre-flight
+ * rejection (HTTP 403, code `github_app_repo_access_missing`).
+ *
+ * Surfaces Hydra's ready-to-display `detail.message` verbatim, framed so it
+ * does not read like a generic network/server error, and points users at the
+ * `allow-missing-repo-access` override for the licensed-org / repo-not-yet-added
+ * case.
+ *
+ * @param error - The axios error from the submit call
+ * @param prefixLabel - Label prefix for the message (e.g. "[Submit Analysis for Processing]")
+ * @returns The formatted message string, or null if this is not a repo-access rejection
+ */
+function formatRepoAccessError(error, prefixLabel) {
+    if (!axios.isAxiosError(error)) {
+        return null;
+    }
+    if (error.response?.status !== 403) {
+        return null;
+    }
+    const detail = error.response?.data?.detail;
+    const parsed = RepoAccessErrorDetailSchema.safeParse(detail);
+    if (!parsed.success || parsed.data.code !== REPO_ACCESS_MISSING_CODE) {
+        return null;
+    }
+    const data = parsed.data;
+    const lines = [];
+    lines.push(`${prefixLabel} GITHUB APP CANNOT PUSH TO THE TARGET REPOSITORY`);
+    lines.push('The run was not started because the AppSecAI GitHub App cannot push fixes to this repository.');
+    lines.push('');
+    // Hydra's message is authored to be actionable and ready to display verbatim.
+    lines.push(data.message);
+    lines.push('');
+    lines.push('If the organization is licensed and the App is installed but this repository has simply not been ' +
+        'added to the App yet, you can start the run now and have the fixes pushed once access is granted ' +
+        'by setting the action input `allow-missing-repo-access: true`.');
+    // Log machine-readable context for debugging without altering the message.
+    if (data.owner)
+        coreExports.debug(`Repo access owner: ${data.owner}`);
+    if (data.repo)
+        coreExports.debug(`Repo access repo: ${data.repo}`);
+    if (data.reason)
+        coreExports.debug(`Repo access reason: ${data.reason}`);
+    if (data.source)
+        coreExports.debug(`Repo access source: ${data.source}`);
+    return lines.join('\n');
 }
 function getActionRuntime() {
     return createAppSecAIRuntime({
@@ -73950,12 +74439,83 @@ function getActionRuntime() {
         getAuthToken: getIdToken
     });
 }
+const ReconciliationReasonCode = {
+    ACTIVE_AFTER_RUN_COMPLETED: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED'
+};
+/**
+ * Reason code reported when the server run is paused (a distinct, non-failure
+ * outcome). A paused run preserves work and resumes automatically once
+ * capacity returns (e.g. sustained Bedrock throttling), so the action stops
+ * polling and reports a paused result rather than a failure.
+ */
+const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED';
+/**
+ * Default human-readable message shown when a run is observed as paused and
+ * the server did not provide a more specific reason.
+ */
+const DEFAULT_PAUSE_REASON = 'sustained Bedrock throttling — work preserved; it will resume automatically when capacity returns';
+const ACTIVE_RECONCILIATION_STATUSES = new Set([
+    'initiated',
+    'in_progress',
+    'pending',
+    'processing',
+    'queued',
+    'running'
+]);
+const RECONCILIATION_STAGE_LABELS = [
+    { key: 'remediation_validation_loop_status', label: 'remediation' },
+    { key: 'group_remediate_status', label: 'group_remediate' },
+    { key: 'group_validate_status', label: 'group_validate' },
+    { key: 'push_status', label: 'push' }
+];
+function normalizeStatus(status) {
+    return (status ?? '').trim().toLowerCase();
+}
+function isActiveReconciliationStatus(status) {
+    const statusName = normalizeStatus(status?.status);
+    if (statusName === 'not_started') {
+        return (status?.total_items ?? 0) > (status?.processed_items ?? 0);
+    }
+    return ACTIVE_RECONCILIATION_STATUSES.has(statusName);
+}
+function describeProcessStatus(label, status) {
+    const statusName = normalizeStatus(status.status) || 'unknown';
+    const counts = status.total_items > 0
+        ? `, processed=${status.processed_items}/${status.total_items}`
+        : '';
+    const successes = status.success_count > 0 ? `, success=${status.success_count}` : '';
+    return `${label}=${statusName}${counts}${successes}`;
+}
+function getCompletedRunReconciliationDiagnostic(processTracking) {
+    if (!processTracking) {
+        return null;
+    }
+    const activeStages = RECONCILIATION_STAGE_LABELS.flatMap(({ key, label }) => {
+        const status = processTracking[key];
+        if (!status || !isActiveReconciliationStatus(status)) {
+            return [];
+        }
+        return [describeProcessStatus(label, status)];
+    });
+    if (activeStages.length === 0) {
+        return null;
+    }
+    return {
+        reasonCode: ReconciliationReasonCode.ACTIVE_AFTER_RUN_COMPLETED,
+        diagnostic: `run_status=completed but artifact reconciliation is still active: ${activeStages.join('; ')}. ` +
+            'Continuing to poll before finalizing summary counts.'
+    };
+}
+function isReconciliationReason(reasonCode) {
+    return reasonCode === ReconciliationReasonCode.ACTIVE_AFTER_RUN_COMPLETED;
+}
 function buildSubmitPayloadOptions(mode, llmProfile) {
     return {
         processingMode: mode,
         autoCreatePrs: getAutoCreatePrs(),
         createIssuesForIncompleteRemediations: getCreateIssuesForIncompleteRemediations(),
         commentModificationMode: getCommentModificationMode(),
+        prAudience: getPrAudience() || undefined,
         llmProfile,
         maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
             ? getMaxVulnerabilitiesPerPr()
@@ -73963,7 +74523,11 @@ function buildSubmitPayloadOptions(mode, llmProfile) {
         groupingStrategy: isGroupingStrategyConfigured()
             ? getGroupingStrategy()
             : undefined,
-        groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined
+        groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined,
+        // allow_missing_repo_access overrides Hydra's pre-flight check that the
+        // AppSecAI GitHub App can push to the target repository. When set, Hydra
+        // starts the run even if the repo is not yet in the App installation.
+        allowMissingRepoAccess: getAllowMissingRepoAccess()
     };
 }
 async function submitRun(file, fileName) {
@@ -73983,6 +74547,13 @@ async function submitRun(file, fileName) {
     // update_context is not sent: unsupported by Hydra for this submit channel.
     if (getUpdateContext()) {
         coreExports.warning('update-context is set but is not supported in the current submit contract and will be ignored.');
+    }
+    // allow_missing_repo_access is forwarded via the submit payload and
+    // overrides Hydra's pre-flight check that the AppSecAI GitHub App can push
+    // to the target repository.
+    if (submitPayload.allowMissingRepoAccess) {
+        coreExports.warning('allow-missing-repo-access is set: the run will start without verified push access for the AppSecAI GitHub App. ' +
+            'Remediation pull requests will NOT be delivered until the target repository is added to the AppSecAI GitHub App installation.');
     }
     coreExports.debug('Calling submit API: POST /api-product/submit');
     const prefixLabel = `[${LogLabels.RUN_SUBMIT}]`;
@@ -74007,107 +74578,50 @@ async function submitRun(file, fileName) {
         };
     })
         .catch((error) => {
-        // Default message with actionable guidance
+        // Fail fast on Hydra's repo-access pre-flight rejection (HTTP 403,
+        // code github_app_repo_access_missing). Surface Hydra's actionable
+        // message verbatim instead of letting it look like a generic error.
+        const repoAccessMessage = formatRepoAccessError(error, prefixLabel);
+        if (repoAccessMessage) {
+            coreExports.error(repoAccessMessage);
+            throw new Error(repoAccessMessage);
+        }
+        // Default message with actionable guidance (used when we cannot classify
+        // the error any more precisely).
         let errorMessage = `${prefixLabel} Call failed: An unexpected error occurred. ` +
-            `Check ${STATUS_PAGE_URL} for service status. ` +
             `If the issue persists, contact ${SUPPORT_EMAIL}.`;
         // Try to parse as structured API error for better messaging
         const parsedError = parseApiError(error);
-        if (parsedError) {
-            // Handle special status codes with formatted messages
-            if ([429, 402, 500].includes(parsedError.statusCode)) {
-                errorMessage = formatErrorMessage(parsedError, prefixLabel);
-                // Log additional debug context for quota errors
-                if (parsedError.statusCode === 429 && parsedError.quotaDetails) {
-                    const qd = parsedError.quotaDetails;
-                    coreExports.debug(`Quota used: ${qd.quota_used}`);
-                    coreExports.debug(`Quota limit: ${qd.quota_limit}`);
-                    if (qd.period_start)
-                        coreExports.debug(`Period start: ${qd.period_start}`);
-                    if (qd.period_end)
-                        coreExports.debug(`Period end: ${qd.period_end}`);
-                }
-            }
-            else if (axios.isAxiosError(error)) {
-                // Handle other axios errors
-                if (error.code === 'ECONNABORTED') {
-                    errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`;
-                }
-                else if (error.response?.data) {
-                    const apiDetail = error.response.data.detail;
-                    // Handle both string and structured error detail formats
-                    if (typeof apiDetail === 'string') {
-                        // Simple string detail (legacy format)
-                        errorMessage = `${prefixLabel} ${apiDetail}`;
+        if (parsedError && parsedError.statusCode > 0) {
+            // We received an HTTP error response — produce an actionable,
+            // status-aware message (handles 401/402/403/404/408/422/429/5xx and
+            // structured plan codes). This is the single source of truth for
+            // HTTP-response error formatting.
+            errorMessage = formatErrorMessage(parsedError, prefixLabel);
+            // Emit debug context (quota usage, plan/org metadata) for diagnostics.
+            logApiErrorDebugContext(parsedError);
+            // Surface any processing steps included in the error response.
+            if (axios.isAxiosError(error)) {
+                const apiDetail = error.response?.data?.detail;
+                if (apiDetail &&
+                    typeof apiDetail === 'object' &&
+                    'steps' in apiDetail &&
+                    apiDetail.steps) {
+                    const stepList = StepListSchema.safeParse(apiDetail.steps);
+                    if (stepList.success) {
+                        logSteps(stepList.data, LogLabels.RUN_SUBMIT);
                     }
-                    else if (typeof apiDetail === 'object' && apiDetail !== null) {
-                        // Structured detail with code and description (new format)
-                        const structuredDetail = apiDetail;
-                        const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN;
-                        const httpStatus = error.response?.status;
-                        // Provide actionable guidance when error details are missing
-                        let description = structuredDetail.description;
-                        if (!description || description.trim() === '') {
-                            if (code === PlanErrorCode.UNKNOWN) {
-                                // Build helpful message with HTTP status context
-                                const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : '';
-                                description =
-                                    `Request failed${statusInfo}. ` +
-                                        `Check ${STATUS_PAGE_URL} for service status. ` +
-                                        `If the issue persists, contact ${SUPPORT_EMAIL}.`;
-                            }
-                            else {
-                                description = 'An error occurred. Please try again.';
-                            }
-                        }
-                        // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
-                        errorMessage = `${prefixLabel} [${code}] ${description}`;
-                        // Log additional context for debugging if available
-                        if (structuredDetail.organization_id) {
-                            coreExports.debug(`Organization ID: ${structuredDetail.organization_id}`);
-                        }
-                        if (structuredDetail.expires_at) {
-                            coreExports.debug(`Plan expires at: ${structuredDetail.expires_at}`);
-                        }
-                        if (structuredDetail.status) {
-                            coreExports.debug(`Plan status: ${structuredDetail.status}`);
-                        }
-                        if (structuredDetail.owner) {
-                            coreExports.debug(`Owner: ${structuredDetail.owner}`);
-                        }
-                        if (structuredDetail.owner_type) {
-                            coreExports.debug(`Owner type: ${structuredDetail.owner_type}`);
-                        }
-                    }
-                    // Handle step list if present (works with both formats)
-                    if (apiDetail?.steps) {
-                        const stepList = StepListSchema.safeParse(apiDetail.steps);
-                        if (stepList.success) {
-                            logSteps(stepList.data, LogLabels.RUN_SUBMIT);
-                        }
-                    }
-                }
-                else {
-                    // No response data - include status code if available
-                    const httpStatus = error.response?.status;
-                    const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : '';
-                    errorMessage =
-                        `${prefixLabel} Call failed${statusInfo}: ${error.message}. ` +
-                            `Check ${STATUS_PAGE_URL} for service status.`;
                 }
             }
         }
         else if (axios.isAxiosError(error)) {
-            // Non-parsed axios error (e.g., timeout without response)
+            // No HTTP response (timeout, connection reset, DNS failure). These are
+            // genuinely transient, so retry guidance is appropriate here.
             if (error.code === 'ECONNABORTED') {
-                errorMessage =
-                    `${prefixLabel} Call failed: Request timed out. ` +
-                        `The server may be under heavy load. Please try again in a few minutes.`;
+                errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`;
             }
             else {
-                errorMessage =
-                    `${prefixLabel} Call failed: ${error.message}. ` +
-                        `Check ${STATUS_PAGE_URL} for service status.`;
+                errorMessage = `${prefixLabel} Call failed: ${error.message}.`;
             }
         }
         else {
@@ -74116,6 +74630,36 @@ async function submitRun(file, fileName) {
         coreExports.error(errorMessage);
         throw new Error(errorMessage);
     });
+}
+/**
+ * Emit debug-level diagnostic context extracted from a parsed API error.
+ * Includes quota usage details (429) and plan/organization metadata
+ * (structured plan errors). Never logs the message itself, which is surfaced
+ * to the user via formatErrorMessage.
+ */
+function logApiErrorDebugContext(parsedError) {
+    const qd = parsedError.quotaDetails;
+    if (qd) {
+        coreExports.debug(`Quota used: ${qd.quota_used}`);
+        coreExports.debug(`Quota limit: ${qd.quota_limit}`);
+        if (qd.period_start)
+            coreExports.debug(`Period start: ${qd.period_start}`);
+        if (qd.period_end)
+            coreExports.debug(`Period end: ${qd.period_end}`);
+    }
+    const sd = parsedError.structuredDetails;
+    if (sd) {
+        if (sd.organization_id)
+            coreExports.debug(`Organization ID: ${sd.organization_id}`);
+        if (sd.expires_at)
+            coreExports.debug(`Plan expires at: ${sd.expires_at}`);
+        if (sd.status)
+            coreExports.debug(`Plan status: ${sd.status}`);
+        if (sd.owner)
+            coreExports.debug(`Owner: ${sd.owner}`);
+        if (sd.owner_type)
+            coreExports.debug(`Owner type: ${sd.owner_type}`);
+    }
 }
 async function getStatus(id, organizationId) {
     const apiUrl = getApiUrl();
@@ -74137,9 +74681,15 @@ async function getStatus(id, organizationId) {
         const processTracking = parsedResponse.data.process_tracking;
         const summary = parsedResponse.data.summary;
         const runStatus = parsedResponse.data.run_status;
-        const canonicalRunStatus = typeof runStatus === 'string' ? runStatus.trim() : '';
+        const canonicalRunStatus = typeof runStatus === 'string' ? normalizeStatus(runStatus) : '';
         const hasCanonicalRunStatus = canonicalRunStatus.length > 0;
         const dashboardUrl = parsedResponse.data.dashboard_url;
+        // Reason for non-terminal run states (e.g. why a run is paused). Product
+        // may send `status_reason` or `pause_reason`; fall back to `description`.
+        const runStatusReason = parsedResponse.data.status_reason ||
+            parsedResponse.data.pause_reason ||
+            parsedResponse.data.description ||
+            null;
         let totalVulns = 0;
         // Log process tracking information if available (Issue #181)
         if (processTracking) {
@@ -74153,9 +74703,12 @@ async function getStatus(id, organizationId) {
             const errorMsg = processTracking?.overall_status?.error_message ||
                 processTracking?.find_status?.error_message ||
                 'Run failed';
+            const diagnostic = `run_status=failed: ${errorMsg}`;
             coreExports.error(`${prefixLabel}: Run failed - ${errorMsg}`);
             return {
                 status: 'failed',
+                reasonCode: 'RUN_FAILED',
+                diagnostic,
                 error: errorMsg,
                 processTracking,
                 summary,
@@ -74163,6 +74716,18 @@ async function getStatus(id, organizationId) {
             };
         }
         if (canonicalRunStatus === 'completed') {
+            const reconciliationDiagnostic = getCompletedRunReconciliationDiagnostic(processTracking);
+            if (reconciliationDiagnostic) {
+                coreExports.warning(`${prefixLabel}: ${reconciliationDiagnostic.reasonCode} - ${reconciliationDiagnostic.diagnostic}`);
+                return {
+                    status: 'progress',
+                    reasonCode: reconciliationDiagnostic.reasonCode,
+                    diagnostic: reconciliationDiagnostic.diagnostic,
+                    processTracking,
+                    summary,
+                    dashboard_url: dashboardUrl
+                };
+            }
             const handledErrors = summary?.handled_error_count ??
                 processTracking?.triage_status?.handled_error_count ??
                 0;
@@ -74191,10 +74756,31 @@ async function getStatus(id, organizationId) {
             };
         }
         if (canonicalRunStatus === 'cancelled') {
+            const diagnostic = 'run_status=cancelled';
             coreExports.warning(`${prefixLabel}: Run was cancelled`);
             return {
                 status: 'failed',
+                reasonCode: 'RUN_CANCELLED',
+                diagnostic,
                 error: 'Run was cancelled',
+                processTracking,
+                summary,
+                dashboard_url: dashboardUrl
+            };
+        }
+        // A paused run is a distinct, non-failure outcome: the server has
+        // temporarily halted work (e.g. sustained Bedrock throttling) but has
+        // preserved progress and will resume automatically once capacity
+        // returns. Surface it clearly without treating it as a failure.
+        if (canonicalRunStatus === 'paused') {
+            const reason = runStatusReason || DEFAULT_PAUSE_REASON;
+            const diagnostic = `run_status=paused: ${reason}`;
+            coreExports.warning(`${prefixLabel}: Run paused: ${reason}`);
+            return {
+                status: 'paused',
+                reasonCode: RUN_PAUSED_REASON_CODE,
+                diagnostic,
+                pauseReason: reason,
                 processTracking,
                 summary,
                 dashboard_url: dashboardUrl
@@ -74243,6 +74829,8 @@ async function getStatus(id, organizationId) {
         if (hasCanonicalRunStatus) {
             return {
                 status: 'progress',
+                reasonCode: `RUN_STATUS_${canonicalRunStatus.toUpperCase()}`,
+                diagnostic: `run_status=${canonicalRunStatus}`,
                 processTracking,
                 summary,
                 dashboard_url: dashboardUrl
@@ -74376,7 +74964,17 @@ async function getStatus(id, organizationId) {
         }
         if (axios.isAxiosError(error)) {
             const status = error.response?.status;
-            if (status) {
+            if (status === 401 || status === 403) {
+                // Authorization failures are not transient; do not imply a retry helps.
+                coreExports.warning(`${prefixLabel} Authorization failed (HTTP ${status}). ` +
+                    `Verify the AppSecAI GitHub App is installed (${APP_INSTALL_URL}) and your organization has an active plan.`);
+            }
+            else if (status === 404) {
+                coreExports.warning(`${prefixLabel} Run status not found (HTTP 404). ` +
+                    'The run may not exist yet or the status endpoint is unavailable.');
+            }
+            else if (status) {
+                // Other status codes (e.g., 5xx) may be transient during polling.
                 coreExports.warning(`${prefixLabel} Call failed with status code: ${status}. Please try again later.`);
             }
             else if (error.code === 'ECONNABORTED') {
@@ -74416,17 +75014,22 @@ function formatElapsedTime(seconds) {
     return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 const MAX_CONSECUTIVE_NETWORK_ERRORS = 3;
+const MAX_RECONCILIATION_EXTENSION_POLLS = 20;
 async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3000) {
     const startTime = Date.now();
     let consecutiveNetworkErrors = 0;
-    for (let retryCount = 0; retryCount < maxRetries; retryCount++) {
+    let allowedAttempts = maxRetries;
+    let reconciliationExtensionPolls = 0;
+    let lastStatusData = null;
+    for (let retryCount = 0; retryCount < allowedAttempts; retryCount++) {
         const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
         const elapsedStr = formatElapsedTime(elapsedSeconds);
         // Create collapsible group for each poll iteration
         coreExports.startGroup(`Status Update #${retryCount + 1} (${elapsedStr} elapsed)`);
-        coreExports.debug(`Status check attempt ${retryCount + 1}/${maxRetries}`);
+        coreExports.debug(`Status check attempt ${retryCount + 1}/${allowedAttempts}`);
         try {
             const statusData = await getStatusFunc();
+            lastStatusData = statusData;
             coreExports.debug(`Status response data: ${JSON.stringify(statusData)}`);
             if (statusData.status === 'completed') {
                 coreExports.info('Processing completed successfully!');
@@ -74435,6 +75038,14 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
             }
             else if (statusData.status === 'failed') {
                 coreExports.error(`Processing failed: ${statusData.error}. Please review the logs for more details.`);
+                coreExports.endGroup();
+                return statusData;
+            }
+            else if (statusData.status === 'paused') {
+                // A paused run is terminal for this polling pass (but not a failure):
+                // stop polling and report it so the run is not mis-reported as failed
+                // or polled indefinitely.
+                coreExports.info(`Run paused: ${statusData.pauseReason ?? statusData.diagnostic ?? 'work preserved; it will resume automatically when capacity returns'}.`);
                 coreExports.endGroup();
                 return statusData;
             }
@@ -74452,6 +75063,16 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
             else {
                 // Successful non-terminal response resets the counter
                 consecutiveNetworkErrors = 0;
+                if (statusData.reasonCode && statusData.diagnostic) {
+                    coreExports.warning(`Status check non-terminal reason ${statusData.reasonCode}: ${statusData.diagnostic}`);
+                }
+                if (isReconciliationReason(statusData.reasonCode) &&
+                    retryCount + 1 >= allowedAttempts &&
+                    reconciliationExtensionPolls < MAX_RECONCILIATION_EXTENSION_POLLS) {
+                    reconciliationExtensionPolls++;
+                    allowedAttempts++;
+                    coreExports.info(`Extending polling for reconciliation (${reconciliationExtensionPolls}/${MAX_RECONCILIATION_EXTENSION_POLLS}).`);
+                }
             }
         }
         catch (error) {
@@ -74463,8 +75084,11 @@ async function pollStatusUntilComplete(getStatusFunc, maxRetries = 15, delay = 3
         coreExports.endGroup();
         await new Promise((res) => setTimeout(res, delay));
     }
-    coreExports.warning(`Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server. ` +
-        `Monitor your repository for new pull requests and check the AppSecAI dashboard for run status and results.`);
+    const lastReason = lastStatusData?.reasonCode && lastStatusData?.diagnostic
+        ? ` Last reason: ${lastStatusData.reasonCode} - ${lastStatusData.diagnostic}`
+        : '';
+    coreExports.warning(`Processing timed out after ${allowedAttempts} attempts. The analysis may still be running on the server.` +
+        `${lastReason} Monitor your repository for new pull requests and check the AppSecAI dashboard for run status and results.`);
     return null;
 }
 /**
@@ -74535,12 +75159,19 @@ async function finalizeRun(runId, options = {}) {
         }
         catch (error) {
             if (axios.isAxiosError(error)) {
+                const status = error.response?.status;
                 if (error.code === 'ECONNABORTED') {
                     coreExports.warning(`${prefixLabel}: Request timed out`);
                 }
-                else if (error.response?.status === 404) {
+                else if (status === 404) {
                     coreExports.warning(`${prefixLabel}: Run not found or finalize endpoint not available`);
                     // Don't retry on 404 - the endpoint isn't available
+                    return lastSummary;
+                }
+                else if (status === 401 || status === 403) {
+                    // Authorization failures are not transient; retrying will not help.
+                    coreExports.warning(`${prefixLabel}: Could not compute summary - authorization failed (HTTP ${status}). ` +
+                        'Verify your organization has an active AppSecAI plan and access.');
                     return lastSummary;
                 }
                 else {
@@ -74565,7 +75196,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.23';
+const VERSION = '1.1.24';
 const CLIENT_VERSION = VERSION;
 const VERSION_INFO = {
     version: VERSION,
@@ -77988,6 +78619,7 @@ function logConfiguration(filePaths) {
     coreExports.info(`Validate Method: ${getValidateMethod()}`);
     coreExports.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`);
     coreExports.info(`Auto Create PRs: ${getAutoCreatePrs()}`);
+    coreExports.info(`LLM Profile: ${getLlmProfile() || '(server default)'}`);
     if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
         coreExports.info(`Regression Evidence Base Ref: ${getRegressionEvidenceBaseRef()}`);
         coreExports.info(`Regression Evidence Base SHA: ${getRegressionEvidenceBaseSha()}`);
@@ -78048,6 +78680,22 @@ async function runRegressionEvidenceMode() {
         coreExports.endGroup();
     }
 }
+/**
+ * Build the user-facing message for a paused run.
+ *
+ * A paused run is a distinct, non-failure outcome: the server has temporarily
+ * halted work (e.g. sustained Bedrock throttling) but preserved progress and
+ * will resume automatically once capacity returns. The optional reason is
+ * surfaced when the server provides one.
+ */
+function buildPausedMessage(reason) {
+    const trimmedReason = reason?.trim();
+    const detail = trimmedReason
+        ? `: ${trimmedReason}`
+        : ': sustained Bedrock throttling';
+    return (`Run paused${detail} — work preserved; it will resume automatically ` +
+        'when capacity returns. Track it in the AppSecAI dashboard.');
+}
 async function run() {
     coreExports.info(`${VERSION_INFO.name} v${VERSION}`);
     // Fetch and log server version information (non-blocking to avoid startup latency)
@@ -78072,6 +78720,7 @@ async function run() {
     let monitoringIndeterminate = false;
     let runStillActiveAfterPollingLimit = false;
     let productRunFailureMessage = null;
+    let runPausedMessage = null;
     try {
         filePaths = resolveInputFilePaths(file, files);
         // Display AppSecAI branding at run start
@@ -78133,6 +78782,9 @@ async function run() {
         if (submitOutput.run_id) {
             store.id = submitOutput.run_id;
             store.organizationId = submitOutput.organization_id;
+            coreExports.saveState('runId', submitOutput.run_id);
+            coreExports.saveState('organizationId', submitOutput.organization_id ?? '');
+            coreExports.saveState('apiUrl', getApiUrl());
             coreExports.info(`[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`);
             try {
                 const getRunStatus = () => getStatus(store.id, store.organizationId);
@@ -78151,6 +78803,12 @@ async function run() {
                             if (finalStatus.dashboard_url) {
                                 finalDashboardUrl = finalStatus.dashboard_url;
                             }
+                        }
+                        else if (finalStatus.status === 'paused') {
+                            // Run is paused (non-failure): report it clearly rather than
+                            // treating the indeterminate timeout as a degraded outcome.
+                            runPausedMessage = buildPausedMessage(finalStatus.pauseReason ?? finalStatus.diagnostic);
+                            runStillActiveAfterPollingLimit = true;
                         }
                         else {
                             monitoringIndeterminate = true;
@@ -78189,6 +78847,12 @@ async function run() {
                         ? `Product run failed: ${pollResult.error}`
                         : 'Product run failed.';
                 }
+                if (pollResult?.status === 'paused') {
+                    runPausedMessage = buildPausedMessage(pollResult.pauseReason ?? pollResult.diagnostic);
+                    // A paused run is non-terminal: skip terminal-summary finalization
+                    // so we do not mis-report it, but do NOT mark it failed.
+                    runStillActiveAfterPollingLimit = true;
+                }
             }
             catch (pollError) {
                 monitoringIndeterminate = true;
@@ -78201,7 +78865,15 @@ async function run() {
             throw new Error(productRunFailureMessage);
         }
         success = true;
-        coreExports.setOutput('message', 'Processing completed successfully.');
+        if (runPausedMessage) {
+            // Paused is a successful (non-failure) terminal outcome for this run:
+            // print a clear message and exit without a failure exit code.
+            coreExports.notice(runPausedMessage);
+            coreExports.setOutput('message', runPausedMessage);
+        }
+        else {
+            coreExports.setOutput('message', 'Processing completed successfully.');
+        }
     }
     catch (error) {
         // This is the final catch for any critical errors
@@ -78216,7 +78888,7 @@ async function run() {
                     errorMessage = `File is empty or could not be read. Please check if every file contains data.`;
                     break;
                 case 'EINVAL':
-                    errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv`;
+                    errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv, .xml`;
                     break;
                 default:
                     errorMessage = `An error occurred while processing files: ${filePaths.join(', ')}. Please verify each file is accessible and properly formatted.`;

@@ -22,10 +22,12 @@ export interface SubmitPayloadOptions {
   autoCreatePrs: boolean
   createIssuesForIncompleteRemediations: boolean
   commentModificationMode: string
+  prAudience?: string
   llmProfile?: string
   maxVulnerabilitiesPerPr?: number
   groupingStrategy?: string
   groupingStage?: string
+  allowMissingRepoAccess?: boolean
 }
 
 export interface StatusRequestOptions {
@@ -115,6 +117,9 @@ export function buildSubmitFormData(
     String(payload.createIssuesForIncompleteRemediations)
   )
   formData.append('comment_modification_mode', payload.commentModificationMode)
+  if (payload.prAudience !== undefined) {
+    formData.append('pr_audience', payload.prAudience)
+  }
 
   if (payload.maxVulnerabilitiesPerPr !== undefined) {
     formData.append(
@@ -129,6 +134,13 @@ export function buildSubmitFormData(
 
   if (payload.groupingStage !== undefined) {
     formData.append('grouping_stage', payload.groupingStage)
+  }
+
+  if (payload.allowMissingRepoAccess !== undefined) {
+    formData.append(
+      'allow_missing_repo_access',
+      String(payload.allowMissingRepoAccess)
+    )
   }
 
   return formData

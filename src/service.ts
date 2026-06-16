@@ -16,7 +16,8 @@ import {
   StepListSchema,
   RunSummarySchema,
   QuotaErrorDetailSchema,
-  StructuredErrorDetailSchema
+  StructuredErrorDetailSchema,
+  RepoAccessErrorDetailSchema
 } from './schemas.js'
 import { getIdToken } from './github.js'
 import {
@@ -32,8 +33,10 @@ import {
   isGroupingStageConfigured,
   isGroupingStrategyConfigured,
   isMaxVulnerabilitiesPerPrConfigured,
+  getPrAudience,
   getGroupingEnabled,
-  getUpdateContext
+  getUpdateContext,
+  getAllowMissingRepoAccess
 } from './input.js'
 import type { SastInputFile } from './file.js'
 import {
@@ -43,15 +46,18 @@ import {
   RunSummary,
   ParsedApiError,
   QuotaErrorDetail,
-  StatusResult
+  StatusResult,
+  ProcessStatus,
+  RunProcessTracking
 } from './types.js'
 import store from './store.js'
 import { logSteps, logProcessTracking, logSummary } from './utils.js'
 import {
   LogLabels,
-  BILLING_URL,
   SUPPORT_EMAIL,
-  STATUS_PAGE_URL
+  APP_INSTALL_URL,
+  PollingConfig,
+  REPO_ACCESS_MISSING_CODE
 } from './constants.js'
 
 /**
@@ -80,11 +86,27 @@ export function parseApiError(error: unknown): ParsedApiError | null {
     return parsedError
   }
 
-  // Try to parse as quota error detail (for 429 responses)
+  // Try to parse as quota error detail (for 429 responses). 429 may carry
+  // usage at the top level (legacy) or nested in `detail` (envelope). Only
+  // adopt the top-level shape when it actually carries usage numbers, so an
+  // empty match does not preempt the structured-detail block below (which
+  // would otherwise leave quotaDetails an empty object and drop the numbers).
   if (statusCode === 429) {
     const quotaParsed = QuotaErrorDetailSchema.safeParse(responseData)
-    if (quotaParsed.success) {
+    if (
+      quotaParsed.success &&
+      (quotaParsed.data.quota_used !== undefined ||
+        quotaParsed.data.quota_limit !== undefined)
+    ) {
       parsedError.quotaDetails = quotaParsed.data
+      parsedError.message =
+        quotaParsed.data.message ||
+        quotaParsed.data.error ||
+        parsedError.message
+      parsedError.errorCode = PlanErrorCode.QUOTA_EXCEEDED
+    } else if (quotaParsed.success) {
+      // No usage numbers but the legacy message/error fields may still be the
+      // best available message, and the code is still QUOTA_EXCEEDED for 429.
       parsedError.message =
         quotaParsed.data.message ||
         quotaParsed.data.error ||
@@ -93,7 +115,10 @@ export function parseApiError(error: unknown): ParsedApiError | null {
     }
   }
 
-  // Try to parse as payment required error (for 402 responses)
+  // Try to parse as payment required error (for 402 responses). This is the
+  // default code; the structured-detail block below may override it with the
+  // flat code carried in `detail.code` (QUOTA_EXCEEDED / NO_PLAN_ASSIGNED /
+  // PLAN_EXPIRED / PLAN_INACTIVE / PAYMENT_REQUIRED).
   if (statusCode === 402) {
     parsedError.errorCode = PlanErrorCode.PAYMENT_REQUIRED
     if (typeof responseData === 'object' && responseData.message) {
@@ -117,17 +142,49 @@ export function parseApiError(error: unknown): ParsedApiError | null {
     }
   }
 
-  // Try to parse structured error detail from detail field
+  // Try to parse structured error detail from the detail field. This is the
+  // authoritative source for plan/quota/entitlement denials (flat-code 402/403
+  // shape and the future ENTITLEMENT_DENIED envelope). Runs last so the
+  // structured code/description/remediation override the status-based defaults
+  // set above.
   const detail = responseData.detail
   if (typeof detail === 'object' && detail !== null) {
     const structuredParsed = StructuredErrorDetailSchema.safeParse(detail)
     if (structuredParsed.success) {
-      parsedError.structuredDetails = structuredParsed.data
-      if (structuredParsed.data.code) {
-        parsedError.errorCode = structuredParsed.data.code
+      const sd = structuredParsed.data
+      parsedError.structuredDetails = sd
+
+      // Resolve the effective error code. For the future ENTITLEMENT_DENIED
+      // envelope, map reason_code to a canonical plan/quota code so a single
+      // set of renderers serves both contracts; otherwise use the flat code.
+      const envelopeCode =
+        sd.code === ENTITLEMENT_DENIED_CODE
+          ? reasonCodeToPlanCode(sd.reason_code)
+          : undefined
+      const effectiveCode = envelopeCode ?? sd.code
+      if (effectiveCode) {
+        parsedError.errorCode = effectiveCode
       }
-      if (structuredParsed.data.description) {
-        parsedError.message = structuredParsed.data.description
+
+      // Body line precedence: server description, then envelope remediation.
+      if (sd.description) {
+        parsedError.message = sd.description
+      } else if (sd.remediation) {
+        parsedError.message = sd.remediation
+      }
+
+      // Populate quota usage from a flat-code 402 quota denial (or any detail
+      // carrying usage) so the QUOTA EXCEEDED usage block can render.
+      if (
+        !parsedError.quotaDetails &&
+        (sd.quota_used !== undefined || sd.quota_limit !== undefined)
+      ) {
+        parsedError.quotaDetails = {
+          quota_used: sd.quota_used,
+          quota_limit: sd.quota_limit,
+          period_start: sd.period_start,
+          period_end: sd.period_end
+        }
       }
     }
   } else if (typeof detail === 'string') {
@@ -138,8 +195,80 @@ export function parseApiError(error: unknown): ParsedApiError | null {
 }
 
 /**
- * Format a user-friendly error message based on the parsed API error.
- * Provides specific guidance for quota (429), payment (402), and server (500) errors.
+ * Code used by the future ENTITLEMENT_DENIED envelope contract. When the
+ * structured detail carries this code, the actionable reason is in
+ * `reason_code` and the guidance in `remediation`.
+ */
+const ENTITLEMENT_DENIED_CODE = 'ENTITLEMENT_DENIED'
+
+/**
+ * Map an ENTITLEMENT_DENIED envelope reason_code to the canonical flat
+ * plan/quota code so a single set of renderers can serve both contracts.
+ */
+function reasonCodeToPlanCode(reasonCode?: string): string | undefined {
+  switch (reasonCode) {
+    case 'no_plan':
+      return PlanErrorCode.NO_PLAN_ASSIGNED
+    case 'plan_inactive':
+      return PlanErrorCode.PLAN_INACTIVE
+    case 'quota_exceeded':
+      return PlanErrorCode.QUOTA_EXCEEDED
+    case 'invite_required':
+      return ONBOARDING_CODE
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Canonical code for the onboarding/invite-required denial (maps from the
+ * envelope reason_code `invite_required`).
+ */
+const ONBOARDING_CODE = 'ONBOARDING_REQUIRED'
+
+/**
+ * Determine whether a message returned by the server (or axios) is specific
+ * enough to surface to the user as-is.
+ *
+ * Axios's default failure messages ("Request failed with status code 403"),
+ * bare HTTP reason phrases ("Forbidden"), and generic placeholders
+ * ("An error occurred...") carry no actionable context, so callers should
+ * substitute mapped, status-specific guidance instead of echoing them.
+ *
+ * @param message - The candidate message text
+ * @returns true if the message is specific/actionable, false otherwise
+ */
+export function isActionableServerMessage(
+  message: string | undefined
+): boolean {
+  if (!message) return false
+  const trimmed = message.trim()
+  if (trimmed === '') return false
+  // Axios default network/HTTP error messages
+  if (/^Request failed with status code \d+/i.test(trimmed)) return false
+  // Generic placeholders that imply nothing actionable
+  if (/^An (unexpected )?error occurred/i.test(trimmed)) return false
+  // Bare HTTP reason phrases provide no detail beyond the status code
+  const bareReasons = new Set([
+    'forbidden',
+    'unauthorized',
+    'not found',
+    'bad request',
+    'payment required',
+    'unprocessable entity',
+    'internal server error',
+    'request timeout'
+  ])
+  if (bareReasons.has(trimmed.toLowerCase())) return false
+  return true
+}
+
+/**
+ * Format a user-friendly, actionable error message based on the parsed API error.
+ *
+ * Dispatches on HTTP status code so every documented failure path (401, 402,
+ * 403, 404, 408, 422, 429, 5xx) produces clear guidance. Non-retriable
+ * authorization/validation failures never instruct the user to "try again".
  *
  * @param error - The parsed API error
  * @param prefixLabel - Label prefix for the error message (e.g., "[Submit Analysis for Processing]")
@@ -152,28 +281,279 @@ export function formatErrorMessage(
   const { statusCode, errorCode, message, quotaDetails, structuredDetails } =
     error
 
-  // Handle quota exceeded (429)
-  if (statusCode === 429) {
-    return formatQuotaExceededError(quotaDetails, prefixLabel)
+  switch (statusCode) {
+    case 401:
+      return formatAuthenticationError(message, prefixLabel)
+    case 402:
+      // The submit channel returns ALL plan/quota/billing denials at HTTP 402
+      // with a flat structured code. Branch on that code so each denial gets an
+      // accurate header and tailored guidance instead of a blanket
+      // "PAYMENT REQUIRED".
+      return formatPaymentRequiredFamily(
+        errorCode,
+        message,
+        quotaDetails,
+        prefixLabel
+      )
+    case 403:
+      return formatAuthorizationError(message, errorCode, prefixLabel)
+    case 404:
+      return formatNotFoundError(message, prefixLabel)
+    case 408:
+      return formatRequestTimeoutError(message, prefixLabel)
+    case 422:
+      return formatValidationError(message, prefixLabel)
+    case 429:
+      return formatQuotaExceededError(quotaDetails, prefixLabel)
   }
 
-  // Handle payment required (402)
-  if (statusCode === 402) {
-    return formatPaymentRequiredError(message, prefixLabel)
-  }
-
-  // Handle server error (500)
-  if (statusCode === 500) {
+  // Handle server errors (500 and other 5xx)
+  if (statusCode >= 500) {
     return formatServerError(message, prefixLabel)
   }
 
-  // Handle structured errors with error codes
+  // Handle structured errors with error codes (e.g., 400 with a plan code)
   if (errorCode && structuredDetails) {
     return formatStructuredError(errorCode, structuredDetails, prefixLabel)
   }
 
   // Default error format
   return `${prefixLabel} ${message}`
+}
+
+/**
+ * Dispatch an HTTP 402 (and envelope-mapped) denial to the correct renderer
+ * based on the flat structured code. The submit channel returns every
+ * plan/quota/billing denial at 402, so a blanket "PAYMENT REQUIRED" would
+ * mislabel a quota exhaustion as a billing problem and drop its usage numbers.
+ *
+ * Routing:
+ * - QUOTA_EXCEEDED -> formatQuotaExceededError (labeled QUOTA EXCEEDED, usage)
+ * - NO_PLAN_ASSIGNED / PLAN_EXPIRED / PLAN_INACTIVE / ONBOARDING_REQUIRED ->
+ *   formatAuthorizationError ([<CODE>] ACCESS DENIED + plan-specific guidance)
+ * - PAYMENT_REQUIRED / unknown / absent -> formatPaymentRequiredError
+ */
+function formatPaymentRequiredFamily(
+  errorCode: string | undefined,
+  message: string,
+  quotaDetails: QuotaErrorDetail | undefined,
+  prefixLabel: string
+): string {
+  switch (errorCode) {
+    case PlanErrorCode.QUOTA_EXCEEDED:
+      return formatQuotaExceededError(quotaDetails, prefixLabel)
+    case PlanErrorCode.NO_PLAN_ASSIGNED:
+    case PlanErrorCode.PLAN_EXPIRED:
+    case PlanErrorCode.PLAN_INACTIVE:
+    case ONBOARDING_CODE:
+      return formatAuthorizationError(message, errorCode, prefixLabel)
+    default:
+      return formatPaymentRequiredError(message, prefixLabel)
+  }
+}
+
+/**
+ * Format an authentication failure (HTTP 401) with actionable guidance.
+ * This is a non-retriable error; the message never instructs the user to retry.
+ */
+function formatAuthenticationError(
+  message: string,
+  prefixLabel: string
+): string {
+  const detail = isActionableServerMessage(message)
+    ? message.trim()
+    : 'Your request could not be authenticated.'
+
+  const lines: string[] = []
+  lines.push(`${prefixLabel} AUTHENTICATION FAILED`)
+  lines.push(detail)
+  lines.push('')
+  lines.push('This is not a transient error and will not be fixed by retrying.')
+  lines.push('To resolve:')
+  lines.push(
+    `- Verify the AppSecAI GitHub App is installed on this repository: ${APP_INSTALL_URL}`
+  )
+  lines.push(
+    "- Ensure the workflow grants 'id-token: write' permission for OIDC authentication"
+  )
+  lines.push('- Confirm your AppSecAI account is active')
+  lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format an authorization / plan denial (HTTP 403) with actionable guidance.
+ *
+ * Surfaces the server-provided detail when present; otherwise maps the known
+ * plan/authorization error codes to specific guidance. Never instructs the user
+ * to "try again" because these denials are permanent until access is granted.
+ */
+function formatAuthorizationError(
+  message: string,
+  errorCode: string | undefined,
+  prefixLabel: string
+): string {
+  const codeLabel =
+    errorCode && errorCode !== PlanErrorCode.UNKNOWN ? ` [${errorCode}]` : ''
+
+  // Per-code detail (the second line). The server description is always
+  // preferred when it is specific enough to surface.
+  const serverDetail = isActionableServerMessage(message)
+    ? message.trim()
+    : undefined
+
+  let detail: string
+  switch (errorCode) {
+    case PlanErrorCode.NO_PLAN_ASSIGNED:
+      detail =
+        serverDetail || 'No subscription plan is assigned to your organization.'
+      break
+    case PlanErrorCode.PLAN_EXPIRED:
+      detail = serverDetail || "Your organization's plan has expired."
+      break
+    case PlanErrorCode.PLAN_INACTIVE:
+      detail = serverDetail || "Your organization's plan is not active."
+      break
+    case ONBOARDING_CODE:
+      detail =
+        serverDetail || 'Onboarding is required before you can submit runs.'
+      break
+    case PlanErrorCode.NO_ELIGIBLE_ORG:
+      detail =
+        serverDetail ||
+        'Your organization does not have an active plan or the access required to run AppSecAI. ' +
+          'Contact your AppSecAI representative.'
+      break
+    case PlanErrorCode.PERSONAL_ACCOUNT_NOT_SUPPORTED:
+      detail =
+        serverDetail ||
+        'Personal GitHub accounts are not supported. ' +
+          'Run AppSecAI under a GitHub organization that has an active plan.'
+      break
+    default:
+      detail =
+        serverDetail ||
+        'Your request was not authorized. This usually means your organization does not have ' +
+          'an active plan or the access required to run AppSecAI. Contact your AppSecAI representative.'
+  }
+
+  // Per-code resolution lines. NO_PLAN_ASSIGNED / PLAN_EXPIRED / PLAN_INACTIVE /
+  // ONBOARDING_REQUIRED get distinct, specific guidance; all other codes keep
+  // the established generic plan/access guidance.
+  let resolutionLines: string[]
+  switch (errorCode) {
+    case PlanErrorCode.NO_PLAN_ASSIGNED:
+      resolutionLines = [
+        "- Assign a plan to your organization (ask your admin if you don't manage billing).",
+        `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+      ]
+      break
+    case PlanErrorCode.PLAN_EXPIRED:
+      resolutionLines = [
+        "- Renew your organization's plan.",
+        `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+      ]
+      break
+    case PlanErrorCode.PLAN_INACTIVE:
+      resolutionLines = [
+        '- Ask your organization admin to reactivate the plan.',
+        `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+      ]
+      break
+    case ONBOARDING_CODE:
+      resolutionLines = [
+        '- Complete onboarding / redeem your invite code.',
+        `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+      ]
+      break
+    default:
+      resolutionLines = [
+        '- Verify your organization has an active AppSecAI plan and access',
+        `- Contact your AppSecAI representative or support: ${SUPPORT_EMAIL}`
+      ]
+  }
+
+  const lines: string[] = []
+  lines.push(`${prefixLabel}${codeLabel} ACCESS DENIED`)
+  lines.push(detail)
+  lines.push('')
+  lines.push('This is not a transient error and will not be fixed by retrying.')
+  lines.push('To resolve:')
+  lines.push(...resolutionLines)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a not-found error (HTTP 404) with actionable guidance.
+ */
+function formatNotFoundError(message: string, prefixLabel: string): string {
+  const detail = isActionableServerMessage(message)
+    ? message.trim()
+    : 'The requested resource was not found.'
+
+  const lines: string[] = []
+  lines.push(`${prefixLabel} NOT FOUND`)
+  lines.push(detail)
+  lines.push('')
+  lines.push('To resolve:')
+  lines.push(
+    "- Verify the 'api-url' input points to the correct AppSecAI endpoint"
+  )
+  lines.push(
+    `- Confirm the AppSecAI GitHub App is installed on this repository: ${APP_INSTALL_URL}`
+  )
+  lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a server-side request timeout (HTTP 408). This condition is transient,
+ * so retry guidance is appropriate here.
+ */
+function formatRequestTimeoutError(
+  message: string,
+  prefixLabel: string
+): string {
+  const detail = isActionableServerMessage(message)
+    ? message.trim()
+    : 'The server took too long to respond.'
+
+  const lines: string[] = []
+  lines.push(`${prefixLabel} REQUEST TIMEOUT`)
+  lines.push(detail)
+  lines.push('')
+  lines.push('This is usually transient. To resolve:')
+  lines.push('- Wait a few minutes and retry your request')
+  lines.push(`- If the problem persists, contact support: ${SUPPORT_EMAIL}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Format a validation error (HTTP 422) with actionable guidance.
+ * Non-retriable: the submission must be corrected before resubmitting.
+ */
+function formatValidationError(message: string, prefixLabel: string): string {
+  const detail = isActionableServerMessage(message)
+    ? message.trim()
+    : 'The submitted analysis results were rejected as invalid.'
+
+  const lines: string[] = []
+  lines.push(`${prefixLabel} INVALID SUBMISSION`)
+  lines.push(detail)
+  lines.push('')
+  lines.push('This is not a transient error and will not be fixed by retrying.')
+  lines.push('To resolve:')
+  lines.push(
+    '- Verify your analysis file is valid JSON/SARIF and follows the expected schema'
+  )
+  lines.push('- Ensure the file is not empty and is within the size limit')
+  lines.push(`- Contact support: ${SUPPORT_EMAIL} if the file appears valid`)
+
+  return lines.join('\n')
 }
 
 /**
@@ -191,10 +571,17 @@ function formatQuotaExceededError(
   )
   lines.push('')
 
-  if (quotaDetails) {
-    const used = quotaDetails.quota_used ?? 'N/A'
-    const limit = quotaDetails.quota_limit ?? 'N/A'
-    lines.push(`Current Usage: ${used} runs used / ${limit} runs available`)
+  // Only render the usage line when BOTH numbers are present. Printing
+  // "N/A runs used / N/A runs available" from a partial/empty detail is
+  // noise, so it is suppressed entirely.
+  if (
+    quotaDetails &&
+    quotaDetails.quota_used !== undefined &&
+    quotaDetails.quota_limit !== undefined
+  ) {
+    lines.push(
+      `Current Usage: ${quotaDetails.quota_used} runs used / ${quotaDetails.quota_limit} runs available`
+    )
 
     if (quotaDetails.period_start && quotaDetails.period_end) {
       lines.push(
@@ -205,7 +592,9 @@ function formatQuotaExceededError(
   }
 
   lines.push('To resolve:')
-  lines.push(`- Upgrade your plan at ${BILLING_URL}`)
+  lines.push(
+    '- Contact your AppSecAI representative to upgrade or renew your plan'
+  )
   lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
 
   return lines.join('\n')
@@ -224,7 +613,9 @@ function formatPaymentRequiredError(
   lines.push(message || 'A payment is required to continue using this service.')
   lines.push('')
   lines.push('To resolve:')
-  lines.push(`- Update your payment method at ${BILLING_URL}`)
+  lines.push(
+    '- Contact your AppSecAI representative to upgrade or renew your plan'
+  )
   lines.push(`- Contact support: ${SUPPORT_EMAIL}`)
 
   return lines.join('\n')
@@ -241,7 +632,6 @@ function formatServerError(message: string, prefixLabel: string): string {
   lines.push('')
   lines.push('To resolve:')
   lines.push('- Wait a few minutes and retry your request')
-  lines.push(`- Check ${STATUS_PAGE_URL} for service status`)
   lines.push(`- If the problem persists, contact support: ${SUPPORT_EMAIL}`)
 
   return lines.join('\n')
@@ -249,6 +639,11 @@ function formatServerError(message: string, prefixLabel: string): string {
 
 /**
  * Format a structured error message with error code context.
+ *
+ * Used for structured errors that don't map to a dedicated HTTP-status handler.
+ * When the server omits a description, falls back to neutral, support-oriented
+ * guidance rather than a misleading "please try again" (the condition may be
+ * permanent).
  */
 function formatStructuredError(
   errorCode: string,
@@ -256,8 +651,64 @@ function formatStructuredError(
   prefixLabel: string
 ): string {
   const description =
-    details.description ?? 'An error occurred. Please try again.'
+    details.description && details.description.trim() !== ''
+      ? details.description
+      : `The request could not be completed. Contact support: ${SUPPORT_EMAIL} if this persists.`
   return `${prefixLabel} [${errorCode}] ${description}`
+}
+
+/**
+ * Build the fail-fast error message for the Hydra repo-access pre-flight
+ * rejection (HTTP 403, code `github_app_repo_access_missing`).
+ *
+ * Surfaces Hydra's ready-to-display `detail.message` verbatim, framed so it
+ * does not read like a generic network/server error, and points users at the
+ * `allow-missing-repo-access` override for the licensed-org / repo-not-yet-added
+ * case.
+ *
+ * @param error - The axios error from the submit call
+ * @param prefixLabel - Label prefix for the message (e.g. "[Submit Analysis for Processing]")
+ * @returns The formatted message string, or null if this is not a repo-access rejection
+ */
+export function formatRepoAccessError(
+  error: unknown,
+  prefixLabel: string
+): string | null {
+  if (!axios.isAxiosError(error)) {
+    return null
+  }
+  if (error.response?.status !== 403) {
+    return null
+  }
+  const detail = error.response?.data?.detail
+  const parsed = RepoAccessErrorDetailSchema.safeParse(detail)
+  if (!parsed.success || parsed.data.code !== REPO_ACCESS_MISSING_CODE) {
+    return null
+  }
+
+  const data = parsed.data
+  const lines: string[] = []
+  lines.push(`${prefixLabel} GITHUB APP CANNOT PUSH TO THE TARGET REPOSITORY`)
+  lines.push(
+    'The run was not started because the AppSecAI GitHub App cannot push fixes to this repository.'
+  )
+  lines.push('')
+  // Hydra's message is authored to be actionable and ready to display verbatim.
+  lines.push(data.message)
+  lines.push('')
+  lines.push(
+    'If the organization is licensed and the App is installed but this repository has simply not been ' +
+      'added to the App yet, you can start the run now and have the fixes pushed once access is granted ' +
+      'by setting the action input `allow-missing-repo-access: true`.'
+  )
+
+  // Log machine-readable context for debugging without altering the message.
+  if (data.owner) core.debug(`Repo access owner: ${data.owner}`)
+  if (data.repo) core.debug(`Repo access repo: ${data.repo}`)
+  if (data.reason) core.debug(`Repo access reason: ${data.reason}`)
+  if (data.source) core.debug(`Repo access source: ${data.source}`)
+
+  return lines.join('\n')
 }
 
 function getActionRuntime() {
@@ -265,6 +716,100 @@ function getActionRuntime() {
     apiUrl: getApiUrl(),
     getAuthToken: getIdToken
   })
+}
+
+const ReconciliationReasonCode = {
+  ACTIVE_AFTER_RUN_COMPLETED: 'RECONCILIATION_ACTIVE_AFTER_RUN_COMPLETED'
+} as const
+
+/**
+ * Reason code reported when the server run is paused (a distinct, non-failure
+ * outcome). A paused run preserves work and resumes automatically once
+ * capacity returns (e.g. sustained Bedrock throttling), so the action stops
+ * polling and reports a paused result rather than a failure.
+ */
+const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED'
+
+/**
+ * Default human-readable message shown when a run is observed as paused and
+ * the server did not provide a more specific reason.
+ */
+const DEFAULT_PAUSE_REASON =
+  'sustained Bedrock throttling — work preserved; it will resume automatically when capacity returns'
+
+const ACTIVE_RECONCILIATION_STATUSES = new Set([
+  'initiated',
+  'in_progress',
+  'pending',
+  'processing',
+  'queued',
+  'running'
+])
+
+const RECONCILIATION_STAGE_LABELS: Array<{
+  key: keyof RunProcessTracking
+  label: string
+}> = [
+  { key: 'remediation_validation_loop_status', label: 'remediation' },
+  { key: 'group_remediate_status', label: 'group_remediate' },
+  { key: 'group_validate_status', label: 'group_validate' },
+  { key: 'push_status', label: 'push' }
+]
+
+function normalizeStatus(status: string | null | undefined): string {
+  return (status ?? '').trim().toLowerCase()
+}
+
+function isActiveReconciliationStatus(
+  status: ProcessStatus | undefined
+): boolean {
+  const statusName = normalizeStatus(status?.status)
+  if (statusName === 'not_started') {
+    return (status?.total_items ?? 0) > (status?.processed_items ?? 0)
+  }
+  return ACTIVE_RECONCILIATION_STATUSES.has(statusName)
+}
+
+function describeProcessStatus(label: string, status: ProcessStatus): string {
+  const statusName = normalizeStatus(status.status) || 'unknown'
+  const counts =
+    status.total_items > 0
+      ? `, processed=${status.processed_items}/${status.total_items}`
+      : ''
+  const successes =
+    status.success_count > 0 ? `, success=${status.success_count}` : ''
+  return `${label}=${statusName}${counts}${successes}`
+}
+
+function getCompletedRunReconciliationDiagnostic(
+  processTracking: Partial<RunProcessTracking> | null | undefined
+): { reasonCode: string; diagnostic: string } | null {
+  if (!processTracking) {
+    return null
+  }
+
+  const activeStages = RECONCILIATION_STAGE_LABELS.flatMap(({ key, label }) => {
+    const status = processTracking[key]
+    if (!status || !isActiveReconciliationStatus(status)) {
+      return []
+    }
+    return [describeProcessStatus(label, status)]
+  })
+
+  if (activeStages.length === 0) {
+    return null
+  }
+
+  return {
+    reasonCode: ReconciliationReasonCode.ACTIVE_AFTER_RUN_COMPLETED,
+    diagnostic:
+      `run_status=completed but artifact reconciliation is still active: ${activeStages.join('; ')}. ` +
+      'Continuing to poll before finalizing summary counts.'
+  }
+}
+
+function isReconciliationReason(reasonCode: string | undefined): boolean {
+  return reasonCode === ReconciliationReasonCode.ACTIVE_AFTER_RUN_COMPLETED
 }
 
 function buildSubmitPayloadOptions(
@@ -277,6 +822,7 @@ function buildSubmitPayloadOptions(
     createIssuesForIncompleteRemediations:
       getCreateIssuesForIncompleteRemediations(),
     commentModificationMode: getCommentModificationMode(),
+    prAudience: getPrAudience() || undefined,
     llmProfile,
     maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
       ? getMaxVulnerabilitiesPerPr()
@@ -284,7 +830,11 @@ function buildSubmitPayloadOptions(
     groupingStrategy: isGroupingStrategyConfigured()
       ? getGroupingStrategy()
       : undefined,
-    groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined
+    groupingStage: isGroupingStageConfigured() ? getGroupingStage() : undefined,
+    // allow_missing_repo_access overrides Hydra's pre-flight check that the
+    // AppSecAI GitHub App can push to the target repository. When set, Hydra
+    // starts the run even if the repo is not yet in the App installation.
+    allowMissingRepoAccess: getAllowMissingRepoAccess()
   }
 }
 
@@ -315,6 +865,16 @@ export async function submitRun(
   if (getUpdateContext()) {
     core.warning(
       'update-context is set but is not supported in the current submit contract and will be ignored.'
+    )
+  }
+
+  // allow_missing_repo_access is forwarded via the submit payload and
+  // overrides Hydra's pre-flight check that the AppSecAI GitHub App can push
+  // to the target repository.
+  if (submitPayload.allowMissingRepoAccess) {
+    core.warning(
+      'allow-missing-repo-access is set: the run will start without verified push access for the AppSecAI GitHub App. ' +
+        'Remediation pull requests will NOT be delivered until the target repository is added to the AppSecAI GitHub App installation.'
     )
   }
 
@@ -350,109 +910,56 @@ export async function submitRun(
       } as SubmitRunOutput
     })
     .catch((error) => {
-      // Default message with actionable guidance
+      // Fail fast on Hydra's repo-access pre-flight rejection (HTTP 403,
+      // code github_app_repo_access_missing). Surface Hydra's actionable
+      // message verbatim instead of letting it look like a generic error.
+      const repoAccessMessage = formatRepoAccessError(error, prefixLabel)
+      if (repoAccessMessage) {
+        core.error(repoAccessMessage)
+        throw new Error(repoAccessMessage)
+      }
+
+      // Default message with actionable guidance (used when we cannot classify
+      // the error any more precisely).
       let errorMessage =
         `${prefixLabel} Call failed: An unexpected error occurred. ` +
-        `Check ${STATUS_PAGE_URL} for service status. ` +
         `If the issue persists, contact ${SUPPORT_EMAIL}.`
 
       // Try to parse as structured API error for better messaging
       const parsedError = parseApiError(error)
 
-      if (parsedError) {
-        // Handle special status codes with formatted messages
-        if ([429, 402, 500].includes(parsedError.statusCode)) {
-          errorMessage = formatErrorMessage(parsedError, prefixLabel)
+      if (parsedError && parsedError.statusCode > 0) {
+        // We received an HTTP error response — produce an actionable,
+        // status-aware message (handles 401/402/403/404/408/422/429/5xx and
+        // structured plan codes). This is the single source of truth for
+        // HTTP-response error formatting.
+        errorMessage = formatErrorMessage(parsedError, prefixLabel)
 
-          // Log additional debug context for quota errors
-          if (parsedError.statusCode === 429 && parsedError.quotaDetails) {
-            const qd = parsedError.quotaDetails
-            core.debug(`Quota used: ${qd.quota_used}`)
-            core.debug(`Quota limit: ${qd.quota_limit}`)
-            if (qd.period_start) core.debug(`Period start: ${qd.period_start}`)
-            if (qd.period_end) core.debug(`Period end: ${qd.period_end}`)
-          }
-        } else if (axios.isAxiosError(error)) {
-          // Handle other axios errors
-          if (error.code === 'ECONNABORTED') {
-            errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
-          } else if (error.response?.data) {
-            const apiDetail = error.response.data.detail
+        // Emit debug context (quota usage, plan/org metadata) for diagnostics.
+        logApiErrorDebugContext(parsedError)
 
-            // Handle both string and structured error detail formats
-            if (typeof apiDetail === 'string') {
-              // Simple string detail (legacy format)
-              errorMessage = `${prefixLabel} ${apiDetail}`
-            } else if (typeof apiDetail === 'object' && apiDetail !== null) {
-              // Structured detail with code and description (new format)
-              const structuredDetail = apiDetail as StructuredErrorDetail
-              const code = structuredDetail.code ?? PlanErrorCode.UNKNOWN
-              const httpStatus = error.response?.status
-
-              // Provide actionable guidance when error details are missing
-              let description = structuredDetail.description
-              if (!description || description.trim() === '') {
-                if (code === PlanErrorCode.UNKNOWN) {
-                  // Build helpful message with HTTP status context
-                  const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
-                  description =
-                    `Request failed${statusInfo}. ` +
-                    `Check ${STATUS_PAGE_URL} for service status. ` +
-                    `If the issue persists, contact ${SUPPORT_EMAIL}.`
-                } else {
-                  description = 'An error occurred. Please try again.'
-                }
-              }
-
-              // Format: [RUN_SUBMIT] [PLAN_EXPIRED] Plan expired on 2025-12-01...
-              errorMessage = `${prefixLabel} [${code}] ${description}`
-
-              // Log additional context for debugging if available
-              if (structuredDetail.organization_id) {
-                core.debug(
-                  `Organization ID: ${structuredDetail.organization_id}`
-                )
-              }
-              if (structuredDetail.expires_at) {
-                core.debug(`Plan expires at: ${structuredDetail.expires_at}`)
-              }
-              if (structuredDetail.status) {
-                core.debug(`Plan status: ${structuredDetail.status}`)
-              }
-              if (structuredDetail.owner) {
-                core.debug(`Owner: ${structuredDetail.owner}`)
-              }
-              if (structuredDetail.owner_type) {
-                core.debug(`Owner type: ${structuredDetail.owner_type}`)
-              }
+        // Surface any processing steps included in the error response.
+        if (axios.isAxiosError(error)) {
+          const apiDetail = error.response?.data?.detail
+          if (
+            apiDetail &&
+            typeof apiDetail === 'object' &&
+            'steps' in apiDetail &&
+            apiDetail.steps
+          ) {
+            const stepList = StepListSchema.safeParse(apiDetail.steps)
+            if (stepList.success) {
+              logSteps(stepList.data, LogLabels.RUN_SUBMIT)
             }
-
-            // Handle step list if present (works with both formats)
-            if (apiDetail?.steps) {
-              const stepList = StepListSchema.safeParse(apiDetail.steps)
-              if (stepList.success) {
-                logSteps(stepList.data, LogLabels.RUN_SUBMIT)
-              }
-            }
-          } else {
-            // No response data - include status code if available
-            const httpStatus = error.response?.status
-            const statusInfo = httpStatus ? ` (HTTP ${httpStatus})` : ''
-            errorMessage =
-              `${prefixLabel} Call failed${statusInfo}: ${error.message}. ` +
-              `Check ${STATUS_PAGE_URL} for service status.`
           }
         }
       } else if (axios.isAxiosError(error)) {
-        // Non-parsed axios error (e.g., timeout without response)
+        // No HTTP response (timeout, connection reset, DNS failure). These are
+        // genuinely transient, so retry guidance is appropriate here.
         if (error.code === 'ECONNABORTED') {
-          errorMessage =
-            `${prefixLabel} Call failed: Request timed out. ` +
-            `The server may be under heavy load. Please try again in a few minutes.`
+          errorMessage = `${prefixLabel} Call failed: Request timed out. Please try again later.`
         } else {
-          errorMessage =
-            `${prefixLabel} Call failed: ${error.message}. ` +
-            `Check ${STATUS_PAGE_URL} for service status.`
+          errorMessage = `${prefixLabel} Call failed: ${error.message}.`
         }
       } else {
         core.debug(`Original error: ${error.toString()}`)
@@ -461,6 +968,62 @@ export async function submitRun(
       core.error(errorMessage)
       throw new Error(errorMessage)
     })
+}
+
+export async function cancelRun(
+  runId: string,
+  organizationId: string,
+  apiUrl = getApiUrl()
+): Promise<void> {
+  const normalizedRunId = runId.trim()
+  const normalizedOrganizationId = organizationId.trim()
+  if (!normalizedRunId || !normalizedOrganizationId) {
+    throw new Error('runId and organizationId are required to cancel a run')
+  }
+
+  const token = await getIdToken(apiUrl)
+  const url = new URL(
+    `${apiUrl}/api/organizations/${encodeURIComponent(normalizedOrganizationId)}/runs/${encodeURIComponent(normalizedRunId)}/cancel`
+  )
+  const setup = {
+    headers: token
+      ? {
+          Authorization: `Bearer ${token}`
+        }
+      : undefined,
+    timeout: PollingConfig.STATUS_TIMEOUT_MS
+  }
+
+  core.debug(`Calling cancel API: POST ${url.pathname}`)
+  await axios.post(url.toString(), { reason: 'workflow_cancelled' }, setup)
+  core.info(
+    `[${LogLabels.RUN_STATUS}] Cancellation requested for run ${normalizedRunId}`
+  )
+}
+
+/**
+ * Emit debug-level diagnostic context extracted from a parsed API error.
+ * Includes quota usage details (429) and plan/organization metadata
+ * (structured plan errors). Never logs the message itself, which is surfaced
+ * to the user via formatErrorMessage.
+ */
+function logApiErrorDebugContext(parsedError: ParsedApiError): void {
+  const qd = parsedError.quotaDetails
+  if (qd) {
+    core.debug(`Quota used: ${qd.quota_used}`)
+    core.debug(`Quota limit: ${qd.quota_limit}`)
+    if (qd.period_start) core.debug(`Period start: ${qd.period_start}`)
+    if (qd.period_end) core.debug(`Period end: ${qd.period_end}`)
+  }
+
+  const sd = parsedError.structuredDetails
+  if (sd) {
+    if (sd.organization_id) core.debug(`Organization ID: ${sd.organization_id}`)
+    if (sd.expires_at) core.debug(`Plan expires at: ${sd.expires_at}`)
+    if (sd.status) core.debug(`Plan status: ${sd.status}`)
+    if (sd.owner) core.debug(`Owner: ${sd.owner}`)
+    if (sd.owner_type) core.debug(`Owner type: ${sd.owner_type}`)
+  }
 }
 
 export async function getStatus(
@@ -493,9 +1056,16 @@ export async function getStatus(
       const summary = parsedResponse.data.summary
       const runStatus = parsedResponse.data.run_status
       const canonicalRunStatus =
-        typeof runStatus === 'string' ? runStatus.trim() : ''
+        typeof runStatus === 'string' ? normalizeStatus(runStatus) : ''
       const hasCanonicalRunStatus = canonicalRunStatus.length > 0
       const dashboardUrl = parsedResponse.data.dashboard_url
+      // Reason for non-terminal run states (e.g. why a run is paused). Product
+      // may send `status_reason` or `pause_reason`; fall back to `description`.
+      const runStatusReason =
+        parsedResponse.data.status_reason ||
+        parsedResponse.data.pause_reason ||
+        parsedResponse.data.description ||
+        null
       let totalVulns = 0
 
       // Log process tracking information if available (Issue #181)
@@ -518,9 +1088,12 @@ export async function getStatus(
           processTracking?.overall_status?.error_message ||
           processTracking?.find_status?.error_message ||
           'Run failed'
+        const diagnostic = `run_status=failed: ${errorMsg}`
         core.error(`${prefixLabel}: Run failed - ${errorMsg}`)
         return {
           status: 'failed',
+          reasonCode: 'RUN_FAILED',
+          diagnostic,
           error: errorMsg,
           processTracking,
           summary,
@@ -529,6 +1102,22 @@ export async function getStatus(
       }
 
       if (canonicalRunStatus === 'completed') {
+        const reconciliationDiagnostic =
+          getCompletedRunReconciliationDiagnostic(processTracking)
+        if (reconciliationDiagnostic) {
+          core.warning(
+            `${prefixLabel}: ${reconciliationDiagnostic.reasonCode} - ${reconciliationDiagnostic.diagnostic}`
+          )
+          return {
+            status: 'progress',
+            reasonCode: reconciliationDiagnostic.reasonCode,
+            diagnostic: reconciliationDiagnostic.diagnostic,
+            processTracking,
+            summary,
+            dashboard_url: dashboardUrl
+          }
+        }
+
         const handledErrors =
           summary?.handled_error_count ??
           processTracking?.triage_status?.handled_error_count ??
@@ -564,10 +1153,32 @@ export async function getStatus(
       }
 
       if (canonicalRunStatus === 'cancelled') {
+        const diagnostic = 'run_status=cancelled'
         core.warning(`${prefixLabel}: Run was cancelled`)
         return {
           status: 'failed',
+          reasonCode: 'RUN_CANCELLED',
+          diagnostic,
           error: 'Run was cancelled',
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
+      }
+
+      // A paused run is a distinct, non-failure outcome: the server has
+      // temporarily halted work (e.g. sustained Bedrock throttling) but has
+      // preserved progress and will resume automatically once capacity
+      // returns. Surface it clearly without treating it as a failure.
+      if (canonicalRunStatus === 'paused') {
+        const reason = runStatusReason || DEFAULT_PAUSE_REASON
+        const diagnostic = `run_status=paused: ${reason}`
+        core.warning(`${prefixLabel}: Run paused: ${reason}`)
+        return {
+          status: 'paused',
+          reasonCode: RUN_PAUSED_REASON_CODE,
+          diagnostic,
+          pauseReason: reason,
           processTracking,
           summary,
           dashboard_url: dashboardUrl
@@ -632,6 +1243,8 @@ export async function getStatus(
       if (hasCanonicalRunStatus) {
         return {
           status: 'progress',
+          reasonCode: `RUN_STATUS_${canonicalRunStatus.toUpperCase()}`,
+          diagnostic: `run_status=${canonicalRunStatus}`,
           processTracking,
           summary,
           dashboard_url: dashboardUrl
@@ -789,7 +1402,19 @@ export async function getStatus(
 
       if (axios.isAxiosError(error)) {
         const status = error.response?.status
-        if (status) {
+        if (status === 401 || status === 403) {
+          // Authorization failures are not transient; do not imply a retry helps.
+          core.warning(
+            `${prefixLabel} Authorization failed (HTTP ${status}). ` +
+              `Verify the AppSecAI GitHub App is installed (${APP_INSTALL_URL}) and your organization has an active plan.`
+          )
+        } else if (status === 404) {
+          core.warning(
+            `${prefixLabel} Run status not found (HTTP 404). ` +
+              'The run may not exist yet or the status endpoint is unavailable.'
+          )
+        } else if (status) {
+          // Other status codes (e.g., 5xx) may be transient during polling.
           core.warning(
             `${prefixLabel} Call failed with status code: ${status}. Please try again later.`
           )
@@ -835,6 +1460,7 @@ function formatElapsedTime(seconds: number): string {
 }
 
 export const MAX_CONSECUTIVE_NETWORK_ERRORS = 3
+export const MAX_RECONCILIATION_EXTENSION_POLLS = 20
 
 export async function pollStatusUntilComplete(
   getStatusFunc: () => Promise<StatusResult>,
@@ -843,17 +1469,21 @@ export async function pollStatusUntilComplete(
 ): Promise<StatusResult | null> {
   const startTime = Date.now()
   let consecutiveNetworkErrors = 0
+  let allowedAttempts = maxRetries
+  let reconciliationExtensionPolls = 0
+  let lastStatusData: StatusResult | null = null
 
-  for (let retryCount = 0; retryCount < maxRetries; retryCount++) {
+  for (let retryCount = 0; retryCount < allowedAttempts; retryCount++) {
     const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
     const elapsedStr = formatElapsedTime(elapsedSeconds)
 
     // Create collapsible group for each poll iteration
     core.startGroup(`Status Update #${retryCount + 1} (${elapsedStr} elapsed)`)
-    core.debug(`Status check attempt ${retryCount + 1}/${maxRetries}`)
+    core.debug(`Status check attempt ${retryCount + 1}/${allowedAttempts}`)
 
     try {
       const statusData = await getStatusFunc()
+      lastStatusData = statusData
 
       core.debug(`Status response data: ${JSON.stringify(statusData)}`)
       if (statusData.status === 'completed') {
@@ -863,6 +1493,15 @@ export async function pollStatusUntilComplete(
       } else if (statusData.status === 'failed') {
         core.error(
           `Processing failed: ${statusData.error}. Please review the logs for more details.`
+        )
+        core.endGroup()
+        return statusData
+      } else if (statusData.status === 'paused') {
+        // A paused run is terminal for this polling pass (but not a failure):
+        // stop polling and report it so the run is not mis-reported as failed
+        // or polled indefinitely.
+        core.info(
+          `Run paused: ${statusData.pauseReason ?? statusData.diagnostic ?? 'work preserved; it will resume automatically when capacity returns'}.`
         )
         core.endGroup()
         return statusData
@@ -883,6 +1522,22 @@ export async function pollStatusUntilComplete(
       } else {
         // Successful non-terminal response resets the counter
         consecutiveNetworkErrors = 0
+        if (statusData.reasonCode && statusData.diagnostic) {
+          core.warning(
+            `Status check non-terminal reason ${statusData.reasonCode}: ${statusData.diagnostic}`
+          )
+        }
+        if (
+          isReconciliationReason(statusData.reasonCode) &&
+          retryCount + 1 >= allowedAttempts &&
+          reconciliationExtensionPolls < MAX_RECONCILIATION_EXTENSION_POLLS
+        ) {
+          reconciliationExtensionPolls++
+          allowedAttempts++
+          core.info(
+            `Extending polling for reconciliation (${reconciliationExtensionPolls}/${MAX_RECONCILIATION_EXTENSION_POLLS}).`
+          )
+        }
       }
     } catch (error: unknown) {
       core.debug(`Status check attempt failed. Retrying...`)
@@ -897,9 +1552,13 @@ export async function pollStatusUntilComplete(
     await new Promise((res) => setTimeout(res, delay))
   }
 
+  const lastReason =
+    lastStatusData?.reasonCode && lastStatusData?.diagnostic
+      ? ` Last reason: ${lastStatusData.reasonCode} - ${lastStatusData.diagnostic}`
+      : ''
   core.warning(
-    `Processing timed out after ${maxRetries} attempts. The analysis may still be running on the server. ` +
-      `Monitor your repository for new pull requests and check the AppSecAI dashboard for run status and results.`
+    `Processing timed out after ${allowedAttempts} attempts. The analysis may still be running on the server.` +
+      `${lastReason} Monitor your repository for new pull requests and check the AppSecAI dashboard for run status and results.`
   )
   return null
 }
@@ -1010,13 +1669,21 @@ export async function finalizeRun(
       return summary
     } catch (error) {
       if (axios.isAxiosError(error)) {
+        const status = error.response?.status
         if (error.code === 'ECONNABORTED') {
           core.warning(`${prefixLabel}: Request timed out`)
-        } else if (error.response?.status === 404) {
+        } else if (status === 404) {
           core.warning(
             `${prefixLabel}: Run not found or finalize endpoint not available`
           )
           // Don't retry on 404 - the endpoint isn't available
+          return lastSummary
+        } else if (status === 401 || status === 403) {
+          // Authorization failures are not transient; retrying will not help.
+          core.warning(
+            `${prefixLabel}: Could not compute summary - authorization failed (HTTP ${status}). ` +
+              'Verify your organization has an active AppSecAI plan and access.'
+          )
           return lastSummary
         } else {
           core.warning(

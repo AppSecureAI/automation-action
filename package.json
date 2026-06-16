@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.23",
+  "version": "1.1.24",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -49,16 +49,16 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^7.0.0",
-    "@rollup/plugin-json": "^6.1.0",
     "axios": "^1.15.0",
     "semver": "^7.7.3",
     "zod": "^3.25.56"
   },
   "devDependencies": {
     "@eslint/compat": "^1.2.9",
-    "@github/local-action": "^6.0.2",
+    "@github/local-action": "7.0.1",
     "@jest/globals": "^29.7.0",
     "@rollup/plugin-commonjs": "^28.0.1",
+    "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
     "@rollup/plugin-typescript": "^12.3.0",
     "@types/jest": "^29.5.14",
@@ -86,6 +86,7 @@
     "@rollup/rollup-linux-x64-gnu": "^4.42.0"
   },
   "overrides": {
+    "esbuild": "0.28.1",
     "@octokit/plugin-paginate-rest": "^9.2.2",
     "@octokit/request": "^8.4.1",
     "@octokit/request-error": "^5.1.1",
@@ -108,6 +109,6 @@
     "fdir": {
       "picomatch": "^4.0.4"
     },
-    "esbuild": "^0.28.1"
+    "form-data": "4.0.6"
   }
 }

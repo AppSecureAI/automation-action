@@ -17,6 +17,13 @@ describe('publish public release workflow', () => {
     const content = fs.readFileSync(workflowPath, 'utf8')
 
     expect(content).toContain('name: Publish Public Release')
+    expect(content).toContain('attestations: write')
+    expect(content).toContain('Attest dist provenance')
+    expect(content).toContain(
+      'actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32'
+    )
+    expect(content).toContain('dist/index.js')
+    expect(content).toContain('dist/index.js.map')
     expect(content).toContain(
       './scripts/check-version-parity.sh --output "$GITHUB_OUTPUT"'
     )

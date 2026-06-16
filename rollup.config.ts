@@ -10,20 +10,27 @@ import nodeResolve from '@rollup/plugin-node-resolve'
 import typescript from '@rollup/plugin-typescript'
 import pluginJson from '@rollup/plugin-json'
 
-const config = {
-  input: 'src/index.ts',
-  output: {
-    esModule: true,
-    file: 'dist/index.js',
-    format: 'es',
-    sourcemap: true
-  },
-  plugins: [
-    typescript(),
-    nodeResolve({ preferBuiltins: true }),
-    commonjs(),
-    pluginJson()
-  ]
+function makeConfig(input, file) {
+  return {
+    input,
+    output: {
+      esModule: true,
+      file,
+      format: 'es',
+      sourcemap: true
+    },
+    plugins: [
+      typescript(),
+      nodeResolve({ preferBuiltins: true }),
+      commonjs(),
+      pluginJson()
+    ]
+  }
 }
+
+const config = [
+  makeConfig('src/index.ts', 'dist/index.js'),
+  makeConfig('src/cleanup.ts', 'dist/cleanup.js')
+]
 
 export default config

@@ -49,6 +49,7 @@ import {
   getRegressionEvidencePublishComment,
   getGroupingEnabled,
   getGroupingStrategy,
+  getLlmProfile,
   getMaxVulnerabilitiesPerPr,
   getGroupingStage,
   getUpdateContext,
@@ -86,6 +87,7 @@ function logConfiguration(filePaths: string[]): void {
   core.info(`Validate Method: ${getValidateMethod()}`)
   core.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`)
   core.info(`Auto Create PRs: ${getAutoCreatePrs()}`)
+  core.info(`LLM Profile: ${getLlmProfile() || '(server default)'}`)
   if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
     core.info(`Regression Evidence Base Ref: ${getRegressionEvidenceBaseRef()}`)
     core.info(`Regression Evidence Base SHA: ${getRegressionEvidenceBaseSha()}`)
@@ -177,6 +179,25 @@ async function runRegressionEvidenceMode(): Promise<void> {
   }
 }
 
+/**
+ * Build the user-facing message for a paused run.
+ *
+ * A paused run is a distinct, non-failure outcome: the server has temporarily
+ * halted work (e.g. sustained Bedrock throttling) but preserved progress and
+ * will resume automatically once capacity returns. The optional reason is
+ * surfaced when the server provides one.
+ */
+export function buildPausedMessage(reason?: string | null): string {
+  const trimmedReason = reason?.trim()
+  const detail = trimmedReason
+    ? `: ${trimmedReason}`
+    : ': sustained Bedrock throttling'
+  return (
+    `Run paused${detail} — work preserved; it will resume automatically ` +
+    'when capacity returns. Track it in the AppSecAI dashboard.'
+  )
+}
+
 export async function run(): Promise<void> {
   core.info(`${VERSION_INFO.name} v${VERSION}`)
 
@@ -205,6 +226,7 @@ export async function run(): Promise<void> {
   let monitoringIndeterminate = false
   let runStillActiveAfterPollingLimit = false
   let productRunFailureMessage: string | null = null
+  let runPausedMessage: string | null = null
 
   try {
     filePaths = resolveInputFilePaths(file, files)
@@ -276,6 +298,9 @@ export async function run(): Promise<void> {
     if (submitOutput.run_id) {
       store.id = submitOutput.run_id
       store.organizationId = submitOutput.organization_id
+      core.saveState('runId', submitOutput.run_id)
+      core.saveState('organizationId', submitOutput.organization_id ?? '')
+      core.saveState('apiUrl', getApiUrl())
 
       core.info(
         `[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`
@@ -301,6 +326,13 @@ export async function run(): Promise<void> {
               if (finalStatus.dashboard_url) {
                 finalDashboardUrl = finalStatus.dashboard_url
               }
+            } else if (finalStatus.status === 'paused') {
+              // Run is paused (non-failure): report it clearly rather than
+              // treating the indeterminate timeout as a degraded outcome.
+              runPausedMessage = buildPausedMessage(
+                finalStatus.pauseReason ?? finalStatus.diagnostic
+              )
+              runStillActiveAfterPollingLimit = true
             } else {
               monitoringIndeterminate = true
               runStillActiveAfterPollingLimit =
@@ -343,6 +375,14 @@ export async function run(): Promise<void> {
             ? `Product run failed: ${pollResult.error}`
             : 'Product run failed.'
         }
+        if (pollResult?.status === 'paused') {
+          runPausedMessage = buildPausedMessage(
+            pollResult.pauseReason ?? pollResult.diagnostic
+          )
+          // A paused run is non-terminal: skip terminal-summary finalization
+          // so we do not mis-report it, but do NOT mark it failed.
+          runStillActiveAfterPollingLimit = true
+        }
       } catch (pollError) {
         monitoringIndeterminate = true
         runStillActiveAfterPollingLimit = true
@@ -358,7 +398,14 @@ export async function run(): Promise<void> {
     }
 
     success = true
-    core.setOutput('message', 'Processing completed successfully.')
+    if (runPausedMessage) {
+      // Paused is a successful (non-failure) terminal outcome for this run:
+      // print a clear message and exit without a failure exit code.
+      core.notice(runPausedMessage)
+      core.setOutput('message', runPausedMessage)
+    } else {
+      core.setOutput('message', 'Processing completed successfully.')
+    }
   } catch (error) {
     // This is the final catch for any critical errors
     let errorMessage =
@@ -374,7 +421,7 @@ export async function run(): Promise<void> {
           errorMessage = `File is empty or could not be read. Please check if every file contains data.`
           break
         case 'EINVAL':
-          errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv`
+          errorMessage = `Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv, .xml`
           break
         default:
           errorMessage = `An error occurred while processing files: ${filePaths.join(', ')}. Please verify each file is accessible and properly formatted.`

@@ -60,13 +60,15 @@ jest.unstable_mockModule('../src/regression-evidence', () => ({
 
 // The module being tested should be imported dynamically. This ensures that the
 // mocks are used in place of any actual dependencies.
-const { run } = await import('../src/main')
+const { run, buildPausedMessage } = await import('../src/main')
 
 describe('main.ts', () => {
   beforeEach(() => {
     delete process.env.PROCESSING_MODE
     delete process.env.INPUT_API_URL
     delete process.env.INPUT_TOKEN
+    delete process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK
+    delete process.env.REGRESSION_EVIDENCE_PUBLISH_COMMENT
     // Set the action's inputs as return values from core.getInput().
     core.getInput.mockImplementation((name: string) => {
       if (name === 'file') return 'some_file.json'
@@ -140,6 +142,26 @@ describe('main.ts', () => {
         1,
         'message',
         expect.stringMatching(/Processing completed successfully/)
+      )
+    })
+
+    it('should save run state for cancellation cleanup after submit succeeds', async () => {
+      submitRun.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          message: 'Submitted',
+          run_id: 'run-abc',
+          organization_id: 'org-123'
+        })
+      )
+      process.env.INPUT_API_URL = 'https://gh.intg.appsecai.net'
+
+      await run()
+
+      expect(core.saveState).toHaveBeenCalledWith('runId', 'run-abc')
+      expect(core.saveState).toHaveBeenCalledWith('organizationId', 'org-123')
+      expect(core.saveState).toHaveBeenCalledWith(
+        'apiUrl',
+        'https://gh.intg.appsecai.net'
       )
     })
 
@@ -249,6 +271,50 @@ describe('main.ts', () => {
         'Regression evidence generated successfully.'
       )
       expect(submitRun).not.toHaveBeenCalled()
+    })
+
+    it('should publish a regression evidence comment when configured', async () => {
+      process.env.PROCESSING_MODE = 'regression_evidence'
+      process.env.INPUT_TOKEN = 'ghs_test'
+      process.env.REGRESSION_EVIDENCE_PUBLISH_COMMENT = 'true'
+
+      publishRegressionEvidenceCommentFromContext.mockResolvedValue('created')
+
+      await run()
+
+      expect(publishRegressionEvidenceCommentFromContext).toHaveBeenCalledWith(
+        '## Regression Evidence\\n- final status: **verified**',
+        'ghs_test'
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        'Regression evidence PR comment created.'
+      )
+    })
+
+    it('should fail regression evidence mode when at_risk and fail-on-at-risk is enabled', async () => {
+      process.env.PROCESSING_MODE = 'regression_evidence'
+      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'true'
+      generateRegressionEvidence.mockResolvedValue({
+        artifact: {
+          status: 'at_risk'
+        },
+        markdown: '## Regression Evidence\\n- final status: **at_risk**',
+        jsonPath: '/tmp/regression-evidence.json',
+        markdownPath: '/tmp/regression-evidence.md'
+      })
+
+      await run()
+
+      expect(core.error).toHaveBeenCalledWith(
+        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
+      )
+      expect(core.setOutput).not.toHaveBeenCalledWith(
+        'message',
+        'Regression evidence generated successfully.'
+      )
     })
   })
 
@@ -370,6 +436,63 @@ describe('main.ts', () => {
       expect(core.setOutput).not.toHaveBeenCalledWith(
         'message',
         'Processing completed successfully.'
+      )
+    })
+
+    it('should report PAUSED without failing when Product pauses the run', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'paused',
+          reasonCode: 'RUN_PAUSED',
+          diagnostic: 'run_status=paused: sustained Bedrock throttling',
+          pauseReason: 'sustained Bedrock throttling',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      // A paused run is not a failure: no failure exit code.
+      expect(core.setFailed).not.toHaveBeenCalled()
+      // A clear paused message is printed and set as the action output.
+      const pausedMessage = (core.setOutput as jest.Mock).mock.calls.find(
+        (call) => call[0] === 'message'
+      )?.[1] as string
+      expect(pausedMessage).toMatch(/Run paused/)
+      expect(pausedMessage).toMatch(/sustained Bedrock throttling/)
+      expect(pausedMessage).toMatch(/resume automatically/)
+      expect(pausedMessage).toMatch(/dashboard/i)
+      expect(core.notice).toHaveBeenCalledWith(
+        expect.stringContaining('Run paused')
+      )
+      // Must not report success-as-completed for a paused run.
+      expect(core.setOutput).not.toHaveBeenCalledWith(
+        'message',
+        'Processing completed successfully.'
+      )
+    })
+
+    it('should report PAUSED when the run is paused at the polling limit', async () => {
+      pollStatusUntilComplete
+        .mockClear()
+        .mockImplementationOnce(() => Promise.resolve(null))
+      getStatus.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'paused',
+          reasonCode: 'RUN_PAUSED',
+          diagnostic: 'run_status=paused: capacity exhausted',
+          pauseReason: 'capacity exhausted',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(core.notice).toHaveBeenCalledWith(
+        expect.stringContaining('Run paused')
       )
     })
 
@@ -631,6 +754,25 @@ describe('main.ts', () => {
       expect(finalizeRun).toHaveBeenCalledWith('run-12345', {
         expectedPrCount: undefined
       })
+    })
+  })
+
+  describe('buildPausedMessage', () => {
+    it('includes the provided reason', () => {
+      const message = buildPausedMessage('sustained Bedrock throttling')
+
+      expect(message).toContain('Run paused: sustained Bedrock throttling')
+      expect(message).toContain('work preserved')
+      expect(message).toContain('resume automatically')
+      expect(message).toContain('AppSecAI dashboard')
+    })
+
+    it('falls back to a default reason when none is provided', () => {
+      for (const empty of [undefined, null, '', '   ']) {
+        const message = buildPausedMessage(empty)
+        expect(message).toContain('Run paused: sustained Bedrock throttling')
+        expect(message).toContain('resume automatically')
+      }
     })
   })
 })

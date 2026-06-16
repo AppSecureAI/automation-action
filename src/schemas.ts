@@ -33,12 +33,37 @@ export const StructuredErrorDetailSchema = z.object({
   organization_id: z.string().optional(),
   assignment_id: z.string().optional(),
   expires_at: z.string().optional(),
+  period_start: z.string().optional(),
   period_end: z.string().optional(),
   status: z.string().optional(),
   steps: StepListSchema.optional(),
   owner: z.string().optional(),
   owner_type: z.string().optional(),
-  quota_info: QuotaInfoSchema.optional()
+  quota_info: QuotaInfoSchema.optional(),
+  // Flat-code 402 plan/quota denial fields returned by POST /api-product/submit
+  // (e.g. code=QUOTA_EXCEEDED with usage numbers). Surfaced so the usage block
+  // renders and the numbers are not dropped.
+  quota_used: z.number().optional(),
+  quota_limit: z.number().optional(),
+  quota_remaining: z.number().optional(),
+  // Future ENTITLEMENT_DENIED envelope fields. reason_code maps to a canonical
+  // plan/quota code and remediation provides ready-to-display guidance.
+  reason_code: z.string().optional(),
+  remediation: z.string().optional()
+})
+
+/**
+ * Schema for the structured 403 error detail returned by Hydra when the
+ * AppSecAI GitHub App cannot push to the target repository.
+ * The locked contract (AppSecureAI/Hydra#1025) guarantees these fields.
+ */
+export const RepoAccessErrorDetailSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  owner: z.string().optional(),
+  repo: z.string().optional(),
+  reason: z.string().optional(),
+  source: z.string().optional()
 })
 
 /**
@@ -188,6 +213,11 @@ export const ResponseStatusSchema = z.object({
   message: z.string(),
   description: z.string().nullable().optional(),
   run_status: z.string().nullable().optional(),
+  // Machine-readable reason for non-terminal run states (e.g. why a run is
+  // paused). Product may send either `status_reason` or `pause_reason`; both
+  // are accepted so a paused run validates without surfacing a schema error.
+  status_reason: z.string().nullable().optional(),
+  pause_reason: z.string().nullable().optional(),
   dashboard_url: z.string().nullable().optional(),
   results: SolverResultsSchema.nullable(),
   process_tracking: RunProcessTrackingSchema.nullable().optional(),

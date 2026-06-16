@@ -158,11 +158,12 @@ export function getRemediateMethod(): RemediateMethod {
 }
 
 export function getLlmProfile(): LlmProfile | undefined {
-  const profile = getInputValue(
-    'llm-profile',
-    'INPUT_LLM_PROFILE',
-    'APPSECAI_LLM_PROFILE'
-  )
+  // LLM_PROFILE is a legacy workflow env var alias kept for compatibility
+  // with the previous composite-action env mapping.
+  const profile =
+    getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE') ||
+    process.env.LLM_PROFILE ||
+    ''
 
   if (profile === '') {
     return undefined
@@ -284,6 +285,10 @@ export function getCommentModificationMode(): CommentModificationMode {
     )
   }
   return mode as CommentModificationMode
+}
+
+export function getPrAudience(): string {
+  return getInputValue('pr-audience', 'INPUT_PR_AUDIENCE', 'PR_AUDIENCE')
 }
 
 export function getRegressionEvidenceBaseRef(): string {
@@ -515,6 +520,22 @@ export function getUpdateContext(): boolean {
   if (value !== 'true' && value !== 'false') {
     core.warning(
       `Invalid update-context value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
+}
+
+export function getAllowMissingRepoAccess(): boolean {
+  const value =
+    getInputValue(
+      'allow-missing-repo-access',
+      'INPUT_ALLOW_MISSING_REPO_ACCESS',
+      'ALLOW_MISSING_REPO_ACCESS'
+    ) || 'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid allow-missing-repo-access value "${value}". Must be "true" or "false". Using default: false`
     )
     return false
   }

@@ -21,10 +21,21 @@ export const APPSECAI_WEBSITE_URL = 'https://www.appsecai.io/'
 /**
  * URLs and contact info for user guidance in error messages
  */
-export const BILLING_URL = 'https://app.appsecai.net/settings/billing'
 export const SUPPORT_EMAIL = 'support@appsecai.io'
-export const STATUS_PAGE_URL = 'https://status.appsecai.net'
 export const DOCS_URL = 'https://docs.appsecai.io'
+
+/**
+ * Public install page for the AppSecAI GitHub App. Linked from authentication
+ * and access guidance so users can install/verify the App directly.
+ */
+export const APP_INSTALL_URL = 'https://github.com/apps/appsecai-app'
+
+/**
+ * Machine-readable error code returned by Hydra (HTTP 403) when the AppSecAI
+ * GitHub App cannot push to the target repository. Locked contract shared with
+ * Hydra (AppSecureAI/Hydra#1025).
+ */
+export const REPO_ACCESS_MISSING_CODE = 'github_app_repo_access_missing'
 
 /**
  * Troubleshooting guidance for common error scenarios
@@ -34,14 +45,12 @@ export const TroubleshootingGuidance = {
     'Verify your SARIF file is valid JSON and follows the SARIF 2.1.0 schema',
     'Ensure the file size is under 50MB',
     'Check that your organization has an active AppSecAI subscription',
-    `Check service status at ${STATUS_PAGE_URL}`,
     `Contact support at ${SUPPORT_EMAIL} if the issue persists`
   ],
   CODE_UPLOAD: [
     'Verify the repository is accessible with the provided credentials',
     'Check that the branch exists and is not protected',
-    'Ensure the repository is not empty',
-    `Check service status at ${STATUS_PAGE_URL}`
+    'Ensure the repository is not empty'
   ],
   AUTHENTICATION: [
     'Verify your GitHub App installation is active',
@@ -49,7 +58,6 @@ export const TroubleshootingGuidance = {
     'Ensure your API credentials are valid and not expired'
   ],
   GENERIC: [
-    `Check service status at ${STATUS_PAGE_URL}`,
     'Wait a few minutes and retry your request',
     `Contact support at ${SUPPORT_EMAIL} if the issue persists`
   ]

@@ -29,6 +29,7 @@ const {
   getDebug,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
+  getPrAudience,
   getRegressionEvidenceBaseRef,
   getRegressionEvidenceBaseSha,
   getRegressionEvidenceHeadRef,
@@ -41,9 +42,13 @@ const {
   getRegressionEvidenceFailOnAtRisk,
   getGroupingEnabled,
   getGroupingStrategy,
+  isGroupingStrategyConfigured,
   getMaxVulnerabilitiesPerPr,
+  isMaxVulnerabilitiesPerPrConfigured,
   getGroupingStage,
-  getUpdateContext
+  isGroupingStageConfigured,
+  getUpdateContext,
+  getAllowMissingRepoAccess
 } = await import('../src/input.js')
 const {
   ProcessingModeExternal,
@@ -80,6 +85,8 @@ describe('input.ts', () => {
       'INPUT_AUTO_CREATE_PRS',
       'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'INPUT_COMMENT_MODIFICATION_MODE',
+      'INPUT_PR_AUDIENCE',
+      'INPUT_LLM_PROFILE',
       'INPUT_REGRESSION_EVIDENCE_BASE_REF',
       'INPUT_REGRESSION_EVIDENCE_BASE_SHA',
       'INPUT_REGRESSION_EVIDENCE_HEAD_REF',
@@ -95,6 +102,7 @@ describe('input.ts', () => {
       'INPUT_MAX_VULNERABILITIES_PER_PR',
       'INPUT_GROUPING_STAGE',
       'INPUT_UPDATE_CONTEXT',
+      'INPUT_ALLOW_MISSING_REPO_ACCESS',
       'PROCESSING_MODE',
       'USE_TRIAGE_CC',
       'TRIAGE_METHOD',
@@ -107,6 +115,8 @@ describe('input.ts', () => {
       'AUTO_CREATE_PRS',
       'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'COMMENT_MODIFICATION_MODE',
+      'PR_AUDIENCE',
+      'LLM_PROFILE',
       'REGRESSION_EVIDENCE_BASE_REF',
       'REGRESSION_EVIDENCE_BASE_SHA',
       'REGRESSION_EVIDENCE_HEAD_REF',
@@ -121,7 +131,8 @@ describe('input.ts', () => {
       'GROUPING_STRATEGY',
       'MAX_VULNERABILITIES_PER_PR',
       'GROUPING_STAGE',
-      'UPDATE_CONTEXT'
+      'UPDATE_CONTEXT',
+      'ALLOW_MISSING_REPO_ACCESS'
     ]
     configEnvVars.forEach((key) => {
       delete process.env[key]
@@ -286,6 +297,29 @@ describe('input.ts', () => {
       process.env.INPUT_PROCESSING_MODE = ProcessingModeExternal.GROUP_CC
       core.getInput.mockReturnValue(ProcessingModeExternal.INDIVIDUAL)
       expect(getMode()).toBe(ProcessingModeExternal.GROUP_CC)
+    })
+  })
+
+  describe('getPrAudience', () => {
+    it('returns the pr-audience input from core.getInput', () => {
+      core.getInput.mockImplementation((name) => {
+        if (name === 'pr-audience') return 'security,engineering'
+        return ''
+      })
+      expect(getPrAudience()).toBe('security,engineering')
+    })
+
+    it('prefers INPUT_PR_AUDIENCE environment variable over core.getInput', () => {
+      process.env.INPUT_PR_AUDIENCE = 'engineering'
+      core.getInput.mockReturnValue('security')
+      expect(getPrAudience()).toBe('engineering')
+    })
+
+    it('prefers PR_AUDIENCE workflow environment variable', () => {
+      process.env.INPUT_PR_AUDIENCE = 'engineering'
+      process.env.PR_AUDIENCE = 'security,engineering'
+      core.getInput.mockReturnValue('security')
+      expect(getPrAudience()).toBe('security,engineering')
     })
   })
 
@@ -788,6 +822,24 @@ describe('input.ts', () => {
         core.getInput.mockReturnValue('cwe_category')
         expect(getGroupingStrategy()).toBe(GroupingStrategy.MODULE)
       })
+
+      it('detects configured strategy from workflow env, action env, or action input', () => {
+        core.getInput.mockReturnValue('')
+        expect(isGroupingStrategyConfigured()).toBe(false)
+
+        process.env.GROUPING_STRATEGY = 'smart'
+        expect(isGroupingStrategyConfigured()).toBe(true)
+
+        delete process.env.GROUPING_STRATEGY
+        process.env.INPUT_GROUPING_STRATEGY = 'module'
+        expect(isGroupingStrategyConfigured()).toBe(true)
+
+        delete process.env.INPUT_GROUPING_STRATEGY
+        core.getInput.mockImplementation((name) =>
+          name === 'grouping-strategy' ? 'file_proximity' : ''
+        )
+        expect(isGroupingStrategyConfigured()).toBe(true)
+      })
     })
 
     describe('getMaxVulnerabilitiesPerPr', () => {
@@ -847,6 +899,24 @@ describe('input.ts', () => {
         core.getInput.mockReturnValue('5')
         expect(getMaxVulnerabilitiesPerPr()).toBe(15)
       })
+
+      it('detects configured max PR size from workflow env, action env, or action input', () => {
+        core.getInput.mockReturnValue('')
+        expect(isMaxVulnerabilitiesPerPrConfigured()).toBe(false)
+
+        process.env.MAX_VULNERABILITIES_PER_PR = '20'
+        expect(isMaxVulnerabilitiesPerPrConfigured()).toBe(true)
+
+        delete process.env.MAX_VULNERABILITIES_PER_PR
+        process.env.INPUT_MAX_VULNERABILITIES_PER_PR = '15'
+        expect(isMaxVulnerabilitiesPerPrConfigured()).toBe(true)
+
+        delete process.env.INPUT_MAX_VULNERABILITIES_PER_PR
+        core.getInput.mockImplementation((name) =>
+          name === 'max-vulnerabilities-per-pr' ? '5' : ''
+        )
+        expect(isMaxVulnerabilitiesPerPrConfigured()).toBe(true)
+      })
     })
 
     describe('getGroupingStage', () => {
@@ -887,6 +957,24 @@ describe('input.ts', () => {
         core.getInput.mockReturnValue('pre_push')
         expect(getGroupingStage()).toBe(GroupingStage.PRE_REMEDIATION)
       })
+
+      it('detects configured stage from workflow env, action env, or action input', () => {
+        core.getInput.mockReturnValue('')
+        expect(isGroupingStageConfigured()).toBe(false)
+
+        process.env.GROUPING_STAGE = 'pre_remediation'
+        expect(isGroupingStageConfigured()).toBe(true)
+
+        delete process.env.GROUPING_STAGE
+        process.env.INPUT_GROUPING_STAGE = 'pre_push'
+        expect(isGroupingStageConfigured()).toBe(true)
+
+        delete process.env.INPUT_GROUPING_STAGE
+        core.getInput.mockImplementation((name) =>
+          name === 'grouping-stage' ? 'pre_remediation' : ''
+        )
+        expect(isGroupingStageConfigured()).toBe(true)
+      })
     })
 
     describe('getUpdateContext', () => {
@@ -923,6 +1011,43 @@ describe('input.ts', () => {
         process.env.INPUT_UPDATE_CONTEXT = 'true'
         core.getInput.mockReturnValue('false')
         expect(getUpdateContext()).toBe(true)
+      })
+    })
+
+    describe('getAllowMissingRepoAccess', () => {
+      it('returns true when allow-missing-repo-access is true', () => {
+        process.env.ALLOW_MISSING_REPO_ACCESS = 'true'
+        expect(getAllowMissingRepoAccess()).toBe(true)
+      })
+
+      it('returns false when allow-missing-repo-access is false', () => {
+        process.env.ALLOW_MISSING_REPO_ACCESS = 'false'
+        expect(getAllowMissingRepoAccess()).toBe(false)
+      })
+
+      it('returns false by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getAllowMissingRepoAccess()).toBe(false)
+      })
+
+      it('returns false and warns for invalid value', () => {
+        process.env.ALLOW_MISSING_REPO_ACCESS = 'invalid'
+        expect(getAllowMissingRepoAccess()).toBe(false)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid allow-missing-repo-access value')
+        )
+      })
+
+      it('prefers ALLOW_MISSING_REPO_ACCESS workflow env var', () => {
+        process.env.ALLOW_MISSING_REPO_ACCESS = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getAllowMissingRepoAccess()).toBe(true)
+      })
+
+      it('prefers INPUT_ALLOW_MISSING_REPO_ACCESS environment variable', () => {
+        process.env.INPUT_ALLOW_MISSING_REPO_ACCESS = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getAllowMissingRepoAccess()).toBe(true)
       })
     })
   })

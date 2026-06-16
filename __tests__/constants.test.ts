@@ -9,9 +9,8 @@ import {
   APPSECAI_ASCII_LOGO,
   getConsoleBranding,
   getMarkdownBranding,
-  BILLING_URL,
   SUPPORT_EMAIL,
-  STATUS_PAGE_URL,
+  APP_INSTALL_URL,
   PollingConfig
 } from '../src/constants'
 
@@ -75,16 +74,12 @@ describe('constants.ts', () => {
   })
 
   describe('URL and contact constants', () => {
-    it('exports billing URL', () => {
-      expect(BILLING_URL).toBe('https://app.appsecai.net/settings/billing')
-    })
-
     it('exports support email', () => {
       expect(SUPPORT_EMAIL).toBe('support@appsecai.io')
     })
 
-    it('exports status page URL', () => {
-      expect(STATUS_PAGE_URL).toBe('https://status.appsecai.net')
+    it('exports the AppSecAI GitHub App install URL', () => {
+      expect(APP_INSTALL_URL).toBe('https://github.com/apps/appsecai-app')
     })
   })
 

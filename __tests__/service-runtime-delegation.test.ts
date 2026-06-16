@@ -29,6 +29,8 @@ const mockGetGroupingStage = jest.fn()
 const mockIsGroupingStageConfigured = jest.fn()
 const mockGetUpdateContext = jest.fn()
 const mockGetLlmProfile = jest.fn()
+const mockGetPrAudience = jest.fn()
+const mockGetAllowMissingRepoAccess = jest.fn()
 
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('@actions/github', () => github)
@@ -56,7 +58,9 @@ jest.unstable_mockModule('../src/input.js', () => ({
   getGroupingStage: mockGetGroupingStage,
   isGroupingStageConfigured: mockIsGroupingStageConfigured,
   getUpdateContext: mockGetUpdateContext,
-  getLlmProfile: mockGetLlmProfile
+  getLlmProfile: mockGetLlmProfile,
+  getPrAudience: mockGetPrAudience,
+  getAllowMissingRepoAccess: mockGetAllowMissingRepoAccess
 }))
 jest.unstable_mockModule('../src/common/core/index.js', () => ({
   createAppSecAIRuntime: mockCreateAppSecAIRuntime,
@@ -88,6 +92,8 @@ describe('service runtime delegation', () => {
     mockIsGroupingStageConfigured.mockReturnValue(false)
     mockGetUpdateContext.mockReturnValue(false)
     mockGetLlmProfile.mockReturnValue(undefined)
+    mockGetPrAudience.mockReturnValue('')
+    mockGetAllowMissingRepoAccess.mockReturnValue(false)
   })
 
   it('delegates submit transport through the common runtime with action-adapted payload', async () => {
@@ -116,7 +122,9 @@ describe('service runtime delegation', () => {
         llmProfile: undefined,
         maxVulnerabilitiesPerPr: undefined,
         groupingStrategy: undefined,
-        groupingStage: undefined
+        groupingStage: undefined,
+        prAudience: undefined,
+        allowMissingRepoAccess: false
       }
     )
     expect(result).toEqual({

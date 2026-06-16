@@ -6,6 +6,7 @@
 import { jest } from '@jest/globals'
 
 export const submitRun = jest.fn<typeof import('../src/service.js').submitRun>()
+export const cancelRun = jest.fn<typeof import('../src/service.js').cancelRun>()
 export const getStatus = jest.fn<typeof import('../src/service.js').getStatus>()
 export const pollStatusUntilComplete =
   jest.fn<typeof import('../src/service.js').pollStatusUntilComplete>()

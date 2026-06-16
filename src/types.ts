@@ -138,6 +138,11 @@ export const PlanErrorCode = {
   PLAN_EXPIRED: 'PLAN_EXPIRED',
   NO_PLAN_ASSIGNED: 'NO_PLAN_ASSIGNED',
   PLAN_INACTIVE: 'PLAN_INACTIVE',
+  // Authorization / access errors (HTTP 403)
+  NO_ELIGIBLE_ORG: 'NO_ELIGIBLE_ORG',
+  FORBIDDEN: 'FORBIDDEN',
+  // Authentication errors (HTTP 401)
+  UNAUTHORIZED: 'UNAUTHORIZED',
   // Account validation errors
   PERSONAL_ACCOUNT_NOT_SUPPORTED: 'PERSONAL_ACCOUNT_NOT_SUPPORTED',
   // Quota-related errors
@@ -178,6 +183,8 @@ export interface StructuredErrorDetail {
   assignment_id?: string
   /** Expiration timestamp for expired plans (ISO 8601 format) */
   expires_at?: string
+  /** Start of the current billing period (for flat-code 402 quota denials) */
+  period_start?: string
   /** End of the current billing period (ISO 8601 format) */
   period_end?: string
   /** Current status of the plan assignment */
@@ -190,6 +197,16 @@ export interface StructuredErrorDetail {
   owner_type?: string
   /** Quota usage information (for quota exceeded errors) */
   quota_info?: QuotaInfo
+  /** Runs used in the current period (flat-code 402 quota denial) */
+  quota_used?: number
+  /** Maximum runs allowed in the current period (flat-code 402 quota denial) */
+  quota_limit?: number
+  /** Remaining runs in the current period (flat-code 402 quota denial) */
+  quota_remaining?: number
+  /** Envelope reason code (future ENTITLEMENT_DENIED contract) */
+  reason_code?: string
+  /** Ready-to-display remediation guidance (future ENTITLEMENT_DENIED contract) */
+  remediation?: string
 }
 
 /**
@@ -427,10 +444,16 @@ export interface RunSummary {
  * Contains the processing status and optional tracking/summary data.
  */
 export interface StatusResult {
-  /** Processing status: 'completed', 'failed', 'in_progress', or 'network_error' */
+  /** Processing status: 'completed', 'failed', 'paused', 'progress', or 'network_error' */
   status: string
+  /** Machine-readable reason for non-terminal, failed, or indeterminate states. */
+  reasonCode?: string
+  /** Human-readable diagnostic explaining the reason code. */
+  diagnostic?: string
   /** Error message if status is 'failed' */
   error?: string
+  /** Human-readable reason a run is paused (only set when status is 'paused'). */
+  pauseReason?: string
   /** Process tracking information for all stages (null when not available from API) */
   processTracking?: Partial<RunProcessTracking> | null
   /** Summary of run results (null when not available from API) */

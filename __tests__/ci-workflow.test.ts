@@ -22,5 +22,8 @@ describe('ci workflow', () => {
     expect(content).toContain('Validate mirror sync dry-run')
     expect(content).toContain('./scripts/publish-public.sh --dry-run --verbose')
     expect(content).not.toContain('Verify version.ts is up to date')
+    expect(content).toContain('Verify coverage badge is fresh')
+    expect(content).toContain('npm run coverage')
+    expect(content).toContain('git diff --exit-code badges/coverage.svg')
   })
 })

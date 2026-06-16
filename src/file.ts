@@ -29,7 +29,7 @@ export function validFileName(filePath: string): boolean {
 
   // Regex pattern to validate filename and extension
   const validFilePattern = new RegExp(
-    '^(?!.*\\.\\.)[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*\\.(json|sarif|csv|tsv)$',
+    '^(?!.*\\.\\.)[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*\\.(json|sarif|csv|tsv|xml)$',
     'i'
   )
   return validFilePattern.test(fileName)
@@ -78,7 +78,7 @@ export function asyncReadFile(
   // Validate input first
   if (!validFilePath(fileName)) {
     const error = new FileReadError(
-      'Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv',
+      'Invalid file path: path cannot be empty, contain only whitespace, or have unsupported file extension. Supported formats: .json, .sarif, .csv, .tsv, .xml',
       'EINVAL',
       fileName
     )
