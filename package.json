@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.24",
+  "version": "1.1.25",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -92,7 +92,7 @@
     "@octokit/request-error": "^5.1.1",
     "@octokit/core": "^5.2.2",
     "@octokit/graphql": "^7.1.1",
-    "undici": "^7.23.0",
+    "undici": "7.28.0",
     "follow-redirects": "^1.16.0",
     "anymatch": {
       "picomatch": "^2.3.2"

@@ -1152,6 +1152,22 @@ export async function getStatus(
         }
       }
 
+      if (canonicalRunStatus === 'completed_with_warnings') {
+        const reason =
+          runStatusReason ||
+          'Run completed with warnings. Review the run details.'
+        const diagnostic = `run_status=completed_with_warnings: ${reason}`
+        core.warning(`${prefixLabel}: Run completed with warnings: ${reason}`)
+        return {
+          status: 'completed',
+          reasonCode: 'RUN_STATUS_COMPLETED_WITH_WARNINGS',
+          diagnostic,
+          processTracking,
+          summary,
+          dashboard_url: dashboardUrl
+        }
+      }
+
       if (canonicalRunStatus === 'cancelled') {
         const diagnostic = 'run_status=cancelled'
         core.warning(`${prefixLabel}: Run was cancelled`)

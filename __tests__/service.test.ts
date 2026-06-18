@@ -1568,6 +1568,50 @@ describe('service.ts', () => {
     )
   })
 
+  it('returns completed status when run_status is completed_with_warnings', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        message: 'Completed with warnings',
+        description: 'Some findings could not be matched to source files',
+        run_status: 'completed_with_warnings',
+        status_reason:
+          '3 of 3 findings could not be matched to files in the uploaded source code.',
+        results: null,
+        process_tracking: {
+          find_status: { status: 'completed', count: 3 },
+          overall_status: { status: 'completed' }
+        },
+        summary: {
+          total_vulnerabilities: 3,
+          true_positives: 0,
+          false_positives: 0,
+          cwe_breakdown: {},
+          severity_breakdown: {},
+          remediation_success: 0,
+          remediation_failed: 0,
+          pr_urls: [],
+          pr_count: 0,
+          issue_urls: [],
+          issue_count: 0
+        }
+      }
+    })
+
+    const result = await getStatus('test-id')
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        reasonCode: 'RUN_STATUS_COMPLETED_WITH_WARNINGS',
+        diagnostic:
+          'run_status=completed_with_warnings: 3 of 3 findings could not be matched to files in the uploaded source code.'
+      })
+    )
+    expect(core.warning).toHaveBeenCalledWith(
+      '[Analysis Processing Status]: Run completed with warnings: 3 of 3 findings could not be matched to files in the uploaded source code.'
+    )
+  })
+
   it('returns paused status (not failed) when run_status is paused', async () => {
     axios.get.mockResolvedValue({
       data: {
