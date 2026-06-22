@@ -28,6 +28,7 @@ export interface SubmitPayloadOptions {
   groupingStrategy?: string
   groupingStage?: string
   allowMissingRepoAccess?: boolean
+  experiment?: boolean
 }
 
 export interface StatusRequestOptions {
@@ -141,6 +142,9 @@ export function buildSubmitFormData(
       'allow_missing_repo_access',
       String(payload.allowMissingRepoAccess)
     )
+  }
+  if (payload.experiment === true) {
+    formData.append('experiment', 'true')
   }
 
   return formData

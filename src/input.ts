@@ -244,6 +244,19 @@ export function getAutoCreatePrs(): boolean {
   return value === 'true'
 }
 
+export function getExperiment(): boolean {
+  const value =
+    getInputValue('experiment', 'INPUT_EXPERIMENT', 'APPSECAI_EXPERIMENT') ||
+    'false'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid experiment value "${value}". Must be "true" or "false". Using default: false`
+    )
+    return false
+  }
+  return value === 'true'
+}
+
 export function getDebug(): boolean {
   const value = getInputValue('debug', 'INPUT_DEBUG') || 'false'
   if (value !== 'true' && value !== 'false') {

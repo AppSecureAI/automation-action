@@ -34,6 +34,7 @@ describe('common core runtime', () => {
       'false'
     )
     expect(formData.get('comment_modification_mode')).toBe('basic')
+    expect(formData.get('experiment')).toBeNull()
     expect(formData.get('update_context')).toBeNull()
     expect(formData.get('grouping_enabled')).toBeNull()
   })
@@ -51,6 +52,7 @@ describe('common core runtime', () => {
         commentModificationMode: 'verbose',
         groupingStrategy: 'smart',
         groupingStage: 'pre_remediation',
+        experiment: true,
         maxVulnerabilitiesPerPr: 25
       }
     )
@@ -61,6 +63,7 @@ describe('common core runtime', () => {
     expect(formData.get('auto_create_prs')).toBe('true')
     expect(formData.get('grouping_strategy')).toBe('smart')
     expect(formData.get('grouping_stage')).toBe('pre_remediation')
+    expect(formData.get('experiment')).toBe('true')
     expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
   })
 

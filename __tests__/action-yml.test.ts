@@ -80,6 +80,22 @@ describe('action.yml', () => {
     expect(inputSource).toContain("'APPSECAI_LLM_PROFILE'")
   })
 
+  it('does not expose the internal experiment control as a public action input', () => {
+    const actionYaml = fs.readFileSync(
+      path.join(process.cwd(), 'action.yml'),
+      'utf8'
+    )
+    const inputSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'input.ts'),
+      'utf8'
+    )
+
+    expect(actionYaml).not.toContain('experiment:')
+    expect(inputSource).toContain("'experiment',")
+    expect(inputSource).toContain("'INPUT_EXPERIMENT',")
+    expect(inputSource).toContain("'APPSECAI_EXPERIMENT'")
+  })
+
   it('keeps public metadata focused on production usage', () => {
     const actionYaml = fs.readFileSync(
       path.join(process.cwd(), 'action.yml'),

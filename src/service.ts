@@ -29,6 +29,7 @@ import {
   getGroupingStage,
   getGroupingStrategy,
   getLlmProfile,
+  getExperiment,
   getMaxVulnerabilitiesPerPr,
   isGroupingStageConfigured,
   isGroupingStrategyConfigured,
@@ -834,7 +835,8 @@ function buildSubmitPayloadOptions(
     // allow_missing_repo_access overrides Hydra's pre-flight check that the
     // AppSecAI GitHub App can push to the target repository. When set, Hydra
     // starts the run even if the repo is not yet in the App installation.
-    allowMissingRepoAccess: getAllowMissingRepoAccess()
+    allowMissingRepoAccess: getAllowMissingRepoAccess(),
+    experiment: getExperiment() || undefined
   }
 }
 
