@@ -813,6 +813,20 @@ function isReconciliationReason(reasonCode: string | undefined): boolean {
   return reasonCode === ReconciliationReasonCode.ACTIVE_AFTER_RUN_COMPLETED
 }
 
+const NORMAL_ACTIVE_RUN_STATUS_REASON_CODES = new Set([
+  'RUN_STATUS_PROCESSING',
+  'RUN_STATUS_IN_PROGRESS'
+])
+
+function shouldWarnForNonTerminalReason(
+  reasonCode: string | undefined
+): boolean {
+  if (!reasonCode) {
+    return false
+  }
+  return !NORMAL_ACTIVE_RUN_STATUS_REASON_CODES.has(reasonCode)
+}
+
 function buildSubmitPayloadOptions(
   mode: string,
   llmProfile?: string
@@ -1541,9 +1555,12 @@ export async function pollStatusUntilComplete(
         // Successful non-terminal response resets the counter
         consecutiveNetworkErrors = 0
         if (statusData.reasonCode && statusData.diagnostic) {
-          core.warning(
-            `Status check non-terminal reason ${statusData.reasonCode}: ${statusData.diagnostic}`
-          )
+          const reasonMessage = `Status check non-terminal reason ${statusData.reasonCode}: ${statusData.diagnostic}`
+          if (shouldWarnForNonTerminalReason(statusData.reasonCode)) {
+            core.warning(reasonMessage)
+          } else {
+            core.debug(reasonMessage)
+          }
         }
         if (
           isReconciliationReason(statusData.reasonCode) &&

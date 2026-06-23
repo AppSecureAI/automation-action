@@ -4,7 +4,6 @@
 
 # AppSecAI Vulnerability Analysis
 
-[![Build](https://github.com/AppSecureAI/automation-action/actions/workflows/ci.yml/badge.svg)](https://github.com/AppSecureAI/automation-action/actions/workflows/ci.yml)
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 

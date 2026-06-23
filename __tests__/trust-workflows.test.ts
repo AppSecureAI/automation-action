@@ -13,9 +13,11 @@ describe('trust signal workflows and badges', () => {
     expect(readme).not.toContain(
       'AppSecureAI/submit-run-action/actions/workflows/ci.yml/badge.svg'
     )
-    expect(readme).toContain(
+    expect(readme).not.toContain(
       'AppSecureAI/automation-action/actions/workflows/ci.yml/badge.svg'
     )
+    expect(readme).toContain('./badges/coverage.svg')
+    expect(readme).toContain('https://img.shields.io/badge/License-MIT')
     expect(readme).toContain(
       'https://portal.cloud.appsecai.io/docs/configuration'
     )

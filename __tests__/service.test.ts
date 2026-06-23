@@ -2075,6 +2075,58 @@ describe('service.ts', () => {
       )
     })
 
+    it('logs normal processing reasons only as debug while continuing polling', async () => {
+      const mockGetStatus = jest
+        .fn<
+          () => Promise<{
+            status: string
+            reasonCode?: string
+            diagnostic?: string
+          }>
+        >()
+        .mockResolvedValueOnce({
+          status: 'progress',
+          reasonCode: 'RUN_STATUS_PROCESSING',
+          diagnostic: 'run_status=processing'
+        })
+        .mockResolvedValueOnce({ status: 'completed' })
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
+
+      expect(result).toEqual({ status: 'completed' })
+      expect(mockGetStatus).toHaveBeenCalledTimes(2)
+      expect(core.warning).not.toHaveBeenCalledWith(
+        'Status check non-terminal reason RUN_STATUS_PROCESSING: run_status=processing'
+      )
+      expect(core.debug).toHaveBeenCalledWith(
+        'Status check non-terminal reason RUN_STATUS_PROCESSING: run_status=processing'
+      )
+    })
+
+    it('keeps warnings for actionable non-terminal reasons', async () => {
+      const mockGetStatus = jest
+        .fn<
+          () => Promise<{
+            status: string
+            reasonCode?: string
+            diagnostic?: string
+          }>
+        >()
+        .mockResolvedValueOnce({
+          status: 'progress',
+          reasonCode: 'RUN_STATUS_DEFERRED',
+          diagnostic: 'run_status=deferred: waiting for operator action'
+        })
+        .mockResolvedValueOnce({ status: 'completed' })
+
+      const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
+
+      expect(result).toEqual({ status: 'completed' })
+      expect(core.warning).toHaveBeenCalledWith(
+        'Status check non-terminal reason RUN_STATUS_DEFERRED: run_status=deferred: waiting for operator action'
+      )
+    })
+
     it('returns failed status when stage fails (Issue #233)', async () => {
       const mockGetStatus = () =>
         Promise.resolve({
