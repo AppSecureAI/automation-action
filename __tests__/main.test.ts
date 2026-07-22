@@ -546,7 +546,9 @@ describe('main.ts', () => {
       )
       expect(core.setFailed).not.toHaveBeenCalled()
       expect(core.notice).toHaveBeenCalledWith(
-        expect.stringContaining('is still processing after the GitHub Action monitoring window')
+        expect.stringContaining(
+          'is still processing after the GitHub Action monitoring window'
+        )
       )
     })
 
