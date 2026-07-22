@@ -71,8 +71,8 @@ export const PollingConfig = {
   POLL_DELAY_MS: 30000,
   /** Display progress messages every 30 seconds during submission */
   INTERVAL_CHECK_MS: 30000,
-  /** Maximum number of polling attempts (240 retries × 30s = ~2 hours total) */
-  MAX_RETRIES: 240,
+  /** Maximum number of polling attempts (720 retries × 30s = ~6 hours total) */
+  MAX_RETRIES: 720,
   /** HTTP timeout for status endpoint calls (15 seconds) */
   STATUS_TIMEOUT_MS: 15000
 } as const

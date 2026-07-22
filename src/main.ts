@@ -227,6 +227,7 @@ export async function run(): Promise<void> {
   let runStillActiveAfterPollingLimit = false
   let productRunFailureMessage: string | null = null
   let runPausedMessage: string | null = null
+  let runStillProcessingMessage: string | null = null
 
   try {
     filePaths = resolveInputFilePaths(file, files)
@@ -333,17 +334,30 @@ export async function run(): Promise<void> {
                 finalStatus.pauseReason ?? finalStatus.diagnostic
               )
               runStillActiveAfterPollingLimit = true
+            } else if (finalStatus.status === 'failed') {
+              productRunFailureMessage = finalStatus.error
+                ? `Product run failed: ${finalStatus.error}`
+                : 'Product run failed.'
             } else {
-              monitoringIndeterminate = true
               runStillActiveAfterPollingLimit =
-                finalStatus.status !== 'failed' &&
                 finalStatus.status !== 'network_error'
+              monitoringIndeterminate = !runStillActiveAfterPollingLimit
               const statusDescription =
                 finalStatus.status || 'unknown non-terminal status'
+              const dashboardText = finalStatus.dashboard_url
+                ? ` Dashboard: ${finalStatus.dashboard_url}`
+                : ''
               core.warning(
                 `[${LogLabels.RUN_STATUS}] Polling limit reached and final status check returned "${statusDescription}". ` +
-                  'Skipping summary finalization because the server run is not known to be terminal.'
+                  'Skipping summary finalization because the server run is not known to be terminal.' +
+                  dashboardText
               )
+              if (runStillActiveAfterPollingLimit) {
+                runStillProcessingMessage =
+                  `AppSecAI run ${store.id} is still processing after the GitHub Action monitoring window. ` +
+                  'The server accepted the run and work is continuing; monitor the AppSecAI dashboard for final results.' +
+                  dashboardText
+              }
             }
           } catch (finalStatusError) {
             monitoringIndeterminate = true
@@ -403,6 +417,12 @@ export async function run(): Promise<void> {
       // print a clear message and exit without a failure exit code.
       core.notice(runPausedMessage)
       core.setOutput('message', runPausedMessage)
+    } else if (runStillProcessingMessage) {
+      // Server-side processing outlived the GitHub Action monitoring window.
+      // This is not a Product failure: the accepted run remains active and the
+      // dashboard is the source of truth for final results.
+      core.notice(runStillProcessingMessage)
+      core.setOutput('message', runStillProcessingMessage)
     } else {
       core.setOutput('message', 'Processing completed successfully.')
     }

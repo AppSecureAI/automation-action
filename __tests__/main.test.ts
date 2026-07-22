@@ -241,7 +241,7 @@ describe('main.ts', () => {
 
       expect(pollStatusUntilComplete).toHaveBeenCalledWith(
         expect.any(Function),
-        240,
+        720,
         30000
       )
     })
@@ -510,13 +510,14 @@ describe('main.ts', () => {
       )
     })
 
-    it('should fail and skip finalize when polling limit leaves the run active', async () => {
+    it('should succeed and skip finalize when polling limit leaves the run active', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.resolve(null)
       })
       getStatus.mockClear().mockImplementationOnce(() =>
         Promise.resolve({
           status: 'in_progress',
+          dashboard_url: 'https://app.intg.appsecai.net/runs/run-12345',
           processTracking: null,
           summary: null
         })
@@ -541,10 +542,11 @@ describe('main.ts', () => {
 
       expect(finalizeRun).not.toHaveBeenCalled()
       expect(core.warning).toHaveBeenCalledWith(
-        '[Analysis Processing Status] Polling limit reached and final status check returned "in_progress". Skipping summary finalization because the server run is not known to be terminal.'
+        '[Analysis Processing Status] Polling limit reached and final status check returned "in_progress". Skipping summary finalization because the server run is not known to be terminal. Dashboard: https://app.intg.appsecai.net/runs/run-12345'
       )
-      expect(core.setFailed).toHaveBeenCalledWith(
-        'Run monitoring became indeterminate and final summary data was unavailable. The server may have been unreachable or degraded while the run was still in progress.'
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(core.notice).toHaveBeenCalledWith(
+        expect.stringContaining('is still processing after the GitHub Action monitoring window')
       )
     })
 
