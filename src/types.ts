@@ -1,7 +1,4 @@
 // src/types.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 export type RepoInfo = { repo: string; owner: string }
 
@@ -23,8 +20,7 @@ export type SubmitRunOutput = {
 export const ProcessingModeExternal = {
   INDIVIDUAL: 'individual',
   INDIVIDUAL_CC: 'individual_cc',
-  GROUP_CC: 'group_cc',
-  REGRESSION_EVIDENCE: 'regression_evidence'
+  GROUP_CC: 'group_cc'
 } as const
 
 export type ProcessingModeExternal =
@@ -47,16 +43,6 @@ export const RemediateMethod = {
 export type RemediateMethod =
   (typeof RemediateMethod)[keyof typeof RemediateMethod]
 
-export const LlmProfile = {
-  PROD: 'prod',
-  MOCK: 'mock',
-  CHEAP: 'cheap',
-  BALANCED: 'balanced',
-  FINAL: 'final'
-} as const
-
-export type LlmProfile = (typeof LlmProfile)[keyof typeof LlmProfile]
-
 export const ValidateMethod = {
   BASELINE: 'baseline',
   ADVANCED: 'advanced'
@@ -73,14 +59,6 @@ export const CommentModificationMode = {
 
 export type CommentModificationMode =
   (typeof CommentModificationMode)[keyof typeof CommentModificationMode]
-
-export const RegressionEvidenceOutputMode = {
-  CONCISE: 'concise',
-  EXPANDED: 'expanded'
-} as const
-
-export type RegressionEvidenceOutputMode =
-  (typeof RegressionEvidenceOutputMode)[keyof typeof RegressionEvidenceOutputMode]
 
 /**
  * Valid grouping strategy values for vulnerability grouping.

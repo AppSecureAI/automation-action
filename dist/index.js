@@ -18,10 +18,6 @@ import require$$5$1 from 'url';
 import require$$1$2 from 'tty';
 import http2 from 'http2';
 import zlib from 'zlib';
-import { readFile as readFile$1, access, mkdir, writeFile } from 'node:fs/promises';
-import path$1 from 'node:path';
-import { execFile as execFile$1, exec as exec$2 } from 'node:child_process';
-import { promisify as promisify$1 } from 'node:util';
 
 function getDefaultExportFromCjs (x) {
 	return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, 'default') ? x['default'] : x;
@@ -3689,7 +3685,13 @@ function requireRequest$1 () {
 	      } else if (typeof val[i] === 'object') {
 	        throw new InvalidArgumentError(`invalid ${key} header`)
 	      } else {
-	        arr.push(`${val[i]}`);
+	        // Coerce primitives (and reject unsafe coercions such as functions
+	        // with a crafted toString/Symbol.toPrimitive).
+	        const str = `${val[i]}`;
+	        if (!isValidHeaderValue(str)) {
+	          throw new InvalidArgumentError(`invalid ${key} header`)
+	        }
+	        arr.push(str);
 	      }
 	    }
 	    val = arr;
@@ -3700,7 +3702,12 @@ function requireRequest$1 () {
 	  } else if (val === null) {
 	    val = '';
 	  } else {
+	    // Coerce primitives (and reject unsafe coercions such as functions
+	    // with a crafted toString/Symbol.toPrimitive).
 	    val = `${val}`;
+	    if (!isValidHeaderValue(val)) {
+	      throw new InvalidArgumentError(`invalid ${key} header`)
+	    }
 	  }
 
 	  if (headerName === 'host') {
@@ -10206,6 +10213,7 @@ function requireClientH1 () {
 	  RequestContentLengthMismatchError,
 	  ResponseContentLengthMismatchError,
 	  RequestAbortedError,
+	  InvalidArgumentError,
 	  HeadersTimeoutError,
 	  HeadersOverflowError,
 	  SocketError,
@@ -11330,8 +11338,16 @@ function requireClientH1 () {
 	    }
 	    body = bodyStream.stream;
 	    contentLength = bodyStream.length;
-	  } else if (util.isBlobLike(body) && request.contentType == null && body.type) {
-	    headers.push('content-type', body.type);
+	  } else if (util.isBlobLike(body) && request.contentType == null) {
+	    const contentType = body.type;
+	    if (contentType) {
+	      const contentTypeValue = `${contentType}`;
+	      if (!util.isValidHeaderValue(contentTypeValue)) {
+	        util.errorRequest(client, request, new InvalidArgumentError('invalid content-type header'));
+	        return false
+	      }
+	      headers.push('content-type', contentTypeValue);
+	    }
 	  }
 
 	  if (body && typeof body.read === 'function') {
@@ -16045,6 +16061,26 @@ function requireRetryHandler () {
 	  return isNaN(retryTime) ? 0 : retryTime - Date.now()
 	}
 
+	function validatePartialResponseContentLength (headers, range, statusCode, retryCount) {
+	  const contentLength = headers['content-length'];
+	  if (contentLength == null) {
+	    return
+	  }
+
+	  if (!Number.isFinite(range.start) || !Number.isFinite(range.end)) {
+	    return
+	  }
+
+	  const length = Number(contentLength);
+	  const expectedLength = range.end - range.start + 1;
+	  if (!Number.isFinite(length) || length !== expectedLength) {
+	    throw new RequestRetryError('Content-Length mismatch', statusCode, {
+	      headers,
+	      data: { count: retryCount }
+	    })
+	  }
+	}
+
 	class RetryHandler {
 	  constructor (opts, { dispatch, handler }) {
 	    const { retryOptions, ...dispatchOpts } = opts;
@@ -16259,6 +16295,8 @@ function requireRetryHandler () {
 	        })
 	      }
 
+	      validatePartialResponseContentLength(headers, contentRange, statusCode, this.retryCount);
+
 	      const { start, size, end = size ? size - 1 : null } = contentRange;
 
 	      assert(this.start === start, 'content-range mismatch');
@@ -16282,6 +16320,8 @@ function requireRetryHandler () {
 	          );
 	          return
 	        }
+
+	        validatePartialResponseContentLength(headers, range, statusCode, this.retryCount);
 
 	        const { start, size, end = size ? size - 1 : null } = range;
 	        assert(
@@ -22003,10 +22043,146 @@ function requireCache$2 () {
 	const {
 	  safeHTTPMethods,
 	  pathHasQueryOrFragment,
-	  hasSafeIterator
+	  hasSafeIterator,
+	  isValidHTTPToken
 	} = requireUtil$5();
 
 	const { serializePathWithQuery } = requireUtil$5();
+
+	const MAX_DELTA_SECONDS = 2147483647;
+	const RESTRICTIVE_DIRECTIVE_NAMES = ['no-store', 'private', 'no-cache'];
+	const kInvalidCacheControlDirectives = Symbol('invalid cache-control directives');
+
+	function trimOWS (value) {
+	  return value.replace(/^[\t ]+|[\t ]+$/g, '')
+	}
+
+	function arrayIncludes (array, value) {
+	  for (let i = 0; i < array.length; i++) {
+	    if (array[i] === value) {
+	      return true
+	    }
+	  }
+
+	  return false
+	}
+
+	function trimOWSStart (value) {
+	  return value.replace(/^[\t ]+/, '')
+	}
+
+	function trimOWSEnd (value) {
+	  return value.replace(/[\t ]+$/, '')
+	}
+
+	function findUnescapedQuote (value, start) {
+	  let escaped = false;
+	  for (let i = start; i < value.length; i++) {
+	    if (escaped) {
+	      escaped = false;
+	    } else if (value[i] === '\\') {
+	      escaped = true;
+	    } else if (value[i] === '"') {
+	      return i
+	    }
+	  }
+
+	  return -1
+	}
+
+	function splitCacheControlHeaderValue (value) {
+	  const directives = [];
+	  let start = 0;
+	  let quoteStart = -1;
+	  let inQuote = false;
+	  let escaped = false;
+
+	  for (let i = 0; i < value.length; i++) {
+	    if (inQuote) {
+	      if (escaped) {
+	        escaped = false;
+	      } else if (value[i] === '\\') {
+	        escaped = true;
+	      } else if (value[i] === '"') {
+	        inQuote = false;
+	        quoteStart = -1;
+	      }
+	    } else if (value[i] === '"') {
+	      inQuote = true;
+	      quoteStart = i;
+	    } else if (value[i] === ',') {
+	      directives.push({ value: value.substring(start, i), fromMalformedQuote: false });
+	      start = i + 1;
+	    }
+	  }
+
+	  if (!inQuote) {
+	    directives.push({ value: value.substring(start), fromMalformedQuote: false });
+	    return directives
+	  }
+
+	  const tail = value.substring(start);
+	  const quoteOffset = quoteStart - start;
+	  let tailStart = 0;
+	  for (let i = 0; i < tail.length; i++) {
+	    if (tail[i] === ',') {
+	      directives.push({
+	        value: tail.substring(tailStart, i),
+	        fromMalformedQuote: tailStart > quoteOffset
+	      });
+	      tailStart = i + 1;
+	    }
+	  }
+
+	  directives.push({
+	    value: tail.substring(tailStart),
+	    fromMalformedQuote: tailStart > quoteOffset
+	  });
+	  return directives
+	}
+
+	function markInvalidCacheControlDirective (directives, key) {
+	  let invalidDirectives = directives[kInvalidCacheControlDirectives];
+
+	  if (invalidDirectives === undefined) {
+	    invalidDirectives = new Set();
+	    Object.defineProperty(directives, kInvalidCacheControlDirectives, {
+	      value: invalidDirectives
+	    });
+	  }
+
+	  invalidDirectives.add(key);
+	}
+
+	function hasInvalidCacheControlDirective (directives, key) {
+	  return directives[kInvalidCacheControlDirectives]?.has(key) === true
+	}
+
+	function getMalformedRestrictiveDirectiveName (key) {
+	  for (const directiveName of RESTRICTIVE_DIRECTIVE_NAMES) {
+	    if (
+	      key.startsWith(directiveName) &&
+	      key.length > directiveName.length &&
+	      !isValidHTTPToken(key[directiveName.length])
+	    ) {
+	      return directiveName
+	    }
+	  }
+
+	  let tokenOnlyKey = '';
+	  let hasInvalidTokenChar = false;
+	  for (let i = 0; i < key.length; i++) {
+	    if (isValidHTTPToken(key[i])) {
+	      tokenOnlyKey += key[i];
+	    } else {
+	      hasInvalidTokenChar = true;
+	    }
+	  }
+
+	  if (hasInvalidTokenChar && arrayIncludes(RESTRICTIVE_DIRECTIVE_NAMES, tokenOnlyKey)) {
+	    return tokenOnlyKey
+	  }
+	}
 
 	/**
 	 * @param {import('../../types/dispatcher.d.ts').default.DispatchOptions} opts
@@ -22030,6 +22206,20 @@ function requireCache$2 () {
 	  }
 	}
 
+	function appendHeader (headers, key, val) {
+	  const headerName = key.toLowerCase();
+	  const current = headers[headerName];
+	  const values = Array.isArray(val) ? val : [val];
+
+	  if (current === undefined) {
+	    headers[headerName] = Array.isArray(val) ? val.slice() : val;
+	  } else if (Array.isArray(current)) {
+	    current.push(...values);
+	  } else {
+	    headers[headerName] = [current, ...values];
+	  }
+	}
+
 	/**
 	 * @param {Record<string, string[] | string>}
 	 * @returns {Record<string, string[] | string>}
@@ -22050,11 +22240,11 @@ function requireCache$2 () {
 	        if (typeof key !== 'string' || typeof val !== 'string') {
 	          throw new Error('opts.headers is not a valid header map')
 	        }
-	        headers[key.toLowerCase()] = val;
+	        appendHeader(headers, key, val);
 	      }
 	    } else {
 	      for (const key of Object.keys(opts.headers)) {
-	        headers[key.toLowerCase()] = opts.headers[key];
+	        appendHeader(headers, key, opts.headers[key]);
 	      }
 	    }
 	  } else {
@@ -22126,29 +22316,37 @@ function requireCache$2 () {
 	   * @type {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives}
 	   */
 	  const output = {};
+	  const invalidNumericDirectives = new Set();
+	  const invalidNoArgumentDirectives = new Set();
 
-	  let directives;
-	  if (Array.isArray(header)) {
-	    directives = [];
-
-	    for (const directive of header) {
-	      directives.push(...directive.split(','));
-	    }
-	  } else {
-	    directives = header.split(',');
-	  }
+	  const directives = splitCacheControlHeaderValue(Array.isArray(header) ? header.join(',') : header);
 
 	  for (let i = 0; i < directives.length; i++) {
-	    const directive = directives[i].toLowerCase();
+	    const directiveRecord = directives[i];
+	    const directive = directiveRecord.value.toLowerCase();
+	    const fromMalformedQuote = directiveRecord.fromMalformedQuote;
 	    const keyValueDelimiter = directive.indexOf('=');
 
 	    let key;
 	    let value;
+	    let keyHasTrailingWhitespace = false;
+	    let valueHasLeadingWhitespace = false;
 	    if (keyValueDelimiter !== -1) {
-	      key = directive.substring(0, keyValueDelimiter).trimStart();
-	      value = directive.substring(keyValueDelimiter + 1);
+	      const rawKey = directive.substring(0, keyValueDelimiter);
+	      const rawValue = directive.substring(keyValueDelimiter + 1);
+
+	      keyHasTrailingWhitespace = trimOWSEnd(rawKey) !== rawKey;
+	      valueHasLeadingWhitespace = trimOWSStart(rawValue) !== rawValue;
+	      key = trimOWS(rawKey);
+	      value = trimOWSStart(rawValue);
 	    } else {
-	      key = directive.trim();
+	      key = trimOWS(directive);
+	    }
+
+	    const malformedRestrictiveDirectiveName = getMalformedRestrictiveDirectiveName(key);
+	    if (malformedRestrictiveDirectiveName !== undefined) {
+	      output[malformedRestrictiveDirectiveName] = true;
+	      continue
 	    }
 
 	    switch (key) {
@@ -22158,7 +22356,14 @@ function requireCache$2 () {
 	      case 's-maxage':
 	      case 'stale-while-revalidate':
 	      case 'stale-if-error': {
-	        if (value === undefined || value[0] === ' ') {
+	        if (fromMalformedQuote || invalidNumericDirectives.has(key)) {
+	          continue
+	        }
+
+	        if (value === undefined || keyHasTrailingWhitespace || valueHasLeadingWhitespace) {
+	          delete output[key];
+	          invalidNumericDirectives.add(key);
+	          markInvalidCacheControlDirective(output, key);
 	          continue
 	        }
 
@@ -22170,22 +22375,37 @@ function requireCache$2 () {
 	          value = value.substring(1, value.length - 1);
 	        }
 
-	        const parsedValue = parseInt(value, 10);
-	        // eslint-disable-next-line no-self-compare
-	        if (parsedValue !== parsedValue) {
+	        if (!/^[0-9]+$/.test(value)) {
+	          delete output[key];
+	          invalidNumericDirectives.add(key);
+	          markInvalidCacheControlDirective(output, key);
 	          continue
 	        }
 
-	        if (key === 'max-age' && key in output && output[key] >= parsedValue) {
-	          continue
-	        }
+	        const parsedValue = Math.min(parseInt(value, 10), MAX_DELTA_SECONDS);
 
-	        output[key] = parsedValue;
+	        if (key === 'min-fresh') {
+	          if (!(key in output) || output[key] < parsedValue) {
+	            output[key] = parsedValue;
+	          }
+	        } else if (!(key in output) || output[key] > parsedValue) {
+	          output[key] = parsedValue;
+	        }
 
 	        break
 	      }
 	      case 'private':
 	      case 'no-cache': {
+	        if (fromMalformedQuote) {
+	          output[key] = true;
+	          break
+	        }
+
+	        if (value !== undefined && value.length === 0) {
+	          output[key] = true;
+	          break
+	        }
+
 	        if (value) {
 	          // The private and no-cache directives can be unqualified (aka just
 	          //  `private` or `no-cache`) or qualified (w/ a value). When they're
@@ -22193,45 +22413,64 @@ function requireCache$2 () {
 	          //  `no-cache="header1"`, or `no-cache="header1, header2"`
 	          // If we're given multiple headers, the comma messes us up since
 	          //  we split the full header by commas. So, let's loop through the
-	          //  remaining parts in front of us until we find one that ends in a
-	          //  quote. We can then just splice all of the parts in between the
-	          //  starting quote and the ending quote out of the directives array
-	          //  and continue parsing like normal.
+	          //  remaining parts in front of us until we find one that contains a
+	          //  closing quote. We can then skip the consumed quoted-list fragments and
+	          //  continue parsing like normal.
 	          // https://www.rfc-editor.org/rfc/rfc9111.html#name-no-cache-2
 	          if (value[0] === '"') {
 	            // Something like `no-cache="some-header"` OR `no-cache="some-header, another-header"`.
+	            value = trimOWSEnd(value);
 
-	            // Add the first header on and cut off the leading quote
-	            const headers = [value.substring(1)];
+	            let fieldList = '';
+	            let lastQuotedPart = i;
+	            let foundEndingQuote = false;
+	            const closingQuote = findUnescapedQuote(value, 1);
 
-	            let foundEndingQuote = value[value.length - 1] === '"';
-	            if (!foundEndingQuote) {
+	            if (closingQuote !== -1) {
+	              fieldList = value.substring(1, closingQuote);
+	              foundEndingQuote = true;
+	            } else {
 	              // Something like `no-cache="some-header, another-header"`
 	              //  This can still be something invalid, e.g. `no-cache="some-header, ...`
+	              const fieldListParts = [value.substring(1)];
+
 	              for (let j = i + 1; j < directives.length; j++) {
-	                const nextPart = directives[j];
-	                const nextPartLength = nextPart.length;
+	                const nextPart = trimOWS(directives[j].value);
+	                const closingQuote = findUnescapedQuote(nextPart, 0);
 
-	                headers.push(nextPart.trim());
+	                lastQuotedPart = j;
 
-	                if (nextPartLength !== 0 && nextPart[nextPartLength - 1] === '"') {
+	                if (closingQuote !== -1) {
+	                  fieldListParts.push(nextPart.substring(0, closingQuote));
 	                  foundEndingQuote = true;
 	                  break
 	                }
+
+	                fieldListParts.push(nextPart);
+	              }
+
+	              fieldList = fieldListParts.join(',');
+	            }
+
+	            if (!foundEndingQuote) {
+	              output[key] = true;
+	              break
+	            }
+
+	            i = lastQuotedPart;
+
+	            const headers = fieldList.split(',');
+	            let validFieldNames = true;
+	            for (let j = 0; j < headers.length; j++) {
+	              headers[j] = trimOWS(headers[j]);
+	              if (!isValidHTTPToken(headers[j])) {
+	                validFieldNames = false;
 	              }
 	            }
 
-	            if (foundEndingQuote) {
-	              let lastHeader = headers[headers.length - 1];
-	              if (lastHeader[lastHeader.length - 1] === '"') {
-	                lastHeader = lastHeader.substring(0, lastHeader.length - 1);
-	                headers[headers.length - 1] = lastHeader;
-	              }
-
-	              for (let j = 0; j < headers.length; j++) {
-	                headers[j] = headers[j].trim();
-	              }
-
+	            if (!validFieldNames) {
+	              output[key] = true;
+	            } else if (output[key] !== true) {
 	              if (key in output) {
 	                output[key] = output[key].concat(headers);
 	              } else {
@@ -22239,13 +22478,17 @@ function requireCache$2 () {
 	              }
 	            }
 	          } else {
-	            // Something like `no-cache="some-header"`
-	            const fieldName = value.trim();
+	            // Something like `no-cache=some-header`
+	            const fieldName = trimOWS(value);
 
-	            if (key in output) {
-	              output[key] = output[key].concat(fieldName);
-	            } else {
-	              output[key] = [fieldName];
+	            if (!isValidHTTPToken(fieldName)) {
+	              output[key] = true;
+	            } else if (output[key] !== true) {
+	              if (key in output) {
+	                output[key] = output[key].concat(fieldName);
+	              } else {
+	                output[key] = [fieldName];
+	              }
 	            }
 	          }
 
@@ -22254,19 +22497,27 @@ function requireCache$2 () {
 	      }
 	      // eslint-disable-next-line no-fallthrough
 	      case 'public':
-	      case 'no-store':
 	      case 'must-revalidate':
 	      case 'proxy-revalidate':
 	      case 'immutable':
 	      case 'no-transform':
 	      case 'must-understand':
 	      case 'only-if-cached':
-	        if (value) {
-	          // These are qualified (something like `public=...`) when they aren't
-	          //  allowed to be, skip
+	        if (fromMalformedQuote || invalidNoArgumentDirectives.has(key)) {
 	          continue
 	        }
 
+	        if (value !== undefined) {
+	          // These are qualified (something like `public=...`) when they aren't
+	          //  allowed to be, skip all instances of the malformed directive.
+	          delete output[key];
+	          invalidNoArgumentDirectives.add(key);
+	          continue
+	        }
+
+	        output[key] = true;
+	        break
+	      case 'no-store':
 	        output[key] = true;
 	        break
 	      default:
@@ -22280,27 +22531,75 @@ function requireCache$2 () {
 
 	/**
 	 * @param {string | string[]} varyHeader Vary header from the server
+	 * @returns {string[]}
+	 */
+	function splitVaryHeader (varyHeader) {
+	  const values = Array.isArray(varyHeader) ? varyHeader : [varyHeader];
+	  const output = [];
+
+	  for (let i = 0; i < values.length; i++) {
+	    const parts = values[i].split(',');
+	    for (let j = 0; j < parts.length; j++) {
+	      output.push(parts[j]);
+	    }
+	  }
+
+	  return output
+	}
+
+	/**
+	 * @param {string | string[]} varyHeader Vary header from the server
+	 * @returns {boolean}
+	 */
+	function hasVaryStar (varyHeader) {
+	  const values = splitVaryHeader(varyHeader);
+	  for (let i = 0; i < values.length; i++) {
+	    if (trimOWS(values[i]).indexOf('*') !== -1) {
+	      return true
+	    }
+	  }
+
+	  return false
+	}
+
+	/**
+	 * @param {string | string[]} varyHeader Vary header from the server
 	 * @param {Record<string, string | string[]>} headers Request headers
-	 * @returns {Record<string, string | string[]>}
+	 * @returns {Record<string, string | string[] | null> | undefined}
 	 */
 	function parseVaryHeader (varyHeader, headers) {
-	  if (typeof varyHeader === 'string' && varyHeader.includes('*')) {
+	  if (hasVaryStar(varyHeader)) {
 	    return headers
 	  }
 
 	  const output = /** @type {Record<string, string | string[] | null>} */ ({});
 
-	  const varyingHeaders = typeof varyHeader === 'string'
-	    ? varyHeader.split(',')
-	    : varyHeader;
+	  const varyingHeaders = splitVaryHeader(varyHeader);
 
 	  for (const header of varyingHeaders) {
-	    const trimmedHeader = header.trim().toLowerCase();
+	    const trimmedHeader = trimOWS(header).toLowerCase();
 
-	    output[trimmedHeader] = headers[trimmedHeader] ?? null;
+	    if (trimmedHeader.length === 0) {
+	      continue
+	    }
+
+	    if (!isValidHTTPToken(trimmedHeader)) {
+	      return undefined
+	    }
+
+	    const headerValue = headers[trimmedHeader];
+	    output[trimmedHeader] = Array.isArray(headerValue) ? headerValue.slice() : headerValue ?? null;
 	  }
 
 	  return output
+	}
+
+	/**
+	 * @param {string | string[]} varyHeader Vary header from the server
+	 * @returns {boolean}
+	 */
+	function isInvalidOrWildcardVaryHeader (varyHeader) {
+	  return hasVaryStar(varyHeader) || parseVaryHeader(varyHeader, {}) === undefined
 	}
 
 	/**
@@ -22366,7 +22665,7 @@ function requireCache$2 () {
 	  }
 
 	  for (const method of methods) {
-	    if (!safeHTTPMethods.includes(method)) {
+	    if (!arrayIncludes(safeHTTPMethods, method)) {
 	      throw new TypeError(`element of ${name}-array needs to be one of following values: ${safeHTTPMethods.join(', ')}, got ${method}`)
 	    }
 	  }
@@ -22406,7 +22705,10 @@ function requireCache$2 () {
 	  assertCacheKey,
 	  assertCacheValue,
 	  parseCacheControlHeader,
+	  hasInvalidCacheControlDirective,
 	  parseVaryHeader,
+	  hasVaryStar,
+	  isInvalidOrWildcardVaryHeader,
 	  isEtagUsable,
 	  assertCacheMethods,
 	  assertCacheStore,
@@ -22438,6 +22740,26 @@ function requireDate () {
 	    case ' ': return parseAscTimeDate(date)
 	    default: return parseRfc850Date(date)
 	  }
+	}
+
+	function makeDate (year, monthIdx, day, hour, minute, second, weekday) {
+	  const result = new Date(Date.UTC(year, monthIdx, day, hour, minute, second));
+
+	  // Date.UTC treats years 0-99 as 1900-1999. Reset the full year so component
+	  // checks below validate the HTTP date as written.
+	  if (year >= 0 && year <= 99) {
+	    result.setUTCFullYear(year);
+	  }
+
+	  return result.getUTCFullYear() === year &&
+	    result.getUTCMonth() === monthIdx &&
+	    result.getUTCDate() === day &&
+	    result.getUTCHours() === hour &&
+	    result.getUTCMinutes() === minute &&
+	    result.getUTCSeconds() === second &&
+	    result.getUTCDay() === weekday
+	    ? result
+	    : undefined
 	}
 
 	/**
@@ -22646,8 +22968,7 @@ function requireDate () {
 	    second = (code1 - 48) * 10 + (code2 - 48); // Convert ASCII codes to number
 	  }
 
-	  const result = new Date(Date.UTC(year, monthIdx, day, hour, minute, second));
-	  return result.getUTCDay() === weekday ? result : undefined
+	  return makeDate(year, monthIdx, day, hour, minute, second, weekday)
 	}
 
 	/**
@@ -22851,8 +23172,7 @@ function requireDate () {
 	  }
 	  const year = (yearDigit1 - 48) * 1000 + (yearDigit2 - 48) * 100 + (yearDigit3 - 48) * 10 + (yearDigit4 - 48);
 
-	  const result = new Date(Date.UTC(year, monthIdx, day, hour, minute, second));
-	  return result.getUTCDay() === weekday ? result : undefined
+	  return makeDate(year, monthIdx, day, hour, minute, second, weekday)
 	}
 
 	/**
@@ -23066,8 +23386,7 @@ function requireDate () {
 	    second = (code1 - 48) * 10 + (code2 - 48); // Convert ASCII codes to number
 	  }
 
-	  const result = new Date(Date.UTC(year, monthIdx, day, hour, minute, second));
-	  return result.getUTCDay() === weekday ? result : undefined
+	  return makeDate(year, monthIdx, day, hour, minute, second, weekday)
 	}
 
 	date = {
@@ -23086,7 +23405,10 @@ function requireCacheHandler () {
 	const util = requireUtil$5();
 	const {
 	  parseCacheControlHeader,
+	  hasInvalidCacheControlDirective,
 	  parseVaryHeader,
+	  hasVaryStar,
+	  isInvalidOrWildcardVaryHeader,
 	  isEtagUsable
 	} = requireCache$2();
 	const { parseHttpDate } = requireDate();
@@ -23108,6 +23430,92 @@ function requireCacheHandler () {
 	];
 
 	const MAX_RESPONSE_AGE = 2147483647000;
+
+	function trimOWS (value) {
+	  return value.replace(/^[\t ]+|[\t ]+$/g, '')
+	}
+
+	function arrayIncludes (array, value) {
+	  for (let i = 0; i < array.length; i++) {
+	    if (array[i] === value) {
+	      return true
+	    }
+	  }
+
+	  return false
+	}
+
+	function appendConnectionHeaderTokens (headersToRemove, connectionHeader) {
+	  const values = Array.isArray(connectionHeader) ? connectionHeader : [connectionHeader];
+
+	  for (let i = 0; i < values.length; i++) {
+	    const tokens = values[i].split(',');
+	    for (let j = 0; j < tokens.length; j++) {
+	      headersToRemove.push(trimOWS(tokens[j]).toLowerCase());
+	    }
+	  }
+	}
+
+	function getSameOriginPath (cacheKey, location) {
+	  if (typeof location !== 'string') {
+	    return undefined
+	  }
+
+	  let originUrl;
+	  let requestUrl;
+	  let locationUrl;
+	  try {
+	    originUrl = new URL(cacheKey.origin);
+	    requestUrl = new URL(cacheKey.path, originUrl);
+	    locationUrl = new URL(location, requestUrl);
+	  } catch {
+	    return undefined
+	  }
+
+	  if (locationUrl.origin !== originUrl.origin) {
+	    return undefined
+	  }
+
+	  return locationUrl.pathname + locationUrl.search
+	}
+
+	function deleteCachedUri (store, cacheKey, path) {
+	  deleteCachedValue(store, {
+	    ...cacheKey,
+	    path
+	  });
+
+	  for (let i = 0; i < util.safeHTTPMethods.length; i++) {
+	    const method = util.safeHTTPMethods[i];
+	    if (method !== cacheKey.method) {
+	      deleteCachedValue(store, {
+	        ...cacheKey,
+	        method,
+	        path
+	      });
+	    }
+	  }
+	}
+
+	function deleteLocationTargets (store, cacheKey, headerValue) {
+	  if (headerValue === undefined) {
+	    return
+	  }
+
+	  const values = Array.isArray(headerValue) ? headerValue : [headerValue];
+	  for (let i = 0; i < values.length; i++) {
+	    const path = getSameOriginPath(cacheKey, values[i]);
+	    if (path !== undefined) {
+	      deleteCachedUri(store, cacheKey, path);
+	    }
+	  }
+	}
+
+	function invalidateUnsafeRequest (store, cacheKey, resHeaders) {
+	  deleteCachedUri(store, cacheKey, cacheKey.path);
+	  deleteLocationTargets(store, cacheKey, resHeaders.location);
+	  deleteLocationTargets(store, cacheKey, resHeaders['content-location']);
+	}
 
 	/**
 	 * @typedef {import('../../types/dispatcher.d.ts').default.DispatchHandler} DispatchHandler
@@ -23190,28 +23598,28 @@ function requireCacheHandler () {
 	    const handler = this;
 
 	    if (
-	      !util.safeHTTPMethods.includes(this.#cacheKey.method) &&
+	      !arrayIncludes(util.safeHTTPMethods, this.#cacheKey.method) &&
 	      statusCode >= 200 &&
 	      statusCode <= 399
 	    ) {
 	      // Successful response to an unsafe method, delete it from cache
 	      //  https://www.rfc-editor.org/rfc/rfc9111.html#name-invalidating-stored-response
-	      try {
-	        this.#store.delete(this.#cacheKey)?.catch?.(noop);
-	      } catch {
-	        // Fail silently
-	      }
+	      invalidateUnsafeRequest(this.#store, this.#cacheKey, resHeaders);
 	      return downstreamOnHeaders()
 	    }
 
 	    const cacheControlHeader = resHeaders['cache-control'];
-	    const heuristicallyCacheable = resHeaders['last-modified'] && HEURISTICALLY_CACHEABLE_STATUS_CODES.includes(statusCode);
+	    const heuristicallyCacheable = resHeaders['last-modified'] && arrayIncludes(HEURISTICALLY_CACHEABLE_STATUS_CODES, statusCode);
 	    if (
 	      !cacheControlHeader &&
 	      !resHeaders['expires'] &&
 	      !heuristicallyCacheable &&
 	      !this.#cacheByDefault
 	    ) {
+	      if (statusCode === 304 && resHeaders.vary && isInvalidOrWildcardVaryHeader(resHeaders.vary)) {
+	        deleteCachedValue(this.#store, this.#cacheKey);
+	      }
+
 	      // Don't have anything to tell us this response is cachable and we're not
 	      //  caching by default
 	      return downstreamOnHeaders()
@@ -23219,31 +23627,46 @@ function requireCacheHandler () {
 
 	    const cacheControlDirectives = cacheControlHeader ? parseCacheControlHeader(cacheControlHeader) : {};
 	    if (!canCacheResponse(this.#cacheType, statusCode, resHeaders, cacheControlDirectives, this.#cacheKey.headers)) {
+	      if (statusCode === 304 && (cacheControlHeader || revalidationResponseDisallowsCachedReuse(this.#cacheType, resHeaders, cacheControlDirectives))) {
+	        deleteCachedValue(this.#store, this.#cacheKey);
+	      }
+
 	      return downstreamOnHeaders()
 	    }
 
 	    const now = Date.now();
-	    const resAge = resHeaders.age ? getAge(resHeaders.age) : undefined;
-	    if (resAge && resAge >= MAX_RESPONSE_AGE) {
+	    const resAge = Object.hasOwn(resHeaders, 'age') ? getAge(resHeaders.age) : undefined;
+	    if (resAge !== undefined && resAge >= MAX_RESPONSE_AGE) {
 	      // Response considered stale
+	      deleteCachedValueIfNotModified(statusCode, this.#store, this.#cacheKey);
 	      return downstreamOnHeaders()
 	    }
 
-	    const resDate = typeof resHeaders.date === 'string'
-	      ? parseHttpDate(resHeaders.date)
-	      : undefined;
+	    const resDate = Object.hasOwn(resHeaders, 'date') ? getDate(resHeaders.date) : undefined;
+	    if (resDate === null) {
+	      deleteCachedValueIfNotModified(statusCode, this.#store, this.#cacheKey);
+	      return downstreamOnHeaders()
+	    }
+
+	    const apparentAge = resDate ? Math.max(0, now - resDate.getTime()) : 0;
+	    const currentAge = Math.max(apparentAge, resAge ?? 0);
 
 	    const staleAt =
 	      determineStaleAt(this.#cacheType, now, resAge, resHeaders, resDate, cacheControlDirectives) ??
 	      this.#cacheByDefault;
-	    if (staleAt === undefined || (resAge && resAge > staleAt)) {
+	    if (staleAt === undefined || currentAge >= staleAt) {
+	      if (cacheControlHeader || staleAt !== undefined) {
+	        deleteCachedValueIfNotModified(statusCode, this.#store, this.#cacheKey);
+	      }
+
 	      return downstreamOnHeaders()
 	    }
 
-	    const baseTime = resDate ? resDate.getTime() : now;
+	    const baseTime = now - currentAge;
 	    const absoluteStaleAt = staleAt + baseTime;
 	    if (now >= absoluteStaleAt) {
 	      // Response is already stale
+	      deleteCachedValueIfNotModified(statusCode, this.#store, this.#cacheKey);
 	      return downstreamOnHeaders()
 	    }
 
@@ -23256,7 +23679,8 @@ function requireCacheHandler () {
 	      }
 	    }
 
-	    const deleteAt = determineDeleteAt(baseTime, cacheControlDirectives, absoluteStaleAt);
+	    const cachedAt = baseTime;
+	    const deleteAt = determineDeleteAt(baseTime, now, cacheControlDirectives, absoluteStaleAt);
 	    const strippedHeaders = stripNecessaryHeaders(resHeaders, cacheControlDirectives);
 
 	    /**
@@ -23268,7 +23692,7 @@ function requireCacheHandler () {
 	      headers: strippedHeaders,
 	      vary: varyDirectives,
 	      cacheControlDirectives,
-	      cachedAt: resAge ? now - resAge : now,
+	      cachedAt,
 	      staleAt: absoluteStaleAt,
 	      deleteAt
 	    };
@@ -23286,6 +23710,7 @@ function requireCacheHandler () {
 	        value.statusCode = cachedValue.statusCode;
 	        value.statusMessage = cachedValue.statusMessage;
 	        value.etag = cachedValue.etag;
+	        value.vary = varyDirectives ?? cachedValue.vary;
 	        value.headers = { ...cachedValue.headers, ...strippedHeaders };
 
 	        downstreamOnHeaders();
@@ -23417,6 +23842,36 @@ function requireCacheHandler () {
 	}
 
 	/**
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheStore} store
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheKey} cacheKey
+	 */
+	function deleteCachedValue (store, cacheKey) {
+	  try {
+	    store.delete(cacheKey)?.catch?.(noop);
+	  } catch {
+	    // Fail silently
+	  }
+	}
+
+	function deleteCachedValueIfNotModified (statusCode, store, cacheKey) {
+	  if (statusCode === 304) {
+	    deleteCachedValue(store, cacheKey);
+	  }
+	}
+
+	/**
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
+	 * @param {import('../../types/header.d.ts').IncomingHttpHeaders} resHeaders
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives} cacheControlDirectives
+	 * @returns {boolean}
+	 */
+	function revalidationResponseDisallowsCachedReuse (cacheType, resHeaders, cacheControlDirectives) {
+	  return cacheControlDirectives['no-store'] === true ||
+	    (cacheType === 'shared' && cacheControlDirectives.private === true) ||
+	    (resHeaders.vary ? isInvalidOrWildcardVaryHeader(resHeaders.vary) : false)
+	}
+
+	/**
 	 * @see https://www.rfc-editor.org/rfc/rfc9111.html#name-storing-responses-to-authen
 	 *
 	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
@@ -23427,12 +23882,12 @@ function requireCacheHandler () {
 	 */
 	function canCacheResponse (cacheType, statusCode, resHeaders, cacheControlDirectives, reqHeaders) {
 	  // Status code must be final and understood.
-	  if (statusCode < 200 || NOT_UNDERSTOOD_STATUS_CODES.includes(statusCode)) {
+	  if (statusCode < 200 || arrayIncludes(NOT_UNDERSTOOD_STATUS_CODES, statusCode)) {
 	    return false
 	  }
 	  // Responses with neither status codes that are heuristically cacheable, nor "explicit enough" caching
 	  // directives, are not cacheable. "Explicit enough": see https://www.rfc-editor.org/rfc/rfc9111.html#section-3
-	  if (!HEURISTICALLY_CACHEABLE_STATUS_CODES.includes(statusCode) && !resHeaders['expires'] &&
+	  if (!arrayIncludes(HEURISTICALLY_CACHEABLE_STATUS_CODES, statusCode) && !resHeaders['expires'] &&
 	    !cacheControlDirectives.public &&
 	    cacheControlDirectives['max-age'] === undefined &&
 	    // RFC 9111: a private response directive, if the cache is not shared
@@ -23451,12 +23906,12 @@ function requireCacheHandler () {
 	  }
 
 	  // https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1-5
-	  if (resHeaders.vary?.includes('*')) {
+	  if (resHeaders.vary && hasVaryStar(resHeaders.vary)) {
 	    return false
 	  }
 
 	  // https://www.rfc-editor.org/rfc/rfc9111.html#name-storing-responses-to-authen
-	  if (reqHeaders?.authorization) {
+	  if (reqHeaders != null && Object.hasOwn(reqHeaders, 'authorization')) {
 	    if (
 	      !cacheControlDirectives.public &&
 	      !cacheControlDirectives['s-maxage'] &&
@@ -23471,14 +23926,14 @@ function requireCacheHandler () {
 
 	    if (
 	      Array.isArray(cacheControlDirectives['no-cache']) &&
-	      cacheControlDirectives['no-cache'].includes('authorization')
+	      arrayIncludes(cacheControlDirectives['no-cache'], 'authorization')
 	    ) {
 	      return false
 	    }
 
 	    if (
 	      Array.isArray(cacheControlDirectives['private']) &&
-	      cacheControlDirectives['private'].includes('authorization')
+	      arrayIncludes(cacheControlDirectives['private'], 'authorization')
 	    ) {
 	      return false
 	    }
@@ -23488,13 +23943,50 @@ function requireCacheHandler () {
 	}
 
 	/**
+	 * @param {string | string[]} dateHeader
+	 * @returns {Date | null | undefined}
+	 */
+	function getDate (dateHeader) {
+	  let dateValue = dateHeader;
+	  if (Array.isArray(dateValue)) {
+	    if (dateValue.length !== 1) {
+	      return null
+	    }
+
+	    dateValue = dateValue[0];
+	  }
+
+	  if (typeof dateValue !== 'string') {
+	    return null
+	  }
+
+	  return parseHttpDate(dateValue)
+	}
+
+	/**
 	 * @param {string | string[]} ageHeader
 	 * @returns {number | undefined}
 	 */
 	function getAge (ageHeader) {
-	  const age = parseInt(Array.isArray(ageHeader) ? ageHeader[0] : ageHeader);
+	  let ageValue = ageHeader;
+	  if (Array.isArray(ageValue)) {
+	    if (ageValue.length !== 1) {
+	      return MAX_RESPONSE_AGE
+	    }
 
-	  return isNaN(age) ? undefined : age * 1000
+	    ageValue = ageValue[0];
+	  }
+
+	  if (typeof ageValue !== 'string' || !/^[\t ]*[0-9]+[\t ]*$/.test(ageValue)) {
+	    return MAX_RESPONSE_AGE
+	  }
+
+	  const age = BigInt(ageValue.replace(/^[\t ]+|[\t ]+$/g, ''));
+	  if (age >= BigInt(MAX_RESPONSE_AGE / 1000)) {
+	    return MAX_RESPONSE_AGE
+	  }
+
+	  return Number(age) * 1000
 	}
 
 	/**
@@ -23512,43 +24004,60 @@ function requireCacheHandler () {
 	    // Prioritize s-maxage since we're a shared cache
 	    //  s-maxage > max-age > Expire
 	    //  https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.2.10-3
+	    if (hasInvalidCacheControlDirective(cacheControlDirectives, 's-maxage')) {
+	      return 0
+	    }
+
 	    const sMaxAge = cacheControlDirectives['s-maxage'];
 	    if (sMaxAge !== undefined) {
-	      return sMaxAge > 0 ? sMaxAge * 1000 : undefined
+	      return sMaxAge * 1000
 	    }
+	  }
+
+	  if (hasInvalidCacheControlDirective(cacheControlDirectives, 'max-age')) {
+	    return 0
 	  }
 
 	  const maxAge = cacheControlDirectives['max-age'];
 	  if (maxAge !== undefined) {
-	    return maxAge > 0 ? maxAge * 1000 : undefined
+	    return maxAge * 1000
 	  }
 
-	  if (typeof resHeaders.expires === 'string') {
+	  if (Object.hasOwn(resHeaders, 'expires')) {
 	    // https://www.rfc-editor.org/rfc/rfc9111.html#section-5.3
-	    const expiresDate = parseHttpDate(resHeaders.expires);
-	    if (expiresDate) {
-	      if (now >= expiresDate.getTime()) {
-	        return undefined
-	      }
-
-	      if (responseDate) {
-	        if (responseDate >= expiresDate) {
-	          return undefined
-	        }
-
-	        if (age !== undefined && age > (expiresDate - responseDate)) {
-	          return undefined
-	        }
-	      }
-
-	      return expiresDate.getTime() - now
+	    if (typeof resHeaders.expires !== 'string') {
+	      return 0
 	    }
+
+	    const expiresDate = parseHttpDate(resHeaders.expires);
+	    if (!expiresDate) {
+	      return 0
+	    }
+
+	    if (now >= expiresDate.getTime()) {
+	      return 0
+	    }
+
+	    if (responseDate) {
+	      if (responseDate >= expiresDate) {
+	        return 0
+	      }
+
+	      const freshnessLifetime = expiresDate.getTime() - responseDate.getTime();
+	      if (age !== undefined && age >= freshnessLifetime) {
+	        return 0
+	      }
+
+	      return freshnessLifetime
+	    }
+
+	    return expiresDate.getTime() - now
 	  }
 
 	  if (typeof resHeaders['last-modified'] === 'string') {
 	    // https://www.rfc-editor.org/rfc/rfc9111.html#name-calculating-heuristic-fresh
-	    const lastModified = new Date(resHeaders['last-modified']);
-	    if (isValidDate(lastModified)) {
+	    const lastModified = parseHttpDate(resHeaders['last-modified']);
+	    if (lastModified) {
 	      if (lastModified.getTime() >= now) {
 	        return undefined
 	      }
@@ -23561,18 +24070,19 @@ function requireCacheHandler () {
 
 	  if (cacheControlDirectives.immutable) {
 	    // https://www.rfc-editor.org/rfc/rfc8246.html#section-2.2
-	    return 31536000
+	    return 31536000000
 	  }
 
 	  return undefined
 	}
 
 	/**
-	 * @param {number} now
+	 * @param {number} baseTime
+	 * @param {number} cachedAt
 	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives} cacheControlDirectives
 	 * @param {number} staleAt
 	 */
-	function determineDeleteAt (now, cacheControlDirectives, staleAt) {
+	function determineDeleteAt (baseTime, cachedAt, cacheControlDirectives, staleAt) {
 	  let staleWhileRevalidate = -Infinity;
 	  let staleIfError = -Infinity;
 	  let immutable = -Infinity;
@@ -23586,15 +24096,21 @@ function requireCacheHandler () {
 	  }
 
 	  if (cacheControlDirectives.immutable && staleWhileRevalidate === -Infinity && staleIfError === -Infinity) {
-	    immutable = now + 31536000000;
+	    immutable = cachedAt + 31536000000;
 	  }
 
 	  // When no stale directives or immutable flag, add a revalidation buffer
 	  // equal to the freshness lifetime so the entry survives past staleAt long
 	  // enough to be revalidated instead of silently disappearing.
+	  //
+	  // Response Date headers only have second precision, so baseTime can trail the
+	  // actual cache insertion time by up to ~1s. Pad the buffer by that bounded
+	  // skew so short-lived entries do not disappear exactly when they should be
+	  // revalidated.
 	  if (staleWhileRevalidate === -Infinity && staleIfError === -Infinity && immutable === -Infinity) {
-	    const freshnessLifetime = staleAt - now;
-	    return staleAt + freshnessLifetime
+	    const freshnessLifetime = staleAt - baseTime;
+	    const datePrecisionPadding = Math.min(Math.max(cachedAt - baseTime, 0), 1000);
+	    return staleAt + freshnessLifetime + datePrecisionPadding
 	  }
 
 	  return Math.max(staleAt, staleWhileRevalidate, staleIfError, immutable)
@@ -23621,14 +24137,7 @@ function requireCacheHandler () {
 	  ];
 
 	  if (resHeaders['connection']) {
-	    if (Array.isArray(resHeaders['connection'])) {
-	      // connection: a
-	      // connection: b
-	      headersToRemove.push(...resHeaders['connection'].map(header => header.trim()));
-	    } else {
-	      // connection: a, b
-	      headersToRemove.push(...resHeaders['connection'].split(',').map(header => header.trim()));
-	    }
+	    appendConnectionHeaderTokens(headersToRemove, resHeaders['connection']);
 	  }
 
 	  if (Array.isArray(cacheControlDirectives['no-cache'])) {
@@ -23641,21 +24150,13 @@ function requireCacheHandler () {
 
 	  let strippedHeaders;
 	  for (const headerName of headersToRemove) {
-	    if (resHeaders[headerName]) {
+	    if (Object.hasOwn(resHeaders, headerName)) {
 	      strippedHeaders ??= { ...resHeaders };
 	      delete strippedHeaders[headerName];
 	    }
 	  }
 
 	  return strippedHeaders ?? resHeaders
-	}
-
-	/**
-	 * @param {Date} date
-	 * @returns {boolean}
-	 */
-	function isValidDate (date) {
-	  return date instanceof Date && Number.isFinite(date.valueOf())
 	}
 
 	cacheHandler = CacheHandler;
@@ -23887,17 +24388,62 @@ function requireMemoryCacheStore () {
 	}
 
 	function findEntry (key, entries, now) {
-	  return entries.find((entry) => (
-	    entry.deleteAt > now &&
-	    entry.method === key.method &&
-	    (entry.vary == null || Object.keys(entry.vary).every(headerName => {
-	      if (entry.vary[headerName] === null) {
-	        return key.headers[headerName] === undefined
-	      }
+	  for (let i = 0; i < entries.length; i++) {
+	    const entry = entries[i];
+	    if (
+	      entry.deleteAt > now &&
+	      entry.method === key.method &&
+	      varyMatches(key, entry)
+	    ) {
+	      return entry
+	    }
+	  }
+	}
 
-	      return entry.vary[headerName] === key.headers[headerName]
-	    }))
-	  ))
+	function varyMatches (key, entry) {
+	  if (entry.vary == null) {
+	    return true
+	  }
+
+	  for (const headerName in entry.vary) {
+	    if (Object.hasOwn(entry.vary, headerName) && !headerValueEquals(key.headers?.[headerName], entry.vary[headerName])) {
+	      return false
+	    }
+	  }
+
+	  return true
+	}
+
+	/**
+	 * @param {string|string[]|null|undefined} lhs
+	 * @param {string|string[]|null|undefined} rhs
+	 * @returns {boolean}
+	 */
+	function headerValueEquals (lhs, rhs) {
+	  if (lhs == null && rhs == null) {
+	    return true
+	  }
+
+	  if ((lhs == null && rhs != null) ||
+	      (lhs != null && rhs == null)) {
+	    return false
+	  }
+
+	  if (Array.isArray(lhs) && Array.isArray(rhs)) {
+	    if (lhs.length !== rhs.length) {
+	      return false
+	    }
+
+	    for (let i = 0; i < lhs.length; i++) {
+	      if (lhs[i] !== rhs[i]) {
+	        return false
+	      }
+	    }
+
+	    return true
+	  }
+
+	  return lhs === rhs
 	}
 
 	memoryCacheStore = MemoryCacheStore;
@@ -23930,7 +24476,7 @@ function requireCacheRevalidationHandler () {
 	  #successful = false
 
 	  /**
-	   * @type {((boolean, any) => void) | null}
+	   * @type {((success: boolean, context?: any, statusCode?: number, headers?: import('../../types/header.d.ts').IncomingHttpHeaders) => void) | null}
 	   */
 	  #callback
 
@@ -23947,7 +24493,7 @@ function requireCacheRevalidationHandler () {
 	  #allowErrorStatusCodes
 
 	  /**
-	   * @param {(boolean) => void} callback Function to call if the cached value is valid
+	   * @param {(success: boolean, context?: any, statusCode?: number, headers?: import('../../types/header.d.ts').IncomingHttpHeaders) => void} callback Function to call if the cached value is valid
 	   * @param {import('../../types/dispatcher.d.ts').default.DispatchHandlers} handler
 	   * @param {boolean} allowErrorStatusCodes
 	   */
@@ -23982,7 +24528,7 @@ function requireCacheRevalidationHandler () {
 	    // https://datatracker.ietf.org/doc/html/rfc5861#section-4
 	    this.#successful = statusCode === 304 ||
 	      (this.#allowErrorStatusCodes && statusCode >= 500 && statusCode <= 504);
-	    this.#callback(this.#successful, this.#context);
+	    this.#callback(this.#successful, this.#context, statusCode, headers);
 	    this.#callback = null;
 
 	    if (this.#successful) {
@@ -24049,8 +24595,9 @@ function requireCache$1 () {
 	const CacheHandler = requireCacheHandler();
 	const MemoryCacheStore = requireMemoryCacheStore();
 	const CacheRevalidationHandler = requireCacheRevalidationHandler();
-	const { assertCacheStore, assertCacheMethods, makeCacheKey, normalizeHeaders, parseCacheControlHeader } = requireCache$2();
+	const { assertCacheStore, assertCacheMethods, makeCacheKey, normalizeHeaders, parseCacheControlHeader, isInvalidOrWildcardVaryHeader } = requireCache$2();
 	const { AbortError } = requireErrors();
+	const { parseHttpDate } = requireDate();
 
 	/**
 	 * @param {(string | RegExp)[] | undefined} origins
@@ -24070,6 +24617,44 @@ function requireCache$1 () {
 	}
 
 	const nop = () => {};
+
+	function trimOWS (value) {
+	  return value.replace(/^[\t ]+|[\t ]+$/g, '')
+	}
+
+	function arrayIncludes (array, value) {
+	  for (let i = 0; i < array.length; i++) {
+	    if (array[i] === value) {
+	      return true
+	    }
+	  }
+
+	  return false
+	}
+
+	function hasPragmaNoCache (headers) {
+	  const pragma = headers?.pragma;
+	  if (!pragma) {
+	    return false
+	  }
+
+	  const values = Array.isArray(pragma) ? pragma : [pragma];
+	  for (let i = 0; i < values.length; i++) {
+	    const value = values[i];
+	    if (typeof value !== 'string') {
+	      continue
+	    }
+
+	    const directives = value.split(',');
+	    for (let j = 0; j < directives.length; j++) {
+	      if (trimOWS(directives[j]).toLowerCase() === 'no-cache') {
+	        return true
+	      }
+	    }
+	  }
+
+	  return false
+	}
 
 	/**
 	 * @typedef {(options: import('../../types/dispatcher.d.ts').default.DispatchOptions, handler: import('../../types/dispatcher.d.ts').default.DispatchHandler) => void} DispatchFn
@@ -24102,14 +24687,90 @@ function requireCache$1 () {
 
 	/**
 	 * @param {import('../../types/cache-interceptor.d.ts').default.GetResult} result
-	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives | undefined} cacheControlDirectives
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
 	 * @returns {boolean}
 	 */
-	function isStale (result, cacheControlDirectives) {
+	function staleResponseRequiresRevalidation (result, cacheType) {
+	  return result.cacheControlDirectives?.['must-revalidate'] === true ||
+	    (cacheType === 'shared' && (
+	      result.cacheControlDirectives?.['proxy-revalidate'] === true ||
+	      // https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.2.10
+	      // s-maxage implies proxy-revalidate for shared caches.
+	      result.cacheControlDirectives?.['s-maxage'] !== undefined
+	    ))
+	}
+
+	/**
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
+	 * @param {import('../../types/header.d.ts').IncomingHttpHeaders} headers
+	 * @returns {boolean}
+	 */
+	function revalidationResponseDisallowsCachedReuse (cacheType, headers) {
+	  if (headers.vary && isInvalidOrWildcardVaryHeader(headers.vary)) {
+	    return true
+	  }
+
+	  const cacheControl = headers['cache-control'];
+	  if (!cacheControl) {
+	    return false
+	  }
+
+	  const cacheControlDirectives = parseCacheControlHeader(cacheControl);
+	  return cacheControlDirectives['no-store'] === true ||
+	    (cacheType === 'shared' && cacheControlDirectives.private === true)
+	}
+
+	function revalidationResponseUpdatesCacheControl (headers) {
+	  return headers['cache-control'] !== undefined
+	}
+
+	function deleteCachedValue (store, cacheKey) {
+	  try {
+	    store.delete(cacheKey)?.catch?.(nop);
+	  } catch {
+	    // Fail silently
+	  }
+	}
+
+	function getUsableLastModified (headers) {
+	  const lastModified = headers?.['last-modified'];
+	  if (typeof lastModified === 'string' && parseHttpDate(lastModified)) {
+	    return lastModified
+	  }
+	}
+
+	function makeRevalidationHeaders (opts, result) {
+	  const headers = {
+	    ...opts.headers,
+	    'if-modified-since': getUsableLastModified(result.headers) ?? new Date(result.cachedAt).toUTCString()
+	  };
+
+	  if (result.etag) {
+	    headers['if-none-match'] = result.etag;
+	  }
+
+	  if (result.vary) {
+	    for (const key in result.vary) {
+	      if (result.vary[key] != null) {
+	        headers[key] = result.vary[key];
+	      }
+	    }
+	  }
+
+	  return headers
+	}
+
+	/**
+	 * @param {import('../../types/cache-interceptor.d.ts').default.GetResult} result
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheControlDirectives | undefined} cacheControlDirectives
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
+	 * @returns {boolean}
+	 */
+	function isStale (result, cacheControlDirectives, cacheType) {
 	  const now = Date.now();
 	  if (now > result.staleAt) {
 	    // Response is stale
-	    if (cacheControlDirectives?.['max-stale']) {
+	    if (!staleResponseRequiresRevalidation(result, cacheType) && cacheControlDirectives?.['max-stale']) {
 	      // There's a threshold where we can serve stale responses, let's see if
 	      //  we're in it
 	      // https://www.rfc-editor.org/rfc/rfc9111.html#name-max-stale
@@ -24136,11 +24797,12 @@ function requireCache$1 () {
 	/**
 	 * Check if we're within the stale-while-revalidate window for a stale response
 	 * @param {import('../../types/cache-interceptor.d.ts').default.GetResult} result
+	 * @param {import('../../types/cache-interceptor.d.ts').default.CacheOptions['type']} cacheType
 	 * @returns {boolean}
 	 */
-	function withinStaleWhileRevalidateWindow (result) {
+	function withinStaleWhileRevalidateWindow (result, cacheType) {
 	  const staleWhileRevalidate = result.cacheControlDirectives?.['stale-while-revalidate'];
-	  if (!staleWhileRevalidate) {
+	  if (!staleWhileRevalidate || staleResponseRequiresRevalidation(result, cacheType)) {
 	    return false
 	  }
 
@@ -24310,14 +24972,10 @@ function requireCache$1 () {
 	  }
 
 	  const age = Math.round((now - result.cachedAt) / 1000);
-	  if (reqCacheControl?.['max-age'] && age >= reqCacheControl['max-age']) {
-	    // Response is considered expired for this specific request
-	    //  https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.1.1
-	    return dispatch(opts, handler)
-	  }
+	  const requestMaxAgeExpired = reqCacheControl?.['max-age'] !== undefined && age >= reqCacheControl['max-age'];
 
-	  const stale = isStale(result, reqCacheControl);
-	  const revalidate = needsRevalidation(result, reqCacheControl, opts);
+	  const stale = requestMaxAgeExpired || isStale(result, reqCacheControl, globalOpts.type);
+	  const revalidate = requestMaxAgeExpired || needsRevalidation(result, reqCacheControl, opts);
 
 	  // Check if the response is stale
 	  if (stale || revalidate) {
@@ -24329,28 +24987,13 @@ function requireCache$1 () {
 
 	    // RFC 5861: If we're within stale-while-revalidate window, serve stale immediately
 	    // and revalidate in background, unless immediate revalidation is necessary
-	    if (!revalidate && withinStaleWhileRevalidateWindow(result)) {
+	    if (!revalidate && withinStaleWhileRevalidateWindow(result, globalOpts.type)) {
 	      // Serve stale response immediately
 	      sendCachedValue(handler, opts, result, age, null, true);
 
 	      // Start background revalidation (fire-and-forget)
 	      queueMicrotask(() => {
-	        const headers = {
-	          ...opts.headers,
-	          'if-modified-since': new Date(result.cachedAt).toUTCString()
-	        };
-
-	        if (result.etag) {
-	          headers['if-none-match'] = result.etag;
-	        }
-
-	        if (result.vary) {
-	          for (const key in result.vary) {
-	            if (result.vary[key] != null) {
-	              headers[key] = result.vary[key];
-	            }
-	          }
-	        }
+	        const headers = makeRevalidationHeaders(opts, result);
 
 	        // Background revalidation - update cache if we get new data
 	        dispatch(
@@ -24374,27 +25017,14 @@ function requireCache$1 () {
 	    }
 
 	    let withinStaleIfErrorThreshold = false;
-	    const staleIfErrorExpiry = result.cacheControlDirectives['stale-if-error'] ?? reqCacheControl?.['stale-if-error'];
-	    if (staleIfErrorExpiry) {
-	      withinStaleIfErrorThreshold = now < (result.staleAt + (staleIfErrorExpiry * 1000));
-	    }
-
-	    const headers = {
-	      ...opts.headers,
-	      'if-modified-since': new Date(result.cachedAt).toUTCString()
-	    };
-
-	    if (result.etag) {
-	      headers['if-none-match'] = result.etag;
-	    }
-
-	    if (result.vary) {
-	      for (const key in result.vary) {
-	        if (result.vary[key] != null) {
-	          headers[key] = result.vary[key];
-	        }
+	    if (!staleResponseRequiresRevalidation(result, globalOpts.type)) {
+	      const staleIfErrorExpiry = result.cacheControlDirectives['stale-if-error'] ?? reqCacheControl?.['stale-if-error'];
+	      if (staleIfErrorExpiry) {
+	        withinStaleIfErrorThreshold = now < (result.staleAt + (staleIfErrorExpiry * 1000));
 	      }
 	    }
+
+	    const headers = makeRevalidationHeaders(opts, result);
 
 	    // We need to revalidate the response
 	    return dispatch(
@@ -24403,8 +25033,23 @@ function requireCache$1 () {
 	        headers
 	      },
 	      new CacheRevalidationHandler(
-	        (success, context) => {
+	        (success, context, statusCode, headers) => {
 	          if (success) {
+	            if (statusCode === 304) {
+	              if (revalidationResponseDisallowsCachedReuse(globalOpts.type, headers)) {
+	                if (util.isStream(result.body)) {
+	                  result.body.on('error', nop).destroy();
+	                }
+
+	                deleteCachedValue(globalOpts.store, cacheKey);
+	                return dispatch(opts, new CacheHandler(globalOpts, cacheKey, handler))
+	              }
+
+	              if (revalidationResponseUpdatesCacheControl(headers)) {
+	                deleteCachedValue(globalOpts.store, cacheKey);
+	              }
+	            }
+
 	            // TODO: successful revalidation should be considered fresh (not give stale warning).
 	            sendCachedValue(handler, opts, result, age, context, stale);
 	          } else if (util.isStream(result.body)) {
@@ -24461,11 +25106,17 @@ function requireCache$1 () {
 	    type
 	  };
 
-	  const safeMethodsToNotCache = util.safeHTTPMethods.filter(method => methods.includes(method) === false);
+	  const safeMethodsToNotCache = [];
+	  for (let i = 0; i < util.safeHTTPMethods.length; i++) {
+	    const method = util.safeHTTPMethods[i];
+	    if (!arrayIncludes(methods, method)) {
+	      safeMethodsToNotCache.push(method);
+	    }
+	  }
 
 	  return dispatch => {
 	    return (opts, handler) => {
-	      if (!opts.origin || safeMethodsToNotCache.includes(opts.method)) {
+	      if (!opts.origin || arrayIncludes(safeMethodsToNotCache, opts.method)) {
 	        // Not a method we want to cache or we don't have the origin, skip
 	        return dispatch(opts, handler)
 	      }
@@ -24500,7 +25151,9 @@ function requireCache$1 () {
 
 	      const reqCacheControl = opts.headers?.['cache-control']
 	        ? parseCacheControlHeader(opts.headers['cache-control'])
-	        : undefined;
+	        : hasPragmaNoCache(opts.headers)
+	          ? { 'no-cache': true }
+	          : undefined;
 
 	      if (reqCacheControl?.['no-store']) {
 	        return dispatch(opts, handler)
@@ -25860,7 +26513,13 @@ function requireSqliteCacheStore () {
 	      return false
 	    }
 
-	    return lhs.every((x, i) => x === rhs[i])
+	    for (let i = 0; i < lhs.length; i++) {
+	      if (lhs[i] !== rhs[i]) {
+	        return false
+	      }
+	    }
+
+	    return true
 	  }
 
 	  return lhs === rhs
@@ -32260,7 +32919,7 @@ function requireUtil$2 () {
 
 	    if (
 	      code < 0x20 || // exclude CTLs (0-31)
-	      code === 0x7F || // DEL
+	      code > 0x7E || // exclude DEL and non-ascii
 	      code === 0x3B // ;
 	    ) {
 	      throw new Error('Invalid cookie path')
@@ -32269,16 +32928,80 @@ function requireUtil$2 () {
 	}
 
 	/**
-	 * I have no idea why these values aren't allowed to be honest,
-	 * but Deno tests these. - Khafra
+	 * <let-dig> ::= <letter> | <digit>
+	 *
+	 * <letter> ::= any one of the 52 alphabetic characters A through Z in
+	 * upper case and a through z in lower case
+	 *
+	 * <digit> ::= any one of the ten digits 0 through 9r
+	 *
+	 * @see https://www.rfc-editor.org/rfc/rfc1034#section-3.5
+	 * @param {number} code
+	 */
+	function isLetterOrDigit (code) {
+	  return (
+	    (code >= 0x30 && code <= 0x39) || // 0-9
+	    (code >= 0x41 && code <= 0x5A) || // A-Z
+	    (code >= 0x61 && code <= 0x7A) // a-z
+	  )
+	}
+
+	/**
+	 * Validates a cookie domain against the "preferred name syntax".
+	 *
+	 * <domain>      ::= <subdomain> | " "
+	 * <subdomain>   ::= <label> | <subdomain> "." <label>
+	 * <label>       ::= <let-dig> [ [ <ldh-str> ] <let-dig> ]
+	 * <ldh-str>     ::= <let-dig-hyp> | <let-dig-hyp> <ldh-str>
+	 * <let-dig-hyp> ::= <let-dig> | "-"
+	 *
+	 * @see https://www.rfc-editor.org/rfc/rfc1034#section-3.5
+	 * @see https://www.rfc-editor.org/rfc/rfc1123#section-2.1
+	 * @see https://www.rfc-editor.org/rfc/rfc1035#section-2.3.4
 	 * @param {string} domain
 	 */
 	function validateCookieDomain (domain) {
-	  if (
-	    domain.startsWith('-') ||
-	    domain.endsWith('.') ||
-	    domain.endsWith('-')
-	  ) {
+	  // <domain> ::= <subdomain> | " "
+	  if (domain === ' ') {
+	    return
+	  }
+
+	  if (domain.length > 255) {
+	    throw new Error('Invalid cookie domain')
+	  }
+
+	  let labelLength = 0;
+
+	  for (let i = 0; i < domain.length; ++i) {
+	    const code = domain.charCodeAt(i);
+
+	    if (code === 0x2E) {
+	      if (labelLength === 0) {
+	        throw new Error('Invalid cookie domain')
+	      }
+
+	      if (domain.charCodeAt(i - 1) === 0x2D) { // "-"
+	        throw new Error('Invalid cookie domain')
+	      }
+
+	      labelLength = 0;
+	      continue
+	    }
+
+	    if (labelLength === 0 && !isLetterOrDigit(code)) {
+	      throw new Error('Invalid cookie domain')
+	    }
+
+	    if (!isLetterOrDigit(code) && code !== 0x2D) { // "-"
+	      throw new Error('Invalid cookie domain')
+	    }
+
+	    if (++labelLength > 63) {
+	      throw new Error('Invalid cookie domain')
+	    }
+	  }
+
+	  if (labelLength === 0 || domain.charCodeAt(domain.length - 1) === 0x2D) { // "-"
 	    throw new Error('Invalid cookie domain')
 	  }
 	}
@@ -32421,7 +33144,13 @@ function requireUtil$2 () {
 
 	    const [key, ...value] = part.split('=');
 
-	    out.push(`${key.trim()}=${value.join('=')}`);
+	    const trimmedKey = key.trim();
+	    const joinedValue = value.join('=');
+
+	    validateCookieName(trimmedKey);
+	    validateCookieValue(joinedValue);
+
+	    out.push(`${trimmedKey}=${joinedValue}`);
 	  }
 
 	  return out.join('; ')
@@ -38793,7 +39522,7 @@ function requirePathUtils () {
 
 var platform$2 = {};
 
-var exec$1 = {};
+var exec = {};
 
 var toolrunner = {};
 
@@ -39927,28 +40656,28 @@ function requireToolrunner () {
 var hasRequiredExec;
 
 function requireExec () {
-	if (hasRequiredExec) return exec$1;
+	if (hasRequiredExec) return exec;
 	hasRequiredExec = 1;
-	var __createBinding = (exec$1 && exec$1.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+	var __createBinding = (exec && exec.__createBinding) || (Object.create ? (function(o, m, k, k2) {
 	    if (k2 === undefined) k2 = k;
 	    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
 	}) : (function(o, m, k, k2) {
 	    if (k2 === undefined) k2 = k;
 	    o[k2] = m[k];
 	}));
-	var __setModuleDefault = (exec$1 && exec$1.__setModuleDefault) || (Object.create ? (function(o, v) {
+	var __setModuleDefault = (exec && exec.__setModuleDefault) || (Object.create ? (function(o, v) {
 	    Object.defineProperty(o, "default", { enumerable: true, value: v });
 	}) : function(o, v) {
 	    o["default"] = v;
 	});
-	var __importStar = (exec$1 && exec$1.__importStar) || function (mod) {
+	var __importStar = (exec && exec.__importStar) || function (mod) {
 	    if (mod && mod.__esModule) return mod;
 	    var result = {};
 	    if (mod != null) for (var k in mod) if (k !== "default" && Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
 	    __setModuleDefault(result, mod);
 	    return result;
 	};
-	var __awaiter = (exec$1 && exec$1.__awaiter) || function (thisArg, _arguments, P, generator) {
+	var __awaiter = (exec && exec.__awaiter) || function (thisArg, _arguments, P, generator) {
 	    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
 	    return new (P || (P = Promise))(function (resolve, reject) {
 	        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
@@ -39957,8 +40686,8 @@ function requireExec () {
 	        step((generator = generator.apply(thisArg, _arguments || [])).next());
 	    });
 	};
-	Object.defineProperty(exec$1, "__esModule", { value: true });
-	exec$1.getExecOutput = exec$1.exec = void 0;
+	Object.defineProperty(exec, "__esModule", { value: true });
+	exec.getExecOutput = exec.exec = void 0;
 	const string_decoder_1 = require$$0$3;
 	const tr = __importStar(requireToolrunner());
 	/**
@@ -39971,7 +40700,7 @@ function requireExec () {
 	 * @param     options            optional exec options.  See ExecOptions
 	 * @returns   Promise<number>    exit code
 	 */
-	function exec(commandLine, args, options) {
+	function exec$1(commandLine, args, options) {
 	    return __awaiter(this, void 0, void 0, function* () {
 	        const commandArgs = tr.argStringToArray(commandLine);
 	        if (commandArgs.length === 0) {
@@ -39984,7 +40713,7 @@ function requireExec () {
 	        return runner.exec();
 	    });
 	}
-	exec$1.exec = exec;
+	exec.exec = exec$1;
 	/**
 	 * Exec a command and get the output.
 	 * Output will be streamed to the live console.
@@ -40018,7 +40747,7 @@ function requireExec () {
 	            }
 	        };
 	        const listeners = Object.assign(Object.assign({}, options === null || options === void 0 ? void 0 : options.listeners), { stdout: stdOutListener, stderr: stdErrListener });
-	        const exitCode = yield exec(commandLine, args, Object.assign(Object.assign({}, options), { listeners }));
+	        const exitCode = yield exec$1(commandLine, args, Object.assign(Object.assign({}, options), { listeners }));
 	        //flush any remaining characters
 	        stdout += stdoutDecoder.end();
 	        stderr += stderrDecoder.end();
@@ -40029,9 +40758,9 @@ function requireExec () {
 	        };
 	    });
 	}
-	exec$1.getExecOutput = getExecOutput;
+	exec.getExecOutput = getExecOutput;
 	
-	return exec$1;
+	return exec;
 }
 
 var hasRequiredPlatform;
@@ -40493,9 +41222,6 @@ function requireCore () {
 var coreExports = requireCore();
 
 // src/errors.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 class SubmitRunError extends Error {
     cause;
     constructor(message, cause) {
@@ -40518,9 +41244,6 @@ class FileReadError extends Error {
 }
 
 // src/constants.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const LogLabels = {
     FILE_READ: 'Analysis File',
     RUN_SUBMIT: 'Submit Analysis for Processing',
@@ -40542,9 +41265,9 @@ const SUPPORT_EMAIL = 'support@appsecai.io';
  */
 const APP_INSTALL_URL = 'https://github.com/apps/appsecai-app';
 /**
- * Machine-readable error code returned by Hydra (HTTP 403) when the AppSecAI
- * GitHub App cannot push to the target repository. Locked contract shared with
- * Hydra (AppSecureAI/Hydra#1025).
+ * Machine-readable error code returned by the backend (HTTP 403) when the
+ * AppSecAI GitHub App cannot push to the target repository. This value is part
+ * of the locked service contract.
  */
 const REPO_ACCESS_MISSING_CODE = 'github_app_repo_access_missing';
 /**
@@ -40608,9 +41331,6 @@ ${APPSECAI_ASCII_LOGO}
 }
 
 // src/file.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Check if a file path has a valid name for supported security tools
  * @param filePath - The file path to validate
@@ -63923,9 +64643,6 @@ const {
 } = axios;
 
 // src/common/core/index.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const API_TIMEOUT = 8 * 60 * 1000;
 const STATUS_TIMEOUT = 15 * 1000;
 const FINALIZE_TIMEOUT = 30 * 1000;
@@ -63965,9 +64682,6 @@ function buildSubmitFormData(inputFiles, payload) {
         }
     }
     formData.append('processing_mode', payload.processingMode);
-    if (payload.llmProfile !== undefined) {
-        formData.append('llm_profile', payload.llmProfile);
-    }
     formData.append('auto_create_prs', String(payload.autoCreatePrs));
     formData.append('create_issues_for_incomplete_remediations', String(payload.createIssuesForIncompleteRemediations));
     formData.append('comment_modification_mode', payload.commentModificationMode);
@@ -63985,9 +64699,6 @@ function buildSubmitFormData(inputFiles, payload) {
     }
     if (payload.allowMissingRepoAccess !== undefined) {
         formData.append('allow_missing_repo_access', String(payload.allowMissingRepoAccess));
-    }
-    if (payload.experiment === true) {
-        formData.append('experiment', 'true');
     }
     return formData;
 }
@@ -67873,9 +68584,6 @@ ZodOptional.create;
 ZodNullable.create;
 
 // src/schemas.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const StepSchema = objectType({
     name: stringType(),
     status: stringType(),
@@ -67920,9 +68628,9 @@ const StructuredErrorDetailSchema = objectType({
     remediation: stringType().optional()
 });
 /**
- * Schema for the structured 403 error detail returned by Hydra when the
- * AppSecAI GitHub App cannot push to the target repository.
- * The locked contract (AppSecureAI/Hydra#1025) guarantees these fields.
+ * Schema for the structured 403 error detail returned by the backend when the
+ * AppSecAI GitHub App cannot push to the target repository. The locked service
+ * contract guarantees these fields.
  */
 const RepoAccessErrorDetailSchema = objectType({
     code: stringType(),
@@ -72935,9 +73643,6 @@ function requireGithub () {
 var githubExports = requireGithub();
 
 // src/github.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 async function getIdToken(apiUrl) {
     if (!apiUrl) {
         throw new Error('apiUrl must be Provided');
@@ -72958,14 +73663,10 @@ async function getIdToken(apiUrl) {
 }
 
 // src/types.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const ProcessingModeExternal = {
     INDIVIDUAL: 'individual',
     INDIVIDUAL_CC: 'individual_cc',
-    GROUP_CC: 'group_cc',
-    REGRESSION_EVIDENCE: 'regression_evidence'
+    GROUP_CC: 'group_cc'
 };
 const TriageMethod = {
     BASELINE: 'baseline',
@@ -72976,13 +73677,6 @@ const TriageMethod = {
 const RemediateMethod = {
     BASELINE: 'baseline',
     ADVANCED: 'advanced'
-};
-const LlmProfile = {
-    PROD: 'prod',
-    MOCK: 'mock',
-    CHEAP: 'cheap',
-    BALANCED: 'balanced',
-    FINAL: 'final'
 };
 const ValidateMethod = {
     BASELINE: 'baseline',
@@ -73051,9 +73745,6 @@ const ProcessStatusValue = {
 };
 
 // src/input.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Gets an input value from environment variables or action inputs.
  *
@@ -73149,21 +73840,6 @@ function getRemediateMethod() {
     }
     return method;
 }
-function getLlmProfile() {
-    // LLM_PROFILE is a legacy workflow env var alias kept for compatibility
-    // with the previous composite-action env mapping.
-    const profile = getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE') ||
-        process.env.LLM_PROFILE ||
-        '';
-    if (profile === '') {
-        return undefined;
-    }
-    if (!Object.values(LlmProfile).includes(profile)) {
-        const allowedProfiles = Object.values(LlmProfile).join(', ');
-        throw new Error(`Invalid llm-profile "${profile}". Allowed values: ${allowedProfiles}.`);
-    }
-    return profile;
-}
 function getUseValidateCc() {
     const value = getInputValue('use-validate-cc', 'INPUT_USE_VALIDATE_CC', 'USE_VALIDATE_CC') || 'false';
     if (value !== 'true' && value !== 'false') {
@@ -73197,19 +73873,18 @@ function getAutoCreatePrs() {
     }
     return value === 'true';
 }
-function getExperiment() {
-    const value = getInputValue('experiment', 'INPUT_EXPERIMENT', 'APPSECAI_EXPERIMENT') ||
-        'false';
-    if (value !== 'true' && value !== 'false') {
-        coreExports.warning(`Invalid experiment value "${value}". Must be "true" or "false". Using default: false`);
-        return false;
-    }
-    return value === 'true';
-}
 function getDebug() {
     const value = getInputValue('debug', 'INPUT_DEBUG') || 'false';
     if (value !== 'true' && value !== 'false') {
         coreExports.warning(`Invalid debug value "${value}". Must be "true" or "false". Using default: false`);
+        return false;
+    }
+    return value === 'true';
+}
+function getAllowLongRunHandoff() {
+    const value = getInputValue('allow-long-run-handoff', 'INPUT_ALLOW_LONG_RUN_HANDOFF', 'ALLOW_LONG_RUN_HANDOFF') || 'false';
+    if (value !== 'true' && value !== 'false') {
+        coreExports.warning(`Invalid allow-long-run-handoff value "${value}". Must be "true" or "false". Using default: false`);
         return false;
     }
     return value === 'true';
@@ -73231,55 +73906,19 @@ function getCommentModificationMode() {
     return mode;
 }
 function getPrAudience() {
-    return getInputValue('pr-audience', 'INPUT_PR_AUDIENCE', 'PR_AUDIENCE');
-}
-function getRegressionEvidenceBaseRef() {
-    return getInputValue('regression-evidence-base-ref', 'INPUT_REGRESSION_EVIDENCE_BASE_REF', 'REGRESSION_EVIDENCE_BASE_REF');
-}
-function getRegressionEvidenceBaseSha() {
-    return getInputValue('regression-evidence-base-sha', 'INPUT_REGRESSION_EVIDENCE_BASE_SHA', 'REGRESSION_EVIDENCE_BASE_SHA');
-}
-function getRegressionEvidenceHeadRef() {
-    return getInputValue('regression-evidence-head-ref', 'INPUT_REGRESSION_EVIDENCE_HEAD_REF', 'REGRESSION_EVIDENCE_HEAD_REF');
-}
-function getRegressionEvidenceHeadSha() {
-    return getInputValue('regression-evidence-head-sha', 'INPUT_REGRESSION_EVIDENCE_HEAD_SHA', 'REGRESSION_EVIDENCE_HEAD_SHA');
-}
-function getRegressionEvidenceCoverageArtifacts() {
-    return getInputValue('regression-evidence-coverage-artifacts', 'INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS', 'REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS');
-}
-function getRegressionEvidenceTestCommands() {
-    return getInputValue('regression-evidence-test-commands', 'INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS', 'REGRESSION_EVIDENCE_TEST_COMMANDS');
-}
-function getRegressionEvidenceOutputJsonPath() {
-    return (getInputValue('regression-evidence-output-json-path', 'INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH', 'REGRESSION_EVIDENCE_OUTPUT_JSON_PATH') || 'regression-evidence.json');
-}
-function getRegressionEvidenceOutputMarkdownPath() {
-    return (getInputValue('regression-evidence-output-markdown-path', 'INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH', 'REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH') || 'regression-evidence.md');
-}
-function getRegressionEvidenceAllowPartial() {
-    const value = getInputValue('regression-evidence-allow-partial', 'INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL', 'REGRESSION_EVIDENCE_ALLOW_PARTIAL') || 'true';
-    if (value !== 'true' && value !== 'false') {
-        coreExports.warning(`Invalid regression-evidence-allow-partial value "${value}". Must be "true" or "false". Using default: true`);
-        return true;
+    const actionInput = coreExports.getInput('pr-audience');
+    if (actionInput !== '') {
+        return actionInput;
     }
-    return value === 'true';
-}
-function getRegressionEvidenceFailOnAtRisk() {
-    const value = getInputValue('regression-evidence-fail-on-at-risk', 'INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK', 'REGRESSION_EVIDENCE_FAIL_ON_AT_RISK') || 'false';
-    if (value !== 'true' && value !== 'false') {
-        coreExports.warning(`Invalid regression-evidence-fail-on-at-risk value "${value}". Must be "true" or "false". Using default: false`);
-        return false;
+    const inputEnvValue = process.env.INPUT_PR_AUDIENCE;
+    if (inputEnvValue !== undefined && inputEnvValue !== '') {
+        return inputEnvValue;
     }
-    return value === 'true';
-}
-function getRegressionEvidencePublishComment() {
-    const value = getInputValue('regression-evidence-publish-comment', 'INPUT_REGRESSION_EVIDENCE_PUBLISH_COMMENT', 'REGRESSION_EVIDENCE_PUBLISH_COMMENT') || 'false';
-    if (value !== 'true' && value !== 'false') {
-        coreExports.warning(`Invalid regression-evidence-publish-comment value "${value}". Must be "true" or "false". Using default: false`);
-        return false;
+    const workflowEnvValue = process.env.PR_AUDIENCE;
+    if (workflowEnvValue !== undefined && workflowEnvValue !== '') {
+        return workflowEnvValue;
     }
-    return value === 'true';
+    return '';
 }
 function getGroupingEnabled() {
     const value = getInputValue('grouping-enabled', 'INPUT_GROUPING_ENABLED', 'GROUPING_ENABLED') || 'false';
@@ -73369,9 +74008,6 @@ function getAllowMissingRepoAccess() {
 }
 
 // src/store.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 const store = {
     id: '',
     organizationId: undefined,
@@ -73436,9 +74072,6 @@ async function fetchPrTitles(urls, token) {
 }
 
 // src/utils.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Mapping of internal stage names to user-friendly display names
  */
@@ -73731,12 +74364,26 @@ function formatNoCustomerPrReason(summary) {
 }
 /**
  * Get the Dashboard URL based on the API URL.
- * Defaults customer-facing output to production unless an integration host is detected.
+ * Defaults customer-facing output to production unless a non-production
+ * AppSecAI gateway host can be mapped without embedding environment hostnames.
  */
 function getDashboardUrl(apiUrl) {
-    if (apiUrl.includes('gh.intg.appsecai.net') ||
-        apiUrl.includes('api.intg.appsecai.net')) {
-        return 'https://app.intg.appsecai.net/';
+    try {
+        const parsed = new URL(apiUrl);
+        const labels = parsed.hostname.split('.');
+        const isNonProductionGateway = parsed.protocol === 'https:' &&
+            parsed.hostname.endsWith('.appsecai.net') &&
+            labels.length >= 4 &&
+            (labels[0] === 'gh' || labels[0] === 'api') &&
+            labels[1] !== 'cloud';
+        if (isNonProductionGateway) {
+            labels[0] = 'app';
+            const port = parsed.port ? `:${parsed.port}` : '';
+            return `${parsed.protocol}//${labels.join('.')}${port}/`;
+        }
+    }
+    catch {
+        // Invalid/custom values fail closed to the customer production dashboard.
     }
     return 'https://portal.cloud.appsecai.io/';
 }
@@ -74842,9 +75489,6 @@ function logSummary(summary, prTitles, dashboardUrl, issueTitles) {
 }
 
 // src/service.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Parse an axios error response into a structured ParsedApiError object.
  * Extracts HTTP status code, error codes, and detailed information from the response body.
@@ -75392,7 +76036,7 @@ const ReconciliationReasonCode = {
 /**
  * Reason code reported when the server run is paused (a distinct, non-failure
  * outcome). A paused run preserves work and resumes automatically once
- * capacity returns (e.g. sustained Bedrock throttling), so the action stops
+ * capacity returns (e.g. sustained provider throttling), so the action stops
  * polling and reports a paused result rather than a failure.
  */
 const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED';
@@ -75400,7 +76044,7 @@ const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED';
  * Default human-readable message shown when a run is observed as paused and
  * the server did not provide a more specific reason.
  */
-const DEFAULT_PAUSE_REASON = 'sustained Bedrock throttling — work preserved; it will resume automatically when capacity returns';
+const DEFAULT_PAUSE_REASON = 'sustained provider throttling — work preserved; it will resume automatically when capacity returns';
 const ACTIVE_RECONCILIATION_STATUSES = new Set([
     'initiated',
     'in_progress',
@@ -75466,14 +76110,13 @@ function shouldWarnForNonTerminalReason(reasonCode) {
     }
     return !NORMAL_ACTIVE_RUN_STATUS_REASON_CODES.has(reasonCode);
 }
-function buildSubmitPayloadOptions(mode, llmProfile) {
+function buildSubmitPayloadOptions(mode) {
     return {
         processingMode: mode,
         autoCreatePrs: getAutoCreatePrs(),
         createIssuesForIncompleteRemediations: getCreateIssuesForIncompleteRemediations(),
         commentModificationMode: getCommentModificationMode(),
         prAudience: getPrAudience() || undefined,
-        llmProfile,
         maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
             ? getMaxVulnerabilitiesPerPr()
             : undefined,
@@ -75484,21 +76127,16 @@ function buildSubmitPayloadOptions(mode, llmProfile) {
         // allow_missing_repo_access overrides Hydra's pre-flight check that the
         // AppSecAI GitHub App can push to the target repository. When set, Hydra
         // starts the run even if the repo is not yet in the App installation.
-        allowMissingRepoAccess: getAllowMissingRepoAccess(),
-        experiment: getExperiment() || undefined
+        allowMissingRepoAccess: getAllowMissingRepoAccess()
     };
 }
 async function submitRun(file, fileName) {
     const mode = getMode();
-    const llmProfile = getLlmProfile();
     coreExports.info(`Processing mode: ${mode}`);
-    if (llmProfile) {
-        coreExports.info(`LLM profile: ${llmProfile}`);
-    }
     const inputFiles = Array.isArray(file)
         ? file
         : [{ path: 'results.sarif', buffer: file }];
-    const submitPayload = buildSubmitPayloadOptions(mode, llmProfile);
+    const submitPayload = buildSubmitPayloadOptions(mode);
     if (getGroupingEnabled()) {
         coreExports.debug('grouping-enabled is set; grouping behavior remains inferred from processing_mode.');
     }
@@ -75741,7 +76379,7 @@ async function getStatus(id, organizationId) {
             };
         }
         // A paused run is a distinct, non-failure outcome: the server has
-        // temporarily halted work (e.g. sustained Bedrock throttling) but has
+        // temporarily halted work (e.g. sustained provider throttling) but has
         // preserved progress and will resume automatically once capacity
         // returns. Surface it clearly without treating it as a failure.
         if (canonicalRunStatus === 'paused') {
@@ -76174,7 +76812,7 @@ async function finalizeRun(runId, options = {}) {
 
 // Auto-generated by scripts/generate-version.js. Do not edit manually.
 // Source: package.json
-const VERSION = '1.1.29';
+const VERSION = '1.1.30';
 const CLIENT_VERSION = VERSION;
 const VERSION_INFO = {
     version: VERSION,
@@ -78967,9 +79605,6 @@ function requireSemver () {
 var semverExports = requireSemver();
 
 // src/version-service.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Check if client version is below minimum required and log warning if so.
  * Uses semver.coerce() for flexible version parsing.
@@ -79024,563 +79659,7 @@ async function fetchAndLogServerVersion(baseUrl) {
     }
 }
 
-// src/regression-evidence.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
-const execFile = promisify$1(execFile$1);
-const exec = promisify$1(exec$2);
-const DEFAULT_MAX_UNCOVERED_LINES = 20;
-const REGRESSION_EVIDENCE_COMMENT_MARKER = '<!-- appsecai-regression-evidence-comment -->';
-const RegressionEvidenceStatus = {
-    VERIFIED: 'verified',
-    PARTIAL: 'partial',
-    AT_RISK: 'at_risk'
-};
-const RegressionEvidenceConfidence = {
-    HIGH: 'high',
-    MEDIUM: 'medium',
-    LOW: 'low'
-};
-function toPosixFilePath(input) {
-    return input
-        .replaceAll('\\\\', '/')
-        .replace(/^\.?\//, '')
-        .replace(/^a\//, '')
-        .replace(/^b\//, '');
-}
-function confidenceRank(value) {
-    if (value === RegressionEvidenceConfidence.HIGH) {
-        return 3;
-    }
-    if (value === RegressionEvidenceConfidence.MEDIUM) {
-        return 2;
-    }
-    return 1;
-}
-function coerceConfidence(value) {
-    if (typeof value !== 'string') {
-        return RegressionEvidenceConfidence.LOW;
-    }
-    const normalized = value.trim().toLowerCase();
-    if (normalized === RegressionEvidenceConfidence.HIGH) {
-        return RegressionEvidenceConfidence.HIGH;
-    }
-    if (normalized === RegressionEvidenceConfidence.MEDIUM) {
-        return RegressionEvidenceConfidence.MEDIUM;
-    }
-    return RegressionEvidenceConfidence.LOW;
-}
-function parseArtifactList(raw) {
-    if (!raw.trim()) {
-        return [];
-    }
-    return raw
-        .split(/[\n,]/)
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-}
-function parseCommandList(raw) {
-    if (!raw.trim()) {
-        return [];
-    }
-    return raw
-        .split('\n')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-}
-function parseHunkHeader(line) {
-    const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
-    if (!match) {
-        return null;
-    }
-    const start = Number(match[1]);
-    const count = match[2] ? Number(match[2]) : 1;
-    if (!Number.isInteger(start) || !Number.isInteger(count)) {
-        return null;
-    }
-    return { start, count };
-}
-function parseChangedLinesFromUnifiedDiff(diffOutput) {
-    const changedLines = [];
-    const lines = diffOutput.split('\n');
-    let currentFile = '';
-    for (const line of lines) {
-        if (line.startsWith('+++ ')) {
-            const rawFile = line.slice(4).trim();
-            if (rawFile === '/dev/null') {
-                currentFile = '';
-                continue;
-            }
-            currentFile = toPosixFilePath(rawFile);
-            continue;
-        }
-        if (!line.startsWith('@@ ') || !currentFile) {
-            continue;
-        }
-        const parsedHunk = parseHunkHeader(line);
-        if (!parsedHunk || parsedHunk.count <= 0) {
-            continue;
-        }
-        for (let index = 0; index < parsedHunk.count; index += 1) {
-            changedLines.push({
-                file: currentFile,
-                line: parsedHunk.start + index
-            });
-        }
-    }
-    return changedLines;
-}
-async function readCoverageArtifacts(paths) {
-    const documents = [];
-    for (const artifactPath of paths) {
-        const raw = await readFile$1(artifactPath, 'utf8');
-        documents.push(JSON.parse(raw));
-    }
-    return documents;
-}
-function asRecord(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return null;
-    }
-    return value;
-}
-function asArray(value) {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-    return value;
-}
-function collectTestsFromValue(value) {
-    if (typeof value === 'string' && value.trim()) {
-        return [
-            { name: value.trim(), confidence: RegressionEvidenceConfidence.MEDIUM }
-        ];
-    }
-    if (Array.isArray(value)) {
-        const collected = [];
-        for (const entry of value) {
-            if (typeof entry === 'string' && entry.trim()) {
-                collected.push({
-                    name: entry.trim(),
-                    confidence: RegressionEvidenceConfidence.MEDIUM
-                });
-                continue;
-            }
-            const record = asRecord(entry);
-            if (!record) {
-                continue;
-            }
-            const name = (typeof record.name === 'string' && record.name.trim()) ||
-                (typeof record.test === 'string' && record.test.trim()) ||
-                (typeof record.id === 'string' && record.id.trim());
-            if (!name) {
-                continue;
-            }
-            collected.push({
-                name,
-                confidence: coerceConfidence(record.confidence)
-            });
-        }
-        return collected;
-    }
-    return [];
-}
-function collectCoverageMappings(document) {
-    const root = asRecord(document);
-    if (!root) {
-        return [];
-    }
-    const mappings = [];
-    const directMappings = asArray(root.line_test_mapping);
-    for (const rawEntry of directMappings) {
-        const entry = asRecord(rawEntry);
-        if (!entry) {
-            continue;
-        }
-        const fileRaw = (typeof entry.file === 'string' && entry.file) ||
-            (typeof entry.path === 'string' && entry.path);
-        const lineRaw = typeof entry.line === 'number'
-            ? entry.line
-            : typeof entry.line === 'string'
-                ? Number(entry.line)
-                : undefined;
-        const lineNumber = typeof lineRaw === 'number' && Number.isInteger(lineRaw) && lineRaw > 0
-            ? lineRaw
-            : null;
-        if (!fileRaw || lineNumber === null) {
-            continue;
-        }
-        const tests = collectTestsFromValue(entry.tests);
-        if (tests.length === 0) {
-            continue;
-        }
-        mappings.push({
-            file: toPosixFilePath(fileRaw),
-            line: lineNumber,
-            tests
-        });
-    }
-    const fileMappings = asRecord(root.files);
-    if (!fileMappings) {
-        return mappings;
-    }
-    for (const [fileKey, fileValue] of Object.entries(fileMappings)) {
-        const fileRecord = asRecord(fileValue);
-        if (!fileRecord) {
-            continue;
-        }
-        const lineRecord = asRecord(fileRecord.lines);
-        if (!lineRecord) {
-            continue;
-        }
-        for (const [lineKey, lineValue] of Object.entries(lineRecord)) {
-            const line = Number(lineKey);
-            if (!Number.isInteger(line) || line <= 0) {
-                continue;
-            }
-            const tests = collectTestsFromValue(lineValue);
-            if (tests.length === 0) {
-                continue;
-            }
-            mappings.push({
-                file: toPosixFilePath(fileKey),
-                line,
-                tests
-            });
-        }
-    }
-    return mappings;
-}
-function mapChangedLinesWithCoverage(changedLines, coverageDocuments) {
-    const lineMap = new Map();
-    for (const document of coverageDocuments) {
-        const mappings = collectCoverageMappings(document);
-        for (const mapping of mappings) {
-            const key = `${mapping.file}:${mapping.line}`;
-            const existing = lineMap.get(key) ?? [];
-            existing.push(...mapping.tests);
-            lineMap.set(key, existing);
-        }
-    }
-    const mappedTests = new Map();
-    const uncoveredChangedLines = [];
-    for (const changedLine of changedLines) {
-        const key = `${toPosixFilePath(changedLine.file)}:${changedLine.line}`;
-        const tests = lineMap.get(key);
-        if (!tests || tests.length === 0) {
-            uncoveredChangedLines.push(changedLine);
-            continue;
-        }
-        for (const test of tests) {
-            const existing = mappedTests.get(test.name);
-            if (!existing) {
-                mappedTests.set(test.name, {
-                    name: test.name,
-                    confidence: test.confidence,
-                    source: 'coverage',
-                    matched_lines: [changedLine]
-                });
-                continue;
-            }
-            if (confidenceRank(test.confidence) > confidenceRank(existing.confidence)) {
-                existing.confidence = test.confidence;
-            }
-            existing.matched_lines.push(changedLine);
-        }
-    }
-    return {
-        mappedTests: Array.from(mappedTests.values()),
-        uncoveredChangedLines
-    };
-}
-function getCandidateTestPaths(file) {
-    const normalized = toPosixFilePath(file);
-    const parsed = path$1.posix.parse(normalized);
-    const extensions = ['.ts', '.tsx', '.js', '.jsx'];
-    const baseWithoutExt = parsed.name;
-    const inSourceDir = parsed.dir.startsWith('src/')
-        ? parsed.dir.replace(/^src\//, '')
-        : parsed.dir;
-    const candidates = new Set();
-    if (/\.(test|spec)\.[jt]sx?$/.test(normalized)) {
-        candidates.add(normalized);
-    }
-    for (const ext of extensions) {
-        candidates.add(path$1.posix.join(parsed.dir, `${baseWithoutExt}.test${ext}`));
-        candidates.add(path$1.posix.join(parsed.dir, `${baseWithoutExt}.spec${ext}`));
-        candidates.add(path$1.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.test${ext}`));
-        candidates.add(path$1.posix.join(parsed.dir, '__tests__', `${baseWithoutExt}.spec${ext}`));
-        candidates.add(path$1.posix.join('__tests__', `${baseWithoutExt}.test${ext}`));
-        candidates.add(path$1.posix.join('__tests__', `${baseWithoutExt}.spec${ext}`));
-        if (inSourceDir) {
-            candidates.add(path$1.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.test${ext}`));
-            candidates.add(path$1.posix.join('__tests__', inSourceDir, `${baseWithoutExt}.spec${ext}`));
-            candidates.add(path$1.posix.join('tests', inSourceDir, `${baseWithoutExt}.test${ext}`));
-            candidates.add(path$1.posix.join('tests', inSourceDir, `${baseWithoutExt}.spec${ext}`));
-        }
-    }
-    return Array.from(candidates);
-}
-async function applyHeuristicFallback(changedLines, currentlyMapped, cwd) {
-    if (currentlyMapped.length > 0) {
-        return currentlyMapped;
-    }
-    const addedTests = new Map();
-    for (const changedLine of changedLines) {
-        const candidates = getCandidateTestPaths(changedLine.file);
-        for (const candidate of candidates) {
-            const fullPath = path$1.resolve(cwd, candidate);
-            try {
-                await access(fullPath);
-            }
-            catch {
-                continue;
-            }
-            const existing = addedTests.get(candidate);
-            if (existing) {
-                existing.matched_lines.push(changedLine);
-            }
-            else {
-                addedTests.set(candidate, {
-                    name: candidate,
-                    confidence: /\.(test|spec)\.[jt]sx?$/.test(candidate)
-                        ? RegressionEvidenceConfidence.MEDIUM
-                        : RegressionEvidenceConfidence.LOW,
-                    source: 'heuristic',
-                    matched_lines: [changedLine]
-                });
-            }
-        }
-    }
-    return Array.from(addedTests.values());
-}
-function buildMarkdown(artifact, maxUncoveredLines = DEFAULT_MAX_UNCOVERED_LINES) {
-    const lines = [];
-    lines.push('## Regression Evidence');
-    lines.push(`- changed files/lines: ${artifact.changed_code_summary.files_changed}/${artifact.changed_code_summary.lines_changed}`);
-    const coverage = artifact.existing_test_coverage_match_summary;
-    lines.push(`- mapped tests: ${coverage.mapped_tests} (high ${coverage.high_confidence_tests}, medium ${coverage.medium_confidence_tests}, low ${coverage.low_confidence_tests})`);
-    const execution = artifact.impacted_test_execution_summary;
-    lines.push(`- impacted tests: selected ${execution.selected_tests}, executed ${execution.executed_tests}, passed ${execution.passed_tests}, failed ${execution.failed_tests}, skipped ${execution.skipped_tests}`);
-    const uncoveredPreview = artifact.uncovered_changed_lines.slice(0, maxUncoveredLines);
-    lines.push(`- uncovered changed lines: ${artifact.uncovered_changed_lines.length}`);
-    if (uncoveredPreview.length === 0) {
-        lines.push('  - None');
-    }
-    else {
-        for (const line of uncoveredPreview) {
-            lines.push(`  - ${line.file}:${line.line}`);
-        }
-        if (artifact.uncovered_changed_lines.length > uncoveredPreview.length) {
-            lines.push(`  - ...and ${artifact.uncovered_changed_lines.length - uncoveredPreview.length} more`);
-        }
-    }
-    lines.push(`- final status: **${artifact.status}**`);
-    lines.push('- artifact: generated markdown file');
-    return lines.join('\n');
-}
-function countChangedFiles(changedLines) {
-    return new Set(changedLines.map((line) => line.file)).size;
-}
-function countByConfidence(mappedTests, confidence) {
-    return mappedTests.filter((test) => test.confidence === confidence).length;
-}
-function evaluateStatus(uncoveredChangedLines, mappedTests, failedTests, allowPartial) {
-    if (failedTests > 0) {
-        return RegressionEvidenceStatus.AT_RISK;
-    }
-    if (uncoveredChangedLines.length === 0 && mappedTests.length > 0) {
-        return RegressionEvidenceStatus.VERIFIED;
-    }
-    if (allowPartial && mappedTests.length > 0) {
-        return RegressionEvidenceStatus.PARTIAL;
-    }
-    return RegressionEvidenceStatus.AT_RISK;
-}
-function resolveGitTarget(ref, sha, fallback) {
-    if (sha && sha.trim()) {
-        return sha.trim();
-    }
-    if (ref && ref.trim()) {
-        return ref.trim();
-    }
-    return fallback;
-}
-async function collectChangedLinesFromGit(cwd, baseRef, baseSha, headRef, headSha) {
-    const baseTarget = resolveGitTarget(baseRef, baseSha, 'origin/main');
-    const headTarget = resolveGitTarget(headRef, headSha, 'HEAD');
-    const diffResult = await execFile('git', ['diff', '--unified=0', '--no-color', baseTarget, headTarget], { cwd });
-    const stdout = typeof diffResult === 'string'
-        ? diffResult
-        : (diffResult.stdout ?? '');
-    return parseChangedLinesFromUnifiedDiff(stdout);
-}
-async function executeImpactedTests(cwd, testCommands, mappedTests) {
-    const selectedTests = mappedTests.map((test) => test.name);
-    if (testCommands.length === 0) {
-        return {
-            executedCommands: [],
-            selectedTests: selectedTests.length,
-            executedTests: 0,
-            passedTests: 0,
-            failedTests: 0,
-            skippedTests: selectedTests.length
-        };
-    }
-    const executedCommands = [];
-    let failedCommands = 0;
-    for (const command of testCommands) {
-        const renderedCommand = command.includes('{{tests}}')
-            ? command.replace('{{tests}}', selectedTests.join(' '))
-            : command;
-        executedCommands.push(renderedCommand);
-        try {
-            await exec(renderedCommand, {
-                cwd,
-                env: process.env,
-                maxBuffer: 10 * 1024 * 1024
-            });
-        }
-        catch {
-            failedCommands += 1;
-            coreExports.warning(`Regression evidence test command failed: ${renderedCommand}`);
-        }
-    }
-    if (selectedTests.length > 0) {
-        const failedTests = failedCommands > 0 ? selectedTests.length : 0;
-        return {
-            executedCommands,
-            selectedTests: selectedTests.length,
-            executedTests: selectedTests.length,
-            passedTests: failedTests === 0 ? selectedTests.length : 0,
-            failedTests,
-            skippedTests: 0
-        };
-    }
-    return {
-        executedCommands,
-        selectedTests: 0,
-        executedTests: executedCommands.length,
-        passedTests: Math.max(0, executedCommands.length - failedCommands),
-        failedTests: failedCommands,
-        skippedTests: 0
-    };
-}
-async function writeArtifacts(artifact, markdown, outputJsonPath, outputMarkdownPath, cwd) {
-    const jsonPath = path$1.resolve(cwd, outputJsonPath);
-    const markdownPath = path$1.resolve(cwd, outputMarkdownPath);
-    await mkdir(path$1.dirname(jsonPath), { recursive: true });
-    await mkdir(path$1.dirname(markdownPath), { recursive: true });
-    await writeFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-    await writeFile(markdownPath, `${markdown}\n`, 'utf8');
-    return { jsonPath, markdownPath };
-}
-async function generateRegressionEvidence(config) {
-    const changedLines = await collectChangedLinesFromGit(config.cwd, config.baseRef, config.baseSha, config.headRef, config.headSha);
-    const coverageDocuments = await readCoverageArtifacts(config.coverageArtifactPaths);
-    const coverageMapping = mapChangedLinesWithCoverage(changedLines, coverageDocuments);
-    const mappedTests = await applyHeuristicFallback(changedLines, coverageMapping.mappedTests, config.cwd);
-    const execution = await executeImpactedTests(config.cwd, config.testCommands, mappedTests);
-    const status = evaluateStatus(coverageMapping.uncoveredChangedLines, mappedTests, execution.failedTests, config.allowPartial);
-    const artifact = {
-        schema_version: 1,
-        generated_at: new Date().toISOString(),
-        base: {
-            ref: config.baseRef,
-            sha: config.baseSha
-        },
-        head: {
-            ref: config.headRef,
-            sha: config.headSha
-        },
-        changed_code_summary: {
-            files_changed: countChangedFiles(changedLines),
-            lines_changed: changedLines.length
-        },
-        existing_test_coverage_match_summary: {
-            mapped_tests: mappedTests.length,
-            high_confidence_tests: countByConfidence(mappedTests, RegressionEvidenceConfidence.HIGH),
-            medium_confidence_tests: countByConfidence(mappedTests, RegressionEvidenceConfidence.MEDIUM),
-            low_confidence_tests: countByConfidence(mappedTests, RegressionEvidenceConfidence.LOW)
-        },
-        impacted_test_execution_summary: {
-            selected_tests: execution.selectedTests,
-            executed_tests: execution.executedTests,
-            passed_tests: execution.passedTests,
-            failed_tests: execution.failedTests,
-            skipped_tests: execution.skippedTests
-        },
-        uncovered_changed_lines: coverageMapping.uncoveredChangedLines,
-        coverage_artifact_paths: config.coverageArtifactPaths,
-        executed_test_commands: execution.executedCommands,
-        status
-    };
-    const markdown = buildMarkdown(artifact);
-    const paths = await writeArtifacts(artifact, markdown, config.outputJsonPath, config.outputMarkdownPath, config.cwd);
-    return {
-        artifact,
-        markdown,
-        jsonPath: paths.jsonPath,
-        markdownPath: paths.markdownPath
-    };
-}
-function parseRegressionEvidenceArtifactListInput(raw) {
-    return parseArtifactList(raw);
-}
-function parseRegressionEvidenceTestCommandsInput(raw) {
-    return parseCommandList(raw);
-}
-function buildRegressionEvidenceCommentBody(markdown) {
-    return `${markdown}\n\n${REGRESSION_EVIDENCE_COMMENT_MARKER}`;
-}
-async function upsertRegressionEvidencePrComment(client, owner, repo, issueNumber, markdown) {
-    const body = buildRegressionEvidenceCommentBody(markdown);
-    const comments = await client.rest.issues.listComments({
-        owner,
-        repo,
-        issue_number: issueNumber,
-        per_page: 100
-    });
-    const existing = comments.data.find((comment) => typeof comment.body === 'string' &&
-        comment.body.includes(REGRESSION_EVIDENCE_COMMENT_MARKER));
-    if (existing) {
-        await client.rest.issues.updateComment({
-            owner,
-            repo,
-            comment_id: existing.id,
-            body
-        });
-        return { action: 'updated', commentId: existing.id };
-    }
-    const created = await client.rest.issues.createComment({
-        owner,
-        repo,
-        issue_number: issueNumber,
-        body
-    });
-    return { action: 'created', commentId: created.data.id };
-}
-async function publishRegressionEvidenceCommentFromContext(markdown, token) {
-    if (!token) {
-        coreExports.warning('Regression evidence PR comment publishing requested, but no token was provided (set GITHUB_TOKEN or token input).');
-        return 'skipped';
-    }
-    const issueNumber = githubExports.context.payload.pull_request?.number || githubExports.context.issue.number;
-    if (!issueNumber) {
-        coreExports.warning('Regression evidence PR comment publishing requested, but workflow is not running in a pull request context.');
-        return 'skipped';
-    }
-    const { owner, repo } = githubExports.context.repo;
-    const octokit = githubExports.getOctokit(token);
-    const result = await upsertRegressionEvidencePrComment(octokit, owner, repo, issueNumber, markdown);
-    return result.action;
-}
-
 // src/main.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * Log all input configuration in a collapsible group
  */
@@ -79597,20 +79676,6 @@ function logConfiguration(filePaths) {
     coreExports.info(`Validate Method: ${getValidateMethod()}`);
     coreExports.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`);
     coreExports.info(`Auto Create PRs: ${getAutoCreatePrs()}`);
-    coreExports.info(`LLM Profile: ${getLlmProfile() || '(server default)'}`);
-    if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
-        coreExports.info(`Regression Evidence Base Ref: ${getRegressionEvidenceBaseRef()}`);
-        coreExports.info(`Regression Evidence Base SHA: ${getRegressionEvidenceBaseSha()}`);
-        coreExports.info(`Regression Evidence Head Ref: ${getRegressionEvidenceHeadRef()}`);
-        coreExports.info(`Regression Evidence Head SHA: ${getRegressionEvidenceHeadSha()}`);
-        coreExports.info(`Regression Evidence Coverage Artifacts: ${getRegressionEvidenceCoverageArtifacts()}`);
-        coreExports.info(`Regression Evidence Test Commands: ${getRegressionEvidenceTestCommands()}`);
-        coreExports.info(`Regression Evidence Output JSON Path: ${getRegressionEvidenceOutputJsonPath()}`);
-        coreExports.info(`Regression Evidence Output Markdown Path: ${getRegressionEvidenceOutputMarkdownPath()}`);
-        coreExports.info(`Regression Evidence Allow Partial: ${getRegressionEvidenceAllowPartial()}`);
-        coreExports.info(`Regression Evidence Fail On At Risk: ${getRegressionEvidenceFailOnAtRisk()}`);
-        coreExports.info(`Regression Evidence Publish Comment: ${getRegressionEvidencePublishComment()}`);
-    }
     const groupingEnabled = getGroupingEnabled();
     coreExports.info(`Grouping Enabled: ${groupingEnabled}`);
     if (groupingEnabled) {
@@ -79621,48 +79686,11 @@ function logConfiguration(filePaths) {
     coreExports.info(`Update Context: ${getUpdateContext()}`);
     coreExports.endGroup();
 }
-async function runRegressionEvidenceMode() {
-    coreExports.startGroup('Regression Evidence');
-    try {
-        const result = await generateRegressionEvidence({
-            cwd: process.cwd(),
-            baseRef: getRegressionEvidenceBaseRef() || null,
-            baseSha: getRegressionEvidenceBaseSha() || null,
-            headRef: getRegressionEvidenceHeadRef() || null,
-            headSha: getRegressionEvidenceHeadSha() || null,
-            coverageArtifactPaths: parseRegressionEvidenceArtifactListInput(getRegressionEvidenceCoverageArtifacts()),
-            testCommands: parseRegressionEvidenceTestCommandsInput(getRegressionEvidenceTestCommands()),
-            outputJsonPath: getRegressionEvidenceOutputJsonPath(),
-            outputMarkdownPath: getRegressionEvidenceOutputMarkdownPath(),
-            allowPartial: getRegressionEvidenceAllowPartial()
-        });
-        coreExports.setOutput('regression-evidence-status', result.artifact.status);
-        coreExports.setOutput('regression-evidence-json-path', result.jsonPath);
-        coreExports.setOutput('regression-evidence-markdown-path', result.markdownPath);
-        coreExports.summary.addRaw(result.markdown);
-        await coreExports.summary.write();
-        coreExports.info('Regression evidence artifacts generated.');
-        if (getRegressionEvidencePublishComment()) {
-            const token = getToken() || process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-            const action = await publishRegressionEvidenceCommentFromContext(result.markdown, token || '');
-            if (action !== 'skipped') {
-                coreExports.info(`Regression evidence PR comment ${action}.`);
-            }
-        }
-        if (getRegressionEvidenceFailOnAtRisk() &&
-            result.artifact.status === RegressionEvidenceStatus.AT_RISK) {
-            throw new Error('Regression evidence status is at_risk and fail-on-at-risk is enabled.');
-        }
-    }
-    finally {
-        coreExports.endGroup();
-    }
-}
 /**
  * Build the user-facing message for a paused run.
  *
  * A paused run is a distinct, non-failure outcome: the server has temporarily
- * halted work (e.g. sustained Bedrock throttling) but preserved progress and
+ * halted work (e.g. sustained provider throttling) but preserved progress and
  * will resume automatically once capacity returns. The optional reason is
  * surfaced when the server provides one.
  */
@@ -79670,9 +79698,15 @@ function buildPausedMessage(reason) {
     const trimmedReason = reason?.trim();
     const detail = trimmedReason
         ? `: ${trimmedReason}`
-        : ': sustained Bedrock throttling';
+        : ': sustained provider throttling';
     return (`Run paused${detail} — work preserved; it will resume automatically ` +
         'when capacity returns. Track it in the AppSecAI dashboard.');
+}
+function setRunEvidenceOutputs(runId, status, dashboardUrl, complete = false) {
+    coreExports.setOutput('run-id', runId ?? '');
+    coreExports.setOutput('run-status', status);
+    coreExports.setOutput('run-complete', complete ? 'true' : 'false');
+    coreExports.setOutput('dashboard-url', dashboardUrl ?? '');
 }
 async function run() {
     coreExports.info(`${VERSION_INFO.name} v${VERSION}`);
@@ -79683,6 +79717,7 @@ async function run() {
     const file = getFile();
     const files = getFiles();
     const isDebug = getDebug();
+    const allowLongRunHandoff = getAllowLongRunHandoff();
     // Polling configuration for status checks (from constants.ts)
     const pollDelay = PollingConfig.POLL_DELAY_MS;
     const intervalCheck = PollingConfig.INTERVAL_CHECK_MS;
@@ -79698,8 +79733,11 @@ async function run() {
     let monitoringIndeterminate = false;
     let runStillActiveAfterPollingLimit = false;
     let productRunFailureMessage = null;
+    let pollingLimitFailureMessage = null;
     let runPausedMessage = null;
     let runStillProcessingMessage = null;
+    let runStillProcessingStatus = null;
+    let finalRunStatusOutput = '';
     try {
         filePaths = resolveInputFilePaths(file, files);
         // Display AppSecAI branding at run start
@@ -79711,12 +79749,6 @@ async function run() {
         // Log configuration in collapsible group only if debug is enabled
         if (isDebug) {
             logConfiguration(filePaths);
-        }
-        if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
-            await runRegressionEvidenceMode();
-            success = true;
-            coreExports.setOutput('message', 'Regression evidence generated successfully.');
-            return;
         }
         // Step 1: Read the file inputs
         coreExports.startGroup(`File Processing (${filePaths.length} file${filePaths.length === 1 ? '' : 's'})`);
@@ -79759,11 +79791,18 @@ async function run() {
         coreExports.endGroup();
         // Step 3: Poll for status (non-critical failure)
         if (submitOutput.run_id) {
+            const cleanupApiUrl = getApiUrl();
             store.id = submitOutput.run_id;
             store.organizationId = submitOutput.organization_id;
             coreExports.saveState('runId', submitOutput.run_id);
             coreExports.saveState('organizationId', submitOutput.organization_id ?? '');
-            coreExports.saveState('apiUrl', getApiUrl());
+            coreExports.saveState('apiUrl', cleanupApiUrl);
+            finalRunStatusOutput = 'submitted';
+            const cancelAuthToken = getToken();
+            if (cancelAuthToken) {
+                coreExports.setSecret(cancelAuthToken);
+                coreExports.saveState('cancelAuthToken', cancelAuthToken);
+            }
             coreExports.info(`[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`);
             try {
                 const getRunStatus = () => getStatus(store.id, store.organizationId);
@@ -79772,6 +79811,7 @@ async function run() {
                     try {
                         const finalStatus = await getRunStatus();
                         if (finalStatus.status === 'completed') {
+                            finalRunStatusOutput = 'completed';
                             if (finalStatus.processTracking) {
                                 finalProcessTracking =
                                     finalStatus.processTracking;
@@ -79784,21 +79824,27 @@ async function run() {
                             }
                         }
                         else if (finalStatus.status === 'paused') {
+                            finalRunStatusOutput = 'paused';
                             // Run is paused (non-failure): report it clearly rather than
                             // treating the indeterminate timeout as a degraded outcome.
                             runPausedMessage = buildPausedMessage(finalStatus.pauseReason ?? finalStatus.diagnostic);
                             runStillActiveAfterPollingLimit = true;
                         }
                         else if (finalStatus.status === 'failed') {
+                            finalRunStatusOutput = 'failed';
                             productRunFailureMessage = finalStatus.error
                                 ? `Product run failed: ${finalStatus.error}`
                                 : 'Product run failed.';
                         }
                         else {
+                            finalRunStatusOutput = finalStatus.status || 'processing';
                             runStillActiveAfterPollingLimit =
                                 finalStatus.status !== 'network_error';
                             monitoringIndeterminate = !runStillActiveAfterPollingLimit;
                             const statusDescription = finalStatus.status || 'unknown non-terminal status';
+                            if (finalStatus.dashboard_url) {
+                                finalDashboardUrl = finalStatus.dashboard_url;
+                            }
                             const dashboardText = finalStatus.dashboard_url
                                 ? ` Dashboard: ${finalStatus.dashboard_url}`
                                 : '';
@@ -79806,14 +79852,25 @@ async function run() {
                                 'Skipping summary finalization because the server run is not known to be terminal.' +
                                 dashboardText);
                             if (runStillActiveAfterPollingLimit) {
-                                runStillProcessingMessage =
-                                    `AppSecAI run ${store.id} is still processing after the GitHub Action monitoring window. ` +
-                                        'The server accepted the run and work is continuing; monitor the AppSecAI dashboard for final results.' +
-                                        dashboardText;
+                                if (allowLongRunHandoff) {
+                                    runStillProcessingStatus = statusDescription;
+                                    runStillProcessingMessage =
+                                        `AppSecAI run ${store.id} is still processing after the GitHub Action monitoring window. ` +
+                                            'The server accepted the run and work is continuing; monitor the AppSecAI dashboard for final results.' +
+                                            dashboardText;
+                                }
+                                else {
+                                    pollingLimitFailureMessage =
+                                        `AppSecAI run ${store.id} did not reach a terminal status before the GitHub Action monitoring window expired ` +
+                                            `(last status: ${statusDescription}). No final summary is available, so the action is failing closed. ` +
+                                            'Set allow-long-run-handoff: true only for workflows that intentionally do not gate on completed analysis.' +
+                                            dashboardText;
+                                }
                             }
                         }
                     }
                     catch (finalStatusError) {
+                        finalRunStatusOutput = 'unknown';
                         monitoringIndeterminate = true;
                         runStillActiveAfterPollingLimit = true;
                         const errorMessage = finalStatusError instanceof Error
@@ -79835,6 +79892,9 @@ async function run() {
                 if (pollResult?.dashboard_url) {
                     finalDashboardUrl = pollResult.dashboard_url;
                 }
+                if (pollResult?.status) {
+                    finalRunStatusOutput = pollResult.status;
+                }
                 if (pollResult?.status === 'failed') {
                     productRunFailureMessage = pollResult.error
                         ? `Product run failed: ${pollResult.error}`
@@ -79848,6 +79908,7 @@ async function run() {
                 }
             }
             catch (pollError) {
+                finalRunStatusOutput = 'unknown';
                 monitoringIndeterminate = true;
                 runStillActiveAfterPollingLimit = true;
                 // This is a "soft" failure. Log a warning but let the process complete
@@ -79856,6 +79917,9 @@ async function run() {
         }
         if (productRunFailureMessage) {
             throw new Error(productRunFailureMessage);
+        }
+        if (pollingLimitFailureMessage) {
+            throw new Error(pollingLimitFailureMessage);
         }
         success = true;
         if (runPausedMessage) {
@@ -79870,6 +79934,11 @@ async function run() {
             // dashboard is the source of truth for final results.
             coreExports.notice(runStillProcessingMessage);
             coreExports.setOutput('message', runStillProcessingMessage);
+            coreExports.setOutput('run-status', runStillProcessingStatus ?? 'active');
+            coreExports.setOutput('run-complete', 'false');
+            if (finalDashboardUrl) {
+                coreExports.setOutput('dashboard-url', finalDashboardUrl);
+            }
         }
         else {
             coreExports.setOutput('message', 'Processing completed successfully.');
@@ -79903,6 +79972,9 @@ async function run() {
         }
         coreExports.error(errorMessage);
         coreExports.setFailed(errorMessage);
+        if (!finalRunStatusOutput) {
+            finalRunStatusOutput = store.id ? 'failed' : 'not_created';
+        }
     }
     finally {
         // Always try to finalize and get summary when we have a run ID
@@ -79922,6 +79994,9 @@ async function run() {
             // Use finalize summary if we don't already have one from polling
             if (finalizeSummary && !finalSummary) {
                 finalSummary = finalizeSummary;
+            }
+            if (!finalRunStatusOutput) {
+                finalRunStatusOutput = 'completed';
             }
         }
         else if (store.id) {
@@ -79959,6 +80034,9 @@ async function run() {
                 ? new Map(Object.entries(finalSummary.issue_titles))
                 : undefined;
         const dashboardUrl = finalDashboardUrl ?? getDashboardUrl(getApiUrl());
+        setRunEvidenceOutputs(store.id || null, finalRunStatusOutput || (store.id ? 'unknown' : 'not_created'), store.id ? dashboardUrl : undefined, success &&
+            !runStillActiveAfterPollingLimit &&
+            finalRunStatusOutput === 'completed');
         // Build grouping config for summary display
         const groupingEnabled = getGroupingEnabled();
         let groupingConfig;
@@ -79980,9 +80058,6 @@ async function run() {
 }
 
 // src/index.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 /**
  * The entrypoint for the action. This file simply imports and runs the action's
  * main logic.

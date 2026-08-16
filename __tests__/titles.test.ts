@@ -31,36 +31,36 @@ describe('titles.ts', () => {
 
   it('parses pull request and issue URLs', () => {
     expect(
-      parsePrUrl('https://github.com/AppSecureAI/Product/pull/5412')
+      parsePrUrl('https://github.com/example-org/example-repo/pull/5412')
     ).toEqual({
-      owner: 'AppSecureAI',
-      repo: 'Product',
+      owner: 'example-org',
+      repo: 'example-repo',
       number: 5412
     })
 
     expect(
-      parsePrUrl('https://github.com/AppSecureAI/Product/issues/5406')
+      parsePrUrl('https://github.com/example-org/example-repo/issues/5406')
     ).toEqual({
-      owner: 'AppSecureAI',
-      repo: 'Product',
+      owner: 'example-org',
+      repo: 'example-repo',
       number: 5406
     })
   })
 
   it('returns null for non-GitHub or incomplete URLs', () => {
-    expect(parsePrUrl('https://example.com/AppSecureAI/Product/pull/1')).toBe(
-      null
-    )
-    expect(parsePrUrl('https://github.com/AppSecureAI/Product/pulls/1')).toBe(
-      null
-    )
+    expect(
+      parsePrUrl('https://example.test/example-org/example-repo/pull/1')
+    ).toBe(null)
+    expect(
+      parsePrUrl('https://github.com/example-org/example-repo/pulls/1')
+    ).toBe(null)
     expect(parsePrUrl('not a url')).toBe(null)
   })
 
   it('returns an empty map without URLs or token', async () => {
     await expect(fetchPrTitles([], 'ghs_test')).resolves.toEqual(new Map())
     await expect(
-      fetchPrTitles(['https://github.com/AppSecureAI/Product/pull/1'], '')
+      fetchPrTitles(['https://github.com/example-org/example-repo/pull/1'], '')
     ).resolves.toEqual(new Map())
 
     expect(getOctokitMock).not.toHaveBeenCalled()
@@ -73,13 +73,13 @@ describe('titles.ts', () => {
       }
     })
 
-    const validUrl = 'https://github.com/AppSecureAI/Product/pull/123'
+    const validUrl = 'https://github.com/example-org/example-repo/pull/123'
     const result = await fetchPrTitles([validUrl, 'not a url'], 'ghs_test')
 
     expect(result).toEqual(new Map([[validUrl, 'Fix run summary']]))
     expect(issuesGetMock).toHaveBeenCalledWith({
-      owner: 'AppSecureAI',
-      repo: 'Product',
+      owner: 'example-org',
+      repo: 'example-repo',
       issue_number: 123
     })
   })
@@ -88,7 +88,7 @@ describe('titles.ts', () => {
     issuesGetMock.mockRejectedValue(new Error('rate limited'))
 
     const result = await fetchPrTitles(
-      ['https://github.com/AppSecureAI/Product/issues/123'],
+      ['https://github.com/example-org/example-repo/issues/123'],
       'ghs_test'
     )
 
@@ -104,7 +104,7 @@ describe('titles.ts', () => {
     })
 
     const result = await fetchPrTitles(
-      ['https://github.com/AppSecureAI/Product/issues/123'],
+      ['https://github.com/example-org/example-repo/issues/123'],
       'ghs_test'
     )
 

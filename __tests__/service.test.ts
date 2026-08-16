@@ -29,7 +29,6 @@ const mockGetGroupingStrategy = jest.fn()
 const mockIsGroupingStrategyConfigured = jest.fn()
 const mockGetGroupingStage = jest.fn()
 const mockIsGroupingStageConfigured = jest.fn()
-const mockGetLlmProfile = jest.fn()
 const mockGetPrAudience = jest.fn()
 const mockGetUpdateContext = jest.fn()
 const mockGetAllowMissingRepoAccess = jest.fn()
@@ -49,7 +48,6 @@ jest.mock('../src/input', () => ({
   isGroupingStrategyConfigured: mockIsGroupingStrategyConfigured,
   getGroupingStage: mockGetGroupingStage,
   isGroupingStageConfigured: mockIsGroupingStageConfigured,
-  getLlmProfile: mockGetLlmProfile,
   getPrAudience: mockGetPrAudience,
   getUpdateContext: mockGetUpdateContext,
   getAllowMissingRepoAccess: mockGetAllowMissingRepoAccess
@@ -108,7 +106,6 @@ describe('service.ts', () => {
     mockIsGroupingStrategyConfigured.mockReturnValue(false)
     mockGetGroupingStage.mockReturnValue('pre_push')
     mockIsGroupingStageConfigured.mockReturnValue(false)
-    mockGetLlmProfile.mockReturnValue(undefined)
     mockGetPrAudience.mockReturnValue('')
     mockGetUpdateContext.mockReturnValue(false)
     mockGetAllowMissingRepoAccess.mockReturnValue(false)
@@ -297,9 +294,7 @@ describe('service.ts', () => {
         'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
         'COMMENT_MODIFICATION_MODE',
         'PR_AUDIENCE',
-        'MAX_VULNERABILITIES_PER_PR',
-        'APPSECAI_LLM_PROFILE',
-        'INPUT_LLM_PROFILE'
+        'MAX_VULNERABILITIES_PER_PR'
       ]
 
       beforeEach(() => {
@@ -383,36 +378,6 @@ describe('service.ts', () => {
         await submitRun(buf, 'file.json')
         const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
         expect(formData.get('pr_audience')).toBeNull()
-      })
-
-      it('omits llm_profile when LLM profile is omitted', async () => {
-        const buf = Buffer.from('{}')
-        await submitRun(buf, 'file.json')
-        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
-        expect(formData.get('llm_profile')).toBeNull()
-      })
-
-      it('includes llm_profile when LLM profile is configured', async () => {
-        process.env.APPSECAI_LLM_PROFILE = 'balanced'
-        mockGetLlmProfile.mockReturnValue('balanced')
-        const buf = Buffer.from('{}')
-        await submitRun(buf, 'file.json')
-        const [, formData] = axios.post.mock.calls[0] as [unknown, FormData]
-        expect(formData.get('llm_profile')).toBe('balanced')
-      })
-
-      it('fails before submit when LLM profile is invalid', async () => {
-        process.env.APPSECAI_LLM_PROFILE = 'turbo'
-        mockGetLlmProfile.mockImplementation(() => {
-          throw new Error(
-            'Invalid llm-profile "turbo". Allowed values: prod, mock, cheap, balanced, final.'
-          )
-        })
-        const buf = Buffer.from('{}')
-        await expect(submitRun(buf, 'file.json')).rejects.toThrow(
-          'Invalid llm-profile'
-        )
-        expect(axios.post).not.toHaveBeenCalled()
       })
 
       it('uses repeated files fields for multi-SAST submissions', async () => {
@@ -654,11 +619,11 @@ describe('service.ts', () => {
       core.getIDToken.mockResolvedValue('oidc-token')
       axios.post.mockResolvedValue({ data: {} })
 
-      await cancelRun('run-123', 'org-456', 'https://gh.intg.appsecai.net')
+      await cancelRun('run-123', 'org-456', 'https://api.example.test')
 
       expect(axios.post).toHaveBeenCalledWith(
-        'https://gh.intg.appsecai.net/api/organizations/org-456/runs/run-123/cancel',
-        { reason: 'workflow_cancelled' },
+        'https://api.example.test/api/organizations/org-456/runs/run-123/cancel?reason=workflow_cancelled',
+        undefined,
         {
           headers: { Authorization: 'Bearer oidc-token' },
           timeout: expect.any(Number)
@@ -666,9 +631,30 @@ describe('service.ts', () => {
       )
     })
 
+    it('uses an explicit cancellation token without requesting OIDC', async () => {
+      axios.post.mockResolvedValue({ data: {} })
+
+      await cancelRun(
+        'run-123',
+        'org-456',
+        'https://api.example.test',
+        'saved-token'
+      )
+
+      expect(core.getIDToken).not.toHaveBeenCalled()
+      expect(axios.post).toHaveBeenCalledWith(
+        'https://api.example.test/api/organizations/org-456/runs/run-123/cancel?reason=workflow_cancelled',
+        undefined,
+        {
+          headers: { Authorization: 'Bearer saved-token' },
+          timeout: expect.any(Number)
+        }
+      )
+    })
+
     it('rejects missing cancellation identifiers before calling the API', async () => {
       await expect(
-        cancelRun('run-123', '', 'https://gh.intg.appsecai.net')
+        cancelRun('run-123', '', 'https://api.example.test')
       ).rejects.toThrow('runId and organizationId are required')
 
       expect(axios.post).not.toHaveBeenCalled()
@@ -1618,7 +1604,7 @@ describe('service.ts', () => {
         message: 'Paused',
         description: 'Run paused',
         run_status: 'paused',
-        status_reason: 'sustained Bedrock throttling',
+        status_reason: 'sustained provider throttling',
         results: null,
         process_tracking: null
       }
@@ -1629,15 +1615,15 @@ describe('service.ts', () => {
       expect.objectContaining({
         status: 'paused',
         reasonCode: 'RUN_PAUSED',
-        diagnostic: 'run_status=paused: sustained Bedrock throttling',
-        pauseReason: 'sustained Bedrock throttling'
+        diagnostic: 'run_status=paused: sustained provider throttling',
+        pauseReason: 'sustained provider throttling'
       })
     )
     // Must not be classified as failed.
     expect(result.status).not.toBe('failed')
     expect(result.error).toBeUndefined()
     expect(core.warning).toHaveBeenCalledWith(
-      '[Analysis Processing Status]: Run paused: sustained Bedrock throttling'
+      '[Analysis Processing Status]: Run paused: sustained provider throttling'
     )
   })
 
@@ -1671,7 +1657,7 @@ describe('service.ts', () => {
     const result = await getStatus('test-id')
 
     expect(result.status).toBe('paused')
-    expect(result.pauseReason).toContain('Bedrock throttling')
+    expect(result.pauseReason).toContain('provider throttling')
     expect(result.pauseReason).toContain('resume automatically')
   })
 
@@ -1977,8 +1963,8 @@ describe('service.ts', () => {
       const pausedStatus = {
         status: 'paused',
         reasonCode: 'RUN_PAUSED',
-        diagnostic: 'run_status=paused: sustained Bedrock throttling',
-        pauseReason: 'sustained Bedrock throttling'
+        diagnostic: 'run_status=paused: sustained provider throttling',
+        pauseReason: 'sustained provider throttling'
       }
       const mockGetStatus = jest.fn(() => Promise.resolve(pausedStatus))
       const result = await pollStatusUntilComplete(mockGetStatus, 5, 0)
@@ -1991,7 +1977,7 @@ describe('service.ts', () => {
         expect.stringContaining('Processing failed')
       )
       expect(core.info).toHaveBeenCalledWith(
-        expect.stringContaining('Run paused: sustained Bedrock throttling')
+        expect.stringContaining('Run paused: sustained provider throttling')
       )
     })
 

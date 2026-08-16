@@ -21,13 +21,6 @@ import {
   finalizeRun
 } from '../__fixtures__/service'
 import store from '../src/store'
-import {
-  generateRegressionEvidence,
-  parseRegressionEvidenceArtifactListInput,
-  parseRegressionEvidenceTestCommandsInput,
-  publishRegressionEvidenceCommentFromContext
-} from '../__fixtures__/regression-evidence'
-
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('../src/file', () => ({
@@ -46,18 +39,6 @@ jest.unstable_mockModule('../src/titles', () => ({
   fetchPrTitles,
   parsePrUrl
 }))
-jest.unstable_mockModule('../src/regression-evidence', () => ({
-  generateRegressionEvidence,
-  parseRegressionEvidenceArtifactListInput,
-  parseRegressionEvidenceTestCommandsInput,
-  publishRegressionEvidenceCommentFromContext,
-  RegressionEvidenceStatus: {
-    VERIFIED: 'verified',
-    PARTIAL: 'partial',
-    AT_RISK: 'at_risk'
-  }
-}))
-
 // The module being tested should be imported dynamically. This ensures that the
 // mocks are used in place of any actual dependencies.
 const { run, buildPausedMessage } = await import('../src/main')
@@ -67,8 +48,8 @@ describe('main.ts', () => {
     delete process.env.PROCESSING_MODE
     delete process.env.INPUT_API_URL
     delete process.env.INPUT_TOKEN
-    delete process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK
-    delete process.env.REGRESSION_EVIDENCE_PUBLISH_COMMENT
+    delete process.env.ALLOW_LONG_RUN_HANDOFF
+    delete process.env.INPUT_ALLOW_LONG_RUN_HANDOFF
     // Set the action's inputs as return values from core.getInput().
     core.getInput.mockImplementation((name: string) => {
       if (name === 'file') return 'some_file.json'
@@ -112,17 +93,6 @@ describe('main.ts', () => {
     )
     finalizeRun.mockImplementation(() => Promise.resolve(null))
     fetchPrTitles.mockResolvedValue(new Map())
-    generateRegressionEvidence.mockResolvedValue({
-      artifact: {
-        status: 'verified'
-      },
-      markdown: '## Regression Evidence\\n- final status: **verified**',
-      jsonPath: '/tmp/regression-evidence.json',
-      markdownPath: '/tmp/regression-evidence.md'
-    })
-    parseRegressionEvidenceArtifactListInput.mockReturnValue([])
-    parseRegressionEvidenceTestCommandsInput.mockReturnValue([])
-    publishRegressionEvidenceCommentFromContext.mockResolvedValue('skipped')
     // Reset store state
     store.id = ''
   })
@@ -145,6 +115,27 @@ describe('main.ts', () => {
       )
     })
 
+    it('should set terminal run evidence outputs when processing completes successfully', async () => {
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'completed',
+          dashboard_url: 'https://dashboard.example.test/runs/run-12345',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith('run-id', 'run-12345')
+      expect(core.setOutput).toHaveBeenCalledWith('run-status', 'completed')
+      expect(core.setOutput).toHaveBeenCalledWith('run-complete', 'true')
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'dashboard-url',
+        'https://dashboard.example.test/runs/run-12345'
+      )
+    })
+
     it('should save run state for cancellation cleanup after submit succeeds', async () => {
       submitRun.mockClear().mockImplementationOnce(() =>
         Promise.resolve({
@@ -153,7 +144,7 @@ describe('main.ts', () => {
           organization_id: 'org-123'
         })
       )
-      process.env.INPUT_API_URL = 'https://gh.intg.appsecai.net'
+      process.env.INPUT_API_URL = 'https://api.example.test'
 
       await run()
 
@@ -161,7 +152,31 @@ describe('main.ts', () => {
       expect(core.saveState).toHaveBeenCalledWith('organizationId', 'org-123')
       expect(core.saveState).toHaveBeenCalledWith(
         'apiUrl',
-        'https://gh.intg.appsecai.net'
+        'https://api.example.test'
+      )
+      expect(core.saveState).not.toHaveBeenCalledWith(
+        'cancelAuthToken',
+        expect.any(String)
+      )
+    })
+
+    it('should prefer configured token for cancellation cleanup auth', async () => {
+      submitRun.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          message: 'Submitted',
+          run_id: 'run-token',
+          organization_id: 'org-token'
+        })
+      )
+      process.env.INPUT_API_URL = 'https://api.example.test'
+      process.env.INPUT_TOKEN = 'configured-token'
+
+      await run()
+
+      expect(core.setSecret).toHaveBeenCalledWith('configured-token')
+      expect(core.saveState).toHaveBeenCalledWith(
+        'cancelAuthToken',
+        'configured-token'
       )
     })
 
@@ -180,7 +195,7 @@ describe('main.ts', () => {
         }
         return 'some_file.json'
       })
-      const prUrl = 'https://github.com/AppSecureAI/Product/pull/123'
+      const prUrl = 'https://github.com/example-org/example-repo/pull/123'
       pollStatusUntilComplete.mockResolvedValue({
         status: 'completed',
         summary: {
@@ -243,77 +258,6 @@ describe('main.ts', () => {
         expect.any(Function),
         720,
         30000
-      )
-    })
-  })
-
-  describe('regression evidence mode', () => {
-    it('should generate regression evidence and set mode outputs', async () => {
-      process.env.PROCESSING_MODE = 'regression_evidence'
-
-      await run()
-
-      expect(generateRegressionEvidence).toHaveBeenCalled()
-      expect(core.setOutput).toHaveBeenCalledWith(
-        'regression-evidence-status',
-        'verified'
-      )
-      expect(core.setOutput).toHaveBeenCalledWith(
-        'regression-evidence-json-path',
-        '/tmp/regression-evidence.json'
-      )
-      expect(core.setOutput).toHaveBeenCalledWith(
-        'regression-evidence-markdown-path',
-        '/tmp/regression-evidence.md'
-      )
-      expect(core.setOutput).toHaveBeenCalledWith(
-        'message',
-        'Regression evidence generated successfully.'
-      )
-      expect(submitRun).not.toHaveBeenCalled()
-    })
-
-    it('should publish a regression evidence comment when configured', async () => {
-      process.env.PROCESSING_MODE = 'regression_evidence'
-      process.env.INPUT_TOKEN = 'ghs_test'
-      process.env.REGRESSION_EVIDENCE_PUBLISH_COMMENT = 'true'
-
-      publishRegressionEvidenceCommentFromContext.mockResolvedValue('created')
-
-      await run()
-
-      expect(publishRegressionEvidenceCommentFromContext).toHaveBeenCalledWith(
-        '## Regression Evidence\\n- final status: **verified**',
-        'ghs_test'
-      )
-      expect(core.info).toHaveBeenCalledWith(
-        'Regression evidence PR comment created.'
-      )
-    })
-
-    it('should fail regression evidence mode when at_risk and fail-on-at-risk is enabled', async () => {
-      process.env.PROCESSING_MODE = 'regression_evidence'
-      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'true'
-      generateRegressionEvidence.mockResolvedValue({
-        artifact: {
-          status: 'at_risk'
-        },
-        markdown: '## Regression Evidence\\n- final status: **at_risk**',
-        jsonPath: '/tmp/regression-evidence.json',
-        markdownPath: '/tmp/regression-evidence.md'
-      })
-
-      await run()
-
-      expect(core.error).toHaveBeenCalledWith(
-        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
-      )
-      expect(core.setFailed).toHaveBeenCalledWith(
-        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
-      )
-      expect(core.setOutput).not.toHaveBeenCalledWith(
-        'message',
-        'Regression evidence generated successfully.'
       )
     })
   })
@@ -444,8 +388,8 @@ describe('main.ts', () => {
         Promise.resolve({
           status: 'paused',
           reasonCode: 'RUN_PAUSED',
-          diagnostic: 'run_status=paused: sustained Bedrock throttling',
-          pauseReason: 'sustained Bedrock throttling',
+          diagnostic: 'run_status=paused: sustained provider throttling',
+          pauseReason: 'sustained provider throttling',
           processTracking: null,
           summary: null
         })
@@ -460,7 +404,7 @@ describe('main.ts', () => {
         (call) => call[0] === 'message'
       )?.[1] as string
       expect(pausedMessage).toMatch(/Run paused/)
-      expect(pausedMessage).toMatch(/sustained Bedrock throttling/)
+      expect(pausedMessage).toMatch(/sustained provider throttling/)
       expect(pausedMessage).toMatch(/resume automatically/)
       expect(pausedMessage).toMatch(/dashboard/i)
       expect(core.notice).toHaveBeenCalledWith(
@@ -508,16 +452,19 @@ describe('main.ts', () => {
       expect(core.setFailed).toHaveBeenCalledWith(
         'Run monitoring became indeterminate and final summary data was unavailable. The server may have been unreachable or degraded while the run was still in progress.'
       )
+      expect(core.setOutput).toHaveBeenCalledWith('run-id', 'run-12345')
+      expect(core.setOutput).toHaveBeenCalledWith('run-status', 'unknown')
+      expect(core.setOutput).toHaveBeenCalledWith('run-complete', 'false')
     })
 
-    it('should succeed and skip finalize when polling limit leaves the run active', async () => {
+    it('should fail closed and skip finalize when polling limit leaves the run active by default', async () => {
       pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
         return Promise.resolve(null)
       })
       getStatus.mockClear().mockImplementationOnce(() =>
         Promise.resolve({
           status: 'in_progress',
-          dashboard_url: 'https://app.intg.appsecai.net/runs/run-12345',
+          dashboard_url: 'https://dashboard.example.test/runs/run-12345',
           processTracking: null,
           summary: null
         })
@@ -542,13 +489,94 @@ describe('main.ts', () => {
 
       expect(finalizeRun).not.toHaveBeenCalled()
       expect(core.warning).toHaveBeenCalledWith(
-        '[Analysis Processing Status] Polling limit reached and final status check returned "in_progress". Skipping summary finalization because the server run is not known to be terminal. Dashboard: https://app.intg.appsecai.net/runs/run-12345'
+        '[Analysis Processing Status] Polling limit reached and final status check returned "in_progress". Skipping summary finalization because the server run is not known to be terminal. Dashboard: https://dashboard.example.test/runs/run-12345'
       )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'did not reach a terminal status before the GitHub Action monitoring window expired'
+        )
+      )
+      expect(core.notice).not.toHaveBeenCalledWith(
+        expect.stringContaining('is still processing')
+      )
+    })
+
+    it('should succeed with pending outputs when long-run handoff is explicitly allowed', async () => {
+      process.env.ALLOW_LONG_RUN_HANDOFF = 'true'
+      pollStatusUntilComplete.mockClear().mockImplementationOnce(() => {
+        return Promise.resolve(null)
+      })
+      getStatus.mockClear().mockImplementationOnce(() =>
+        Promise.resolve({
+          status: 'in_progress',
+          dashboard_url: 'https://dashboard.example.test/runs/run-12345',
+          processTracking: null,
+          summary: null
+        })
+      )
+
+      await run()
+
+      expect(finalizeRun).not.toHaveBeenCalled()
       expect(core.setFailed).not.toHaveBeenCalled()
       expect(core.notice).toHaveBeenCalledWith(
         expect.stringContaining(
           'is still processing after the GitHub Action monitoring window'
         )
+      )
+      expect(core.setOutput).toHaveBeenCalledWith('run-id', 'run-12345')
+      expect(core.setOutput).toHaveBeenCalledWith('run-status', 'in_progress')
+      expect(core.setOutput).toHaveBeenCalledWith('run-complete', 'false')
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'dashboard-url',
+        'https://dashboard.example.test/runs/run-12345'
+      )
+    })
+
+    it('should fail closed for progress status after the polling limit', async () => {
+      pollStatusUntilComplete.mockResolvedValue(null)
+      getStatus.mockResolvedValue({
+        status: 'progress',
+        processTracking: null,
+        summary: null
+      })
+
+      await run()
+
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('(last status: progress)')
+      )
+    })
+
+    it('should fail closed for unknown status after the polling limit', async () => {
+      pollStatusUntilComplete.mockResolvedValue(null)
+      getStatus.mockResolvedValue({
+        status: 'mystery_status',
+        processTracking: null,
+        summary: null
+      })
+
+      await run()
+
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('(last status: mystery_status)')
+      )
+    })
+
+    it('should fail as indeterminate when final status is network_error with no summary', async () => {
+      pollStatusUntilComplete.mockResolvedValue(null)
+      getStatus.mockResolvedValue({
+        status: 'network_error',
+        processTracking: null,
+        summary: null
+      })
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Run monitoring became indeterminate and final summary data was unavailable. The server may have been unreachable or degraded while the run was still in progress.'
       )
     })
 
@@ -606,6 +634,10 @@ describe('main.ts', () => {
       await run()
 
       expect(finalizeRun).not.toHaveBeenCalled()
+      expect(core.setOutput).toHaveBeenCalledWith('run-id', '')
+      expect(core.setOutput).toHaveBeenCalledWith('run-status', 'not_created')
+      expect(core.setOutput).toHaveBeenCalledWith('run-complete', 'false')
+      expect(core.setOutput).toHaveBeenCalledWith('dashboard-url', '')
     })
 
     it('should use summary from finalizeRun when polling returns no summary', async () => {
@@ -763,9 +795,9 @@ describe('main.ts', () => {
 
   describe('buildPausedMessage', () => {
     it('includes the provided reason', () => {
-      const message = buildPausedMessage('sustained Bedrock throttling')
+      const message = buildPausedMessage('sustained provider throttling')
 
-      expect(message).toContain('Run paused: sustained Bedrock throttling')
+      expect(message).toContain('Run paused: sustained provider throttling')
       expect(message).toContain('work preserved')
       expect(message).toContain('resume automatically')
       expect(message).toContain('AppSecAI dashboard')
@@ -774,7 +806,7 @@ describe('main.ts', () => {
     it('falls back to a default reason when none is provided', () => {
       for (const empty of [undefined, null, '', '   ']) {
         const message = buildPausedMessage(empty)
-        expect(message).toContain('Run paused: sustained Bedrock throttling')
+        expect(message).toContain('Run paused: sustained provider throttling')
         expect(message).toContain('resume automatically')
       }
     })

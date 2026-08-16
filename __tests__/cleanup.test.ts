@@ -1,5 +1,4 @@
 // __tests__/cleanup.test.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core'
@@ -46,7 +45,8 @@ describe('cleanup.ts', () => {
     core.getState.mockImplementation((name: string) => {
       if (name === 'runId') return 'run-123'
       if (name === 'organizationId') return 'org-456'
-      if (name === 'apiUrl') return 'https://gh.intg.appsecai.net'
+      if (name === 'apiUrl') return 'https://api.example.test'
+      if (name === 'cancelAuthToken') return 'cleanup-token'
       return ''
     })
 
@@ -55,7 +55,8 @@ describe('cleanup.ts', () => {
     expect(cancelRun).toHaveBeenCalledWith(
       'run-123',
       'org-456',
-      'https://gh.intg.appsecai.net'
+      'https://api.example.test',
+      'cleanup-token'
     )
   })
 
@@ -63,7 +64,7 @@ describe('cleanup.ts', () => {
     core.getState.mockImplementation((name: string) => {
       if (name === 'runId') return 'run-123'
       if (name === 'organizationId') return 'org-456'
-      if (name === 'apiUrl') return 'https://gh.intg.appsecai.net'
+      if (name === 'apiUrl') return 'https://api.example.test'
       return ''
     })
     cancelRun.mockRejectedValueOnce(new Error('network down'))

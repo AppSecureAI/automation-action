@@ -1,7 +1,4 @@
 // __tests__/utils.test.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
@@ -414,12 +411,12 @@ describe('utils.ts', () => {
       )
     })
 
-    it('maps integration hosts to the integration dashboard', () => {
-      expect(getDashboardUrl('https://gh.intg.appsecai.net')).toBe(
-        'https://app.intg.appsecai.net/'
+    it('derives non-production dashboard hosts without embedded environment URLs', () => {
+      expect(getDashboardUrl('https://gh.preview.appsecai.net')).toBe(
+        'https://app.preview.appsecai.net/'
       )
-      expect(getDashboardUrl('https://api.intg.appsecai.net')).toBe(
-        'https://app.intg.appsecai.net/'
+      expect(getDashboardUrl('https://api.preview.appsecai.net:8443')).toBe(
+        'https://app.preview.appsecai.net:8443/'
       )
     })
 
@@ -428,6 +425,15 @@ describe('utils.ts', () => {
         'https://portal.cloud.appsecai.io/'
       )
       expect(getDashboardUrl('https://unexpected-api.example.com')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+      expect(getDashboardUrl('https://gh.preview.example.test')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+      expect(getDashboardUrl('https://gh.preview.appsecai.net.evil.test')).toBe(
+        'https://portal.cloud.appsecai.io/'
+      )
+      expect(getDashboardUrl('http://gh.preview.appsecai.net')).toBe(
         'https://portal.cloud.appsecai.io/'
       )
     })

@@ -31,6 +31,13 @@ inputs:
     required: false
     default: ''
 
+  processing-mode:
+    description:
+      Product processing mode. Supported values are individual, individual_cc,
+      and group_cc.
+    required: false
+    default: individual_cc
+
   update-context:
     description: Trigger fresh security context extraction before the scan
     required: false
@@ -48,6 +55,13 @@ inputs:
     required: false
     default: 'false'
 
+  allow-long-run-handoff:
+    description:
+      Exit successfully when the run is still active after the monitoring
+      window. Keep false for CI gates that must wait for completed analysis.
+    required: false
+    default: 'false'
+
   pr-audience:
     description:
       Comma-separated ordered PR reviewer audiences to emphasize in generated
@@ -55,79 +69,22 @@ inputs:
     required: false
     default: ''
 
-  regression-evidence-base-ref:
-    description: Base git ref for regression evidence diff calculation
-    required: false
-    default: ''
-
-  regression-evidence-base-sha:
-    description: Base git SHA for regression evidence diff calculation
-    required: false
-    default: ''
-
-  regression-evidence-head-ref:
-    description: Head git ref for regression evidence diff calculation
-    required: false
-    default: ''
-
-  regression-evidence-head-sha:
-    description: Head git SHA for regression evidence diff calculation
-    required: false
-    default: ''
-
-  regression-evidence-coverage-artifacts:
-    description:
-      Comma/newline separated coverage mapping artifact paths used for
-      line-to-test matching
-    required: false
-    default: ''
-
-  regression-evidence-test-commands:
-    description:
-      Newline-separated test commands to execute for impacted test validation
-      (supports {{tests}} template)
-    required: false
-    default: ''
-
-  regression-evidence-output-json-path:
-    description: Output path for generated regression evidence JSON
-    required: false
-    default: regression-evidence.json
-
-  regression-evidence-output-markdown-path:
-    description: Output path for generated regression evidence markdown summary
-    required: false
-    default: regression-evidence.md
-
-  regression-evidence-allow-partial:
-    description: Allow partial status when some changed lines are uncovered
-    required: false
-    default: 'true'
-
-  regression-evidence-fail-on-at-risk:
-    description: Fail the action when computed status is at_risk
-    required: false
-    default: 'false'
-
-  regression-evidence-publish-comment:
-    description:
-      Publish or update a single marker-based PR comment with regression
-      evidence summary
-    required: false
-    default: 'false'
-
 # Define your outputs here.
 outputs:
   message:
     description: Processed message
+  run-id:
+    description: AppSecAI run ID created by this action, when available
+  run-status:
+    description: Final observed AppSecAI run status or not_created
+  run-complete:
+    description:
+      Whether the AppSecAI run reached a completed terminal state during this
+      action
+  dashboard-url:
+    description: AppSecAI dashboard URL for the run, when available
   context-updated:
     description: Whether context was updated (true/false/rate-limited)
-  regression-evidence-status:
-    description: Regression evidence status (verified|partial|at_risk)
-  regression-evidence-json-path:
-    description: Path to generated regression evidence JSON artifact
-  regression-evidence-markdown-path:
-    description: Path to generated regression evidence markdown artifact
 
 runs:
   using: node24

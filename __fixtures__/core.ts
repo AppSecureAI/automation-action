@@ -1,7 +1,4 @@
 // __fixtures__/core.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import type * as core from '@actions/core'
 import { jest } from '@jest/globals'
@@ -12,6 +9,7 @@ export const info = jest.fn<typeof core.info>()
 export const getInput = jest.fn<typeof core.getInput>()
 export const getState = jest.fn<typeof core.getState>()
 export const saveState = jest.fn<typeof core.saveState>()
+export const setSecret = jest.fn<typeof core.setSecret>()
 export const setOutput = jest.fn<typeof core.setOutput>()
 export const setFailed = jest.fn<typeof core.setFailed>()
 export const warning = jest.fn<typeof core.warning>()

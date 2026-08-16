@@ -1,7 +1,4 @@
 // src/constants.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 export const LogLabels = {
   FILE_READ: 'Analysis File',
@@ -31,9 +28,9 @@ export const DOCS_URL = 'https://docs.appsecai.io'
 export const APP_INSTALL_URL = 'https://github.com/apps/appsecai-app'
 
 /**
- * Machine-readable error code returned by Hydra (HTTP 403) when the AppSecAI
- * GitHub App cannot push to the target repository. Locked contract shared with
- * Hydra (AppSecureAI/Hydra#1025).
+ * Machine-readable error code returned by the backend (HTTP 403) when the
+ * AppSecAI GitHub App cannot push to the target repository. This value is part
+ * of the locked service contract.
  */
 export const REPO_ACCESS_MISSING_CODE = 'github_app_repo_access_missing'
 

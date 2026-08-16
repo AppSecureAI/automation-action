@@ -52,7 +52,6 @@ describe('common core runtime', () => {
         commentModificationMode: 'verbose',
         groupingStrategy: 'smart',
         groupingStage: 'pre_remediation',
-        experiment: true,
         maxVulnerabilitiesPerPr: 25
       }
     )
@@ -63,7 +62,7 @@ describe('common core runtime', () => {
     expect(formData.get('auto_create_prs')).toBe('true')
     expect(formData.get('grouping_strategy')).toBe('smart')
     expect(formData.get('grouping_stage')).toBe('pre_remediation')
-    expect(formData.get('experiment')).toBe('true')
+    expect(formData.get('experiment')).toBeNull()
     expect(formData.get('max_vulnerabilities_per_pr')).toBe('25')
   })
 

@@ -1,7 +1,4 @@
 // src/service.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
 import axios from 'axios'
@@ -28,8 +25,6 @@ import {
   getCommentModificationMode,
   getGroupingStage,
   getGroupingStrategy,
-  getLlmProfile,
-  getExperiment,
   getMaxVulnerabilitiesPerPr,
   isGroupingStageConfigured,
   isGroupingStrategyConfigured,
@@ -726,7 +721,7 @@ const ReconciliationReasonCode = {
 /**
  * Reason code reported when the server run is paused (a distinct, non-failure
  * outcome). A paused run preserves work and resumes automatically once
- * capacity returns (e.g. sustained Bedrock throttling), so the action stops
+ * capacity returns (e.g. sustained provider throttling), so the action stops
  * polling and reports a paused result rather than a failure.
  */
 const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED'
@@ -736,7 +731,7 @@ const RUN_PAUSED_REASON_CODE = 'RUN_PAUSED'
  * the server did not provide a more specific reason.
  */
 const DEFAULT_PAUSE_REASON =
-  'sustained Bedrock throttling — work preserved; it will resume automatically when capacity returns'
+  'sustained provider throttling — work preserved; it will resume automatically when capacity returns'
 
 const ACTIVE_RECONCILIATION_STATUSES = new Set([
   'initiated',
@@ -827,10 +822,7 @@ function shouldWarnForNonTerminalReason(
   return !NORMAL_ACTIVE_RUN_STATUS_REASON_CODES.has(reasonCode)
 }
 
-function buildSubmitPayloadOptions(
-  mode: string,
-  llmProfile?: string
-): SubmitPayloadOptions {
+function buildSubmitPayloadOptions(mode: string): SubmitPayloadOptions {
   return {
     processingMode: mode,
     autoCreatePrs: getAutoCreatePrs(),
@@ -838,7 +830,6 @@ function buildSubmitPayloadOptions(
       getCreateIssuesForIncompleteRemediations(),
     commentModificationMode: getCommentModificationMode(),
     prAudience: getPrAudience() || undefined,
-    llmProfile,
     maxVulnerabilitiesPerPr: isMaxVulnerabilitiesPerPrConfigured()
       ? getMaxVulnerabilitiesPerPr()
       : undefined,
@@ -849,8 +840,7 @@ function buildSubmitPayloadOptions(
     // allow_missing_repo_access overrides Hydra's pre-flight check that the
     // AppSecAI GitHub App can push to the target repository. When set, Hydra
     // starts the run even if the repo is not yet in the App installation.
-    allowMissingRepoAccess: getAllowMissingRepoAccess(),
-    experiment: getExperiment() || undefined
+    allowMissingRepoAccess: getAllowMissingRepoAccess()
   }
 }
 
@@ -859,17 +849,13 @@ export async function submitRun(
   fileName?: string
 ): Promise<SubmitRunOutput> {
   const mode = getMode()
-  const llmProfile = getLlmProfile()
 
   core.info(`Processing mode: ${mode}`)
-  if (llmProfile) {
-    core.info(`LLM profile: ${llmProfile}`)
-  }
 
   const inputFiles = Array.isArray(file)
     ? file
     : [{ path: fileName ?? 'results.sarif', buffer: file }]
-  const submitPayload = buildSubmitPayloadOptions(mode, llmProfile)
+  const submitPayload = buildSubmitPayloadOptions(mode)
 
   if (getGroupingEnabled()) {
     core.debug(
@@ -989,7 +975,8 @@ export async function submitRun(
 export async function cancelRun(
   runId: string,
   organizationId: string,
-  apiUrl = getApiUrl()
+  apiUrl = getApiUrl(),
+  authToken?: string
 ): Promise<void> {
   const normalizedRunId = runId.trim()
   const normalizedOrganizationId = organizationId.trim()
@@ -997,10 +984,11 @@ export async function cancelRun(
     throw new Error('runId and organizationId are required to cancel a run')
   }
 
-  const token = await getIdToken(apiUrl)
+  const token = authToken?.trim() || (await getIdToken(apiUrl))
   const url = new URL(
     `${apiUrl}/api/organizations/${encodeURIComponent(normalizedOrganizationId)}/runs/${encodeURIComponent(normalizedRunId)}/cancel`
   )
+  url.searchParams.set('reason', 'workflow_cancelled')
   const setup = {
     headers: token
       ? {
@@ -1011,7 +999,7 @@ export async function cancelRun(
   }
 
   core.debug(`Calling cancel API: POST ${url.pathname}`)
-  await axios.post(url.toString(), { reason: 'workflow_cancelled' }, setup)
+  await axios.post(url.toString(), undefined, setup)
   core.info(
     `[${LogLabels.RUN_STATUS}] Cancellation requested for run ${normalizedRunId}`
   )
@@ -1199,7 +1187,7 @@ export async function getStatus(
       }
 
       // A paused run is a distinct, non-failure outcome: the server has
-      // temporarily halted work (e.g. sustained Bedrock throttling) but has
+      // temporarily halted work (e.g. sustained provider throttling) but has
       // preserved progress and will resume automatically once capacity
       // returns. Surface it clearly without treating it as a failure.
       if (canonicalRunStatus === 'paused') {

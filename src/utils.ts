@@ -1,7 +1,4 @@
 // src/utils.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
 import {
@@ -461,14 +458,27 @@ function formatNoCustomerPrReason(
 
 /**
  * Get the Dashboard URL based on the API URL.
- * Defaults customer-facing output to production unless an integration host is detected.
+ * Defaults customer-facing output to production unless a non-production
+ * AppSecAI gateway host can be mapped without embedding environment hostnames.
  */
 export function getDashboardUrl(apiUrl: string): string {
-  if (
-    apiUrl.includes('gh.intg.appsecai.net') ||
-    apiUrl.includes('api.intg.appsecai.net')
-  ) {
-    return 'https://app.intg.appsecai.net/'
+  try {
+    const parsed = new URL(apiUrl)
+    const labels = parsed.hostname.split('.')
+    const isNonProductionGateway =
+      parsed.protocol === 'https:' &&
+      parsed.hostname.endsWith('.appsecai.net') &&
+      labels.length >= 4 &&
+      (labels[0] === 'gh' || labels[0] === 'api') &&
+      labels[1] !== 'cloud'
+
+    if (isNonProductionGateway) {
+      labels[0] = 'app'
+      const port = parsed.port ? `:${parsed.port}` : ''
+      return `${parsed.protocol}//${labels.join('.')}${port}/`
+    }
+  } catch {
+    // Invalid/custom values fail closed to the customer production dashboard.
   }
 
   return 'https://portal.cloud.appsecai.io/'

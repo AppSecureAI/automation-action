@@ -2,20 +2,11 @@
 
 ## Code Standards
 
-### Copyright Header
+### License
 
-All source files must include the following copyright header at the top of the
-file:
-
-```
-# path/to/file.ts
-# Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-# This software and its source code are the proprietary information of AppSecAI, Inc.
-# Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
-```
-
-Adjust the comment syntax as appropriate for the file type (e.g., `//` for
-TypeScript/JavaScript, `#` for Python/Shell).
+By contributing, you agree that your contributions will be licensed under the
+MIT License included in this repository. Source files do not need an additional
+license header.
 
 ## Initial Setup
 

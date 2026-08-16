@@ -1,5 +1,4 @@
 // __tests__/action-yml.test.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
 
 import fs from 'fs'
 import path from 'path'
@@ -48,14 +47,14 @@ describe('action.yml', () => {
     )
 
     expect(actionYaml).toContain('pr-audience:')
-    // Under the node24 runtime the input is read directly (with env var
-    // fallbacks) instead of through a composite INPUT_* mapping.
-    expect(inputSource).toContain(
-      "getInputValue('pr-audience', 'INPUT_PR_AUDIENCE', 'PR_AUDIENCE')"
-    )
+    // Under the node24 runtime the explicit action input must win before
+    // falling back to INPUT_PR_AUDIENCE and PR_AUDIENCE.
+    expect(inputSource).toContain("core.getInput('pr-audience')")
+    expect(inputSource).toContain('process.env.INPUT_PR_AUDIENCE')
+    expect(inputSource).toContain('process.env.PR_AUDIENCE')
   })
 
-  it('does not expose the internal llm-profile control as a public action input', () => {
+  it('declares the long-run handoff input and pending outputs', () => {
     const actionYaml = fs.readFileSync(
       path.join(process.cwd(), 'action.yml'),
       'utf8'
@@ -65,35 +64,56 @@ describe('action.yml', () => {
       'utf8'
     )
 
-    // llm-profile is an internal LLM-routing control. It must not appear as a
-    // public action input (action.yml is mirrored verbatim to the public
-    // AppSecureAI/automation-action repo and the GitHub Marketplace listing),
-    // and the internal profile names must never be advertised to customers.
-    expect(actionYaml).not.toContain('llm-profile:')
-    expect(actionYaml).not.toContain('prod, cheap, balanced, final, or mock')
-
-    // The control is still accepted internally via env vars (used by the
-    // internal scan-triage-remediation workflows through APPSECAI_LLM_PROFILE),
-    // so the env-var fallback path must remain in place.
-    expect(inputSource).toContain("'llm-profile',")
-    expect(inputSource).toContain("'INPUT_LLM_PROFILE',")
-    expect(inputSource).toContain("'APPSECAI_LLM_PROFILE'")
+    expect(actionYaml).toContain('allow-long-run-handoff:')
+    expect(actionYaml).toContain('run-status:')
+    expect(actionYaml).toContain('run-complete:')
+    expect(actionYaml).toContain('dashboard-url:')
+    expect(inputSource).toContain("'allow-long-run-handoff'")
+    expect(inputSource).toContain('ALLOW_LONG_RUN_HANDOFF')
   })
 
-  it('does not expose the internal experiment control as a public action input', () => {
+  it('declares and plumbs every supported Product processing mode', () => {
     const actionYaml = fs.readFileSync(
       path.join(process.cwd(), 'action.yml'),
       'utf8'
     )
     const inputSource = fs.readFileSync(
       path.join(process.cwd(), 'src', 'input.ts'),
+      'utf8'
+    )
+
+    expect(actionYaml).toContain('processing-mode:')
+    expect(actionYaml).toContain('individual, individual_cc,')
+    expect(actionYaml).toContain('and group_cc')
+    expect(inputSource).toContain("'processing-mode'")
+    expect(inputSource).toContain("'INPUT_PROCESSING_MODE'")
+    expect(inputSource).toContain("'PROCESSING_MODE'")
+  })
+
+  it('does not expose or accept the internal experiment control', () => {
+    const actionYaml = fs.readFileSync(
+      path.join(process.cwd(), 'action.yml'),
+      'utf8'
+    )
+    const inputSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'input.ts'),
+      'utf8'
+    )
+    const serviceSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'service.ts'),
+      'utf8'
+    )
+    const runtimeSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'common', 'core', 'index.ts'),
       'utf8'
     )
 
     expect(actionYaml).not.toContain('experiment:')
-    expect(inputSource).toContain("'experiment',")
-    expect(inputSource).toContain("'INPUT_EXPERIMENT',")
-    expect(inputSource).toContain("'APPSECAI_EXPERIMENT'")
+    expect(inputSource).not.toContain('getExperiment')
+    expect(inputSource).not.toContain('INPUT_EXPERIMENT')
+    expect(inputSource).not.toContain('APPSECAI_EXPERIMENT')
+    expect(serviceSource).not.toContain('getExperiment')
+    expect(runtimeSource).not.toContain("formData.append('experiment'")
   })
 
   it('keeps public metadata focused on production usage', () => {

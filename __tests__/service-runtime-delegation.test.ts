@@ -28,8 +28,6 @@ const mockIsGroupingStrategyConfigured = jest.fn()
 const mockGetGroupingStage = jest.fn()
 const mockIsGroupingStageConfigured = jest.fn()
 const mockGetUpdateContext = jest.fn()
-const mockGetLlmProfile = jest.fn()
-const mockGetExperiment = jest.fn()
 const mockGetPrAudience = jest.fn()
 const mockGetAllowMissingRepoAccess = jest.fn()
 
@@ -59,8 +57,6 @@ jest.unstable_mockModule('../src/input.js', () => ({
   getGroupingStage: mockGetGroupingStage,
   isGroupingStageConfigured: mockIsGroupingStageConfigured,
   getUpdateContext: mockGetUpdateContext,
-  getLlmProfile: mockGetLlmProfile,
-  getExperiment: mockGetExperiment,
   getPrAudience: mockGetPrAudience,
   getAllowMissingRepoAccess: mockGetAllowMissingRepoAccess
 }))
@@ -93,8 +89,6 @@ describe('service runtime delegation', () => {
     mockGetGroupingStage.mockReturnValue('pre_push')
     mockIsGroupingStageConfigured.mockReturnValue(false)
     mockGetUpdateContext.mockReturnValue(false)
-    mockGetLlmProfile.mockReturnValue(undefined)
-    mockGetExperiment.mockReturnValue(false)
     mockGetPrAudience.mockReturnValue('')
     mockGetAllowMissingRepoAccess.mockReturnValue(false)
   })
@@ -122,13 +116,11 @@ describe('service runtime delegation', () => {
         autoCreatePrs: false,
         createIssuesForIncompleteRemediations: false,
         commentModificationMode: 'basic',
-        llmProfile: undefined,
         maxVulnerabilitiesPerPr: undefined,
         groupingStrategy: undefined,
         groupingStage: undefined,
         prAudience: undefined,
-        allowMissingRepoAccess: false,
-        experiment: undefined
+        allowMissingRepoAccess: false
       }
     )
     expect(result).toEqual({

@@ -1,7 +1,4 @@
 // src/schemas.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import { z } from 'zod'
 
@@ -53,9 +50,9 @@ export const StructuredErrorDetailSchema = z.object({
 })
 
 /**
- * Schema for the structured 403 error detail returned by Hydra when the
- * AppSecAI GitHub App cannot push to the target repository.
- * The locked contract (AppSecureAI/Hydra#1025) guarantees these fields.
+ * Schema for the structured 403 error detail returned by the backend when the
+ * AppSecAI GitHub App cannot push to the target repository. The locked service
+ * contract guarantees these fields.
  */
 export const RepoAccessErrorDetailSchema = z.object({
   code: z.string(),

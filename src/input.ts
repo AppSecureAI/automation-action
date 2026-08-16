@@ -1,14 +1,10 @@
 // src/input.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
 import {
   ProcessingModeExternal,
   TriageMethod,
   RemediateMethod,
-  LlmProfile,
   ValidateMethod,
   CommentModificationMode,
   GroupingStrategy,
@@ -157,28 +153,6 @@ export function getRemediateMethod(): RemediateMethod {
   return method as RemediateMethod
 }
 
-export function getLlmProfile(): LlmProfile | undefined {
-  // LLM_PROFILE is a legacy workflow env var alias kept for compatibility
-  // with the previous composite-action env mapping.
-  const profile =
-    getInputValue('llm-profile', 'INPUT_LLM_PROFILE', 'APPSECAI_LLM_PROFILE') ||
-    process.env.LLM_PROFILE ||
-    ''
-
-  if (profile === '') {
-    return undefined
-  }
-
-  if (!(Object.values(LlmProfile) as string[]).includes(profile)) {
-    const allowedProfiles = Object.values(LlmProfile).join(', ')
-    throw new Error(
-      `Invalid llm-profile "${profile}". Allowed values: ${allowedProfiles}.`
-    )
-  }
-
-  return profile as LlmProfile
-}
-
 export function getUseValidateCc(): boolean {
   const value =
     getInputValue(
@@ -244,24 +218,27 @@ export function getAutoCreatePrs(): boolean {
   return value === 'true'
 }
 
-export function getExperiment(): boolean {
-  const value =
-    getInputValue('experiment', 'INPUT_EXPERIMENT', 'APPSECAI_EXPERIMENT') ||
-    'false'
+export function getDebug(): boolean {
+  const value = getInputValue('debug', 'INPUT_DEBUG') || 'false'
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid experiment value "${value}". Must be "true" or "false". Using default: false`
+      `Invalid debug value "${value}". Must be "true" or "false". Using default: false`
     )
     return false
   }
   return value === 'true'
 }
 
-export function getDebug(): boolean {
-  const value = getInputValue('debug', 'INPUT_DEBUG') || 'false'
+export function getAllowLongRunHandoff(): boolean {
+  const value =
+    getInputValue(
+      'allow-long-run-handoff',
+      'INPUT_ALLOW_LONG_RUN_HANDOFF',
+      'ALLOW_LONG_RUN_HANDOFF'
+    ) || 'false'
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid debug value "${value}". Must be "true" or "false". Using default: false`
+      `Invalid allow-long-run-handoff value "${value}". Must be "true" or "false". Using default: false`
     )
     return false
   }
@@ -301,123 +278,22 @@ export function getCommentModificationMode(): CommentModificationMode {
 }
 
 export function getPrAudience(): string {
-  return getInputValue('pr-audience', 'INPUT_PR_AUDIENCE', 'PR_AUDIENCE')
-}
-
-export function getRegressionEvidenceBaseRef(): string {
-  return getInputValue(
-    'regression-evidence-base-ref',
-    'INPUT_REGRESSION_EVIDENCE_BASE_REF',
-    'REGRESSION_EVIDENCE_BASE_REF'
-  )
-}
-
-export function getRegressionEvidenceBaseSha(): string {
-  return getInputValue(
-    'regression-evidence-base-sha',
-    'INPUT_REGRESSION_EVIDENCE_BASE_SHA',
-    'REGRESSION_EVIDENCE_BASE_SHA'
-  )
-}
-
-export function getRegressionEvidenceHeadRef(): string {
-  return getInputValue(
-    'regression-evidence-head-ref',
-    'INPUT_REGRESSION_EVIDENCE_HEAD_REF',
-    'REGRESSION_EVIDENCE_HEAD_REF'
-  )
-}
-
-export function getRegressionEvidenceHeadSha(): string {
-  return getInputValue(
-    'regression-evidence-head-sha',
-    'INPUT_REGRESSION_EVIDENCE_HEAD_SHA',
-    'REGRESSION_EVIDENCE_HEAD_SHA'
-  )
-}
-
-export function getRegressionEvidenceCoverageArtifacts(): string {
-  return getInputValue(
-    'regression-evidence-coverage-artifacts',
-    'INPUT_REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS',
-    'REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS'
-  )
-}
-
-export function getRegressionEvidenceTestCommands(): string {
-  return getInputValue(
-    'regression-evidence-test-commands',
-    'INPUT_REGRESSION_EVIDENCE_TEST_COMMANDS',
-    'REGRESSION_EVIDENCE_TEST_COMMANDS'
-  )
-}
-
-export function getRegressionEvidenceOutputJsonPath(): string {
-  return (
-    getInputValue(
-      'regression-evidence-output-json-path',
-      'INPUT_REGRESSION_EVIDENCE_OUTPUT_JSON_PATH',
-      'REGRESSION_EVIDENCE_OUTPUT_JSON_PATH'
-    ) || 'regression-evidence.json'
-  )
-}
-
-export function getRegressionEvidenceOutputMarkdownPath(): string {
-  return (
-    getInputValue(
-      'regression-evidence-output-markdown-path',
-      'INPUT_REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH',
-      'REGRESSION_EVIDENCE_OUTPUT_MARKDOWN_PATH'
-    ) || 'regression-evidence.md'
-  )
-}
-
-export function getRegressionEvidenceAllowPartial(): boolean {
-  const value =
-    getInputValue(
-      'regression-evidence-allow-partial',
-      'INPUT_REGRESSION_EVIDENCE_ALLOW_PARTIAL',
-      'REGRESSION_EVIDENCE_ALLOW_PARTIAL'
-    ) || 'true'
-  if (value !== 'true' && value !== 'false') {
-    core.warning(
-      `Invalid regression-evidence-allow-partial value "${value}". Must be "true" or "false". Using default: true`
-    )
-    return true
+  const actionInput = core.getInput('pr-audience')
+  if (actionInput !== '') {
+    return actionInput
   }
-  return value === 'true'
-}
 
-export function getRegressionEvidenceFailOnAtRisk(): boolean {
-  const value =
-    getInputValue(
-      'regression-evidence-fail-on-at-risk',
-      'INPUT_REGRESSION_EVIDENCE_FAIL_ON_AT_RISK',
-      'REGRESSION_EVIDENCE_FAIL_ON_AT_RISK'
-    ) || 'false'
-  if (value !== 'true' && value !== 'false') {
-    core.warning(
-      `Invalid regression-evidence-fail-on-at-risk value "${value}". Must be "true" or "false". Using default: false`
-    )
-    return false
+  const inputEnvValue = process.env.INPUT_PR_AUDIENCE
+  if (inputEnvValue !== undefined && inputEnvValue !== '') {
+    return inputEnvValue
   }
-  return value === 'true'
-}
 
-export function getRegressionEvidencePublishComment(): boolean {
-  const value =
-    getInputValue(
-      'regression-evidence-publish-comment',
-      'INPUT_REGRESSION_EVIDENCE_PUBLISH_COMMENT',
-      'REGRESSION_EVIDENCE_PUBLISH_COMMENT'
-    ) || 'false'
-  if (value !== 'true' && value !== 'false') {
-    core.warning(
-      `Invalid regression-evidence-publish-comment value "${value}". Must be "true" or "false". Using default: false`
-    )
-    return false
+  const workflowEnvValue = process.env.PR_AUDIENCE
+  if (workflowEnvValue !== undefined && workflowEnvValue !== '') {
+    return workflowEnvValue
   }
-  return value === 'true'
+
+  return ''
 }
 
 export function getGroupingEnabled(): boolean {

@@ -1,7 +1,4 @@
 // src/main.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
 import { readInputFiles, resolveInputFilePaths } from './file.js'
@@ -19,8 +16,7 @@ import {
   SubmitRunOutput,
   RunProcessTracking,
   RunSummary,
-  GroupingConfig,
-  ProcessingModeExternal
+  GroupingConfig
 } from './types.js'
 import { LogLabels, getConsoleBranding, PollingConfig } from './constants.js'
 import {
@@ -36,25 +32,14 @@ import {
   getAutoCreatePrs,
   getDebug,
   getToken,
-  getRegressionEvidenceBaseRef,
-  getRegressionEvidenceBaseSha,
-  getRegressionEvidenceHeadRef,
-  getRegressionEvidenceHeadSha,
-  getRegressionEvidenceCoverageArtifacts,
-  getRegressionEvidenceTestCommands,
-  getRegressionEvidenceOutputJsonPath,
-  getRegressionEvidenceOutputMarkdownPath,
-  getRegressionEvidenceAllowPartial,
-  getRegressionEvidenceFailOnAtRisk,
-  getRegressionEvidencePublishComment,
   getGroupingEnabled,
   getGroupingStrategy,
-  getLlmProfile,
   getMaxVulnerabilitiesPerPr,
   getGroupingStage,
   getUpdateContext,
   getFile,
-  getFiles
+  getFiles,
+  getAllowLongRunHandoff
 } from './input.js'
 import {
   writeJobSummary,
@@ -63,14 +48,6 @@ import {
 } from './utils.js'
 import { fetchPrTitles } from './titles.js'
 import { fetchAndLogServerVersion } from './version-service.js'
-import {
-  RegressionEvidenceStatus,
-  generateRegressionEvidence,
-  parseRegressionEvidenceArtifactListInput,
-  parseRegressionEvidenceTestCommandsInput,
-  publishRegressionEvidenceCommentFromContext
-} from './regression-evidence.js'
-
 /**
  * Log all input configuration in a collapsible group
  */
@@ -87,34 +64,6 @@ function logConfiguration(filePaths: string[]): void {
   core.info(`Validate Method: ${getValidateMethod()}`)
   core.info(`Use Remediate Loop CC: ${getUseRemediateLoopCc()}`)
   core.info(`Auto Create PRs: ${getAutoCreatePrs()}`)
-  core.info(`LLM Profile: ${getLlmProfile() || '(server default)'}`)
-  if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
-    core.info(`Regression Evidence Base Ref: ${getRegressionEvidenceBaseRef()}`)
-    core.info(`Regression Evidence Base SHA: ${getRegressionEvidenceBaseSha()}`)
-    core.info(`Regression Evidence Head Ref: ${getRegressionEvidenceHeadRef()}`)
-    core.info(`Regression Evidence Head SHA: ${getRegressionEvidenceHeadSha()}`)
-    core.info(
-      `Regression Evidence Coverage Artifacts: ${getRegressionEvidenceCoverageArtifacts()}`
-    )
-    core.info(
-      `Regression Evidence Test Commands: ${getRegressionEvidenceTestCommands()}`
-    )
-    core.info(
-      `Regression Evidence Output JSON Path: ${getRegressionEvidenceOutputJsonPath()}`
-    )
-    core.info(
-      `Regression Evidence Output Markdown Path: ${getRegressionEvidenceOutputMarkdownPath()}`
-    )
-    core.info(
-      `Regression Evidence Allow Partial: ${getRegressionEvidenceAllowPartial()}`
-    )
-    core.info(
-      `Regression Evidence Fail On At Risk: ${getRegressionEvidenceFailOnAtRisk()}`
-    )
-    core.info(
-      `Regression Evidence Publish Comment: ${getRegressionEvidencePublishComment()}`
-    )
-  }
   const groupingEnabled = getGroupingEnabled()
   core.info(`Grouping Enabled: ${groupingEnabled}`)
   if (groupingEnabled) {
@@ -126,64 +75,11 @@ function logConfiguration(filePaths: string[]): void {
   core.endGroup()
 }
 
-async function runRegressionEvidenceMode(): Promise<void> {
-  core.startGroup('Regression Evidence')
-  try {
-    const result = await generateRegressionEvidence({
-      cwd: process.cwd(),
-      baseRef: getRegressionEvidenceBaseRef() || null,
-      baseSha: getRegressionEvidenceBaseSha() || null,
-      headRef: getRegressionEvidenceHeadRef() || null,
-      headSha: getRegressionEvidenceHeadSha() || null,
-      coverageArtifactPaths: parseRegressionEvidenceArtifactListInput(
-        getRegressionEvidenceCoverageArtifacts()
-      ),
-      testCommands: parseRegressionEvidenceTestCommandsInput(
-        getRegressionEvidenceTestCommands()
-      ),
-      outputJsonPath: getRegressionEvidenceOutputJsonPath(),
-      outputMarkdownPath: getRegressionEvidenceOutputMarkdownPath(),
-      allowPartial: getRegressionEvidenceAllowPartial()
-    })
-
-    core.setOutput('regression-evidence-status', result.artifact.status)
-    core.setOutput('regression-evidence-json-path', result.jsonPath)
-    core.setOutput('regression-evidence-markdown-path', result.markdownPath)
-
-    core.summary.addRaw(result.markdown)
-    await core.summary.write()
-    core.info('Regression evidence artifacts generated.')
-
-    if (getRegressionEvidencePublishComment()) {
-      const token =
-        getToken() || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
-      const action = await publishRegressionEvidenceCommentFromContext(
-        result.markdown,
-        token || ''
-      )
-      if (action !== 'skipped') {
-        core.info(`Regression evidence PR comment ${action}.`)
-      }
-    }
-
-    if (
-      getRegressionEvidenceFailOnAtRisk() &&
-      result.artifact.status === RegressionEvidenceStatus.AT_RISK
-    ) {
-      throw new Error(
-        'Regression evidence status is at_risk and fail-on-at-risk is enabled.'
-      )
-    }
-  } finally {
-    core.endGroup()
-  }
-}
-
 /**
  * Build the user-facing message for a paused run.
  *
  * A paused run is a distinct, non-failure outcome: the server has temporarily
- * halted work (e.g. sustained Bedrock throttling) but preserved progress and
+ * halted work (e.g. sustained provider throttling) but preserved progress and
  * will resume automatically once capacity returns. The optional reason is
  * surfaced when the server provides one.
  */
@@ -191,11 +87,23 @@ export function buildPausedMessage(reason?: string | null): string {
   const trimmedReason = reason?.trim()
   const detail = trimmedReason
     ? `: ${trimmedReason}`
-    : ': sustained Bedrock throttling'
+    : ': sustained provider throttling'
   return (
     `Run paused${detail} — work preserved; it will resume automatically ` +
     'when capacity returns. Track it in the AppSecAI dashboard.'
   )
+}
+
+function setRunEvidenceOutputs(
+  runId: string | null | undefined,
+  status: string,
+  dashboardUrl?: string,
+  complete = false
+): void {
+  core.setOutput('run-id', runId ?? '')
+  core.setOutput('run-status', status)
+  core.setOutput('run-complete', complete ? 'true' : 'false')
+  core.setOutput('dashboard-url', dashboardUrl ?? '')
 }
 
 export async function run(): Promise<void> {
@@ -209,6 +117,7 @@ export async function run(): Promise<void> {
   const file: string = getFile()
   const files: string = getFiles()
   const isDebug = getDebug()
+  const allowLongRunHandoff = getAllowLongRunHandoff()
 
   // Polling configuration for status checks (from constants.ts)
   const pollDelay = PollingConfig.POLL_DELAY_MS
@@ -226,8 +135,11 @@ export async function run(): Promise<void> {
   let monitoringIndeterminate = false
   let runStillActiveAfterPollingLimit = false
   let productRunFailureMessage: string | null = null
+  let pollingLimitFailureMessage: string | null = null
   let runPausedMessage: string | null = null
   let runStillProcessingMessage: string | null = null
+  let runStillProcessingStatus: string | null = null
+  let finalRunStatusOutput = ''
 
   try {
     filePaths = resolveInputFilePaths(file, files)
@@ -244,13 +156,6 @@ export async function run(): Promise<void> {
     // Log configuration in collapsible group only if debug is enabled
     if (isDebug) {
       logConfiguration(filePaths)
-    }
-
-    if (getMode() === ProcessingModeExternal.REGRESSION_EVIDENCE) {
-      await runRegressionEvidenceMode()
-      success = true
-      core.setOutput('message', 'Regression evidence generated successfully.')
-      return
     }
 
     // Step 1: Read the file inputs
@@ -297,11 +202,19 @@ export async function run(): Promise<void> {
 
     // Step 3: Poll for status (non-critical failure)
     if (submitOutput.run_id) {
+      const cleanupApiUrl = getApiUrl()
       store.id = submitOutput.run_id
       store.organizationId = submitOutput.organization_id
       core.saveState('runId', submitOutput.run_id)
       core.saveState('organizationId', submitOutput.organization_id ?? '')
-      core.saveState('apiUrl', getApiUrl())
+      core.saveState('apiUrl', cleanupApiUrl)
+      finalRunStatusOutput = 'submitted'
+
+      const cancelAuthToken = getToken()
+      if (cancelAuthToken) {
+        core.setSecret(cancelAuthToken)
+        core.saveState('cancelAuthToken', cancelAuthToken)
+      }
 
       core.info(
         `[${LogLabels.RUN_STATUS}] Monitoring analysis status for run ID '${store.id}'. This may take some time.`
@@ -317,6 +230,7 @@ export async function run(): Promise<void> {
           try {
             const finalStatus = await getRunStatus()
             if (finalStatus.status === 'completed') {
+              finalRunStatusOutput = 'completed'
               if (finalStatus.processTracking) {
                 finalProcessTracking =
                   finalStatus.processTracking as RunProcessTracking
@@ -328,6 +242,7 @@ export async function run(): Promise<void> {
                 finalDashboardUrl = finalStatus.dashboard_url
               }
             } else if (finalStatus.status === 'paused') {
+              finalRunStatusOutput = 'paused'
               // Run is paused (non-failure): report it clearly rather than
               // treating the indeterminate timeout as a degraded outcome.
               runPausedMessage = buildPausedMessage(
@@ -335,15 +250,20 @@ export async function run(): Promise<void> {
               )
               runStillActiveAfterPollingLimit = true
             } else if (finalStatus.status === 'failed') {
+              finalRunStatusOutput = 'failed'
               productRunFailureMessage = finalStatus.error
                 ? `Product run failed: ${finalStatus.error}`
                 : 'Product run failed.'
             } else {
+              finalRunStatusOutput = finalStatus.status || 'processing'
               runStillActiveAfterPollingLimit =
                 finalStatus.status !== 'network_error'
               monitoringIndeterminate = !runStillActiveAfterPollingLimit
               const statusDescription =
                 finalStatus.status || 'unknown non-terminal status'
+              if (finalStatus.dashboard_url) {
+                finalDashboardUrl = finalStatus.dashboard_url
+              }
               const dashboardText = finalStatus.dashboard_url
                 ? ` Dashboard: ${finalStatus.dashboard_url}`
                 : ''
@@ -353,13 +273,23 @@ export async function run(): Promise<void> {
                   dashboardText
               )
               if (runStillActiveAfterPollingLimit) {
-                runStillProcessingMessage =
-                  `AppSecAI run ${store.id} is still processing after the GitHub Action monitoring window. ` +
-                  'The server accepted the run and work is continuing; monitor the AppSecAI dashboard for final results.' +
-                  dashboardText
+                if (allowLongRunHandoff) {
+                  runStillProcessingStatus = statusDescription
+                  runStillProcessingMessage =
+                    `AppSecAI run ${store.id} is still processing after the GitHub Action monitoring window. ` +
+                    'The server accepted the run and work is continuing; monitor the AppSecAI dashboard for final results.' +
+                    dashboardText
+                } else {
+                  pollingLimitFailureMessage =
+                    `AppSecAI run ${store.id} did not reach a terminal status before the GitHub Action monitoring window expired ` +
+                    `(last status: ${statusDescription}). No final summary is available, so the action is failing closed. ` +
+                    'Set allow-long-run-handoff: true only for workflows that intentionally do not gate on completed analysis.' +
+                    dashboardText
+                }
               }
             }
           } catch (finalStatusError) {
+            finalRunStatusOutput = 'unknown'
             monitoringIndeterminate = true
             runStillActiveAfterPollingLimit = true
             const errorMessage =
@@ -384,6 +314,9 @@ export async function run(): Promise<void> {
         if (pollResult?.dashboard_url) {
           finalDashboardUrl = pollResult.dashboard_url
         }
+        if (pollResult?.status) {
+          finalRunStatusOutput = pollResult.status
+        }
         if (pollResult?.status === 'failed') {
           productRunFailureMessage = pollResult.error
             ? `Product run failed: ${pollResult.error}`
@@ -398,6 +331,7 @@ export async function run(): Promise<void> {
           runStillActiveAfterPollingLimit = true
         }
       } catch (pollError) {
+        finalRunStatusOutput = 'unknown'
         monitoringIndeterminate = true
         runStillActiveAfterPollingLimit = true
         // This is a "soft" failure. Log a warning but let the process complete
@@ -409,6 +343,9 @@ export async function run(): Promise<void> {
 
     if (productRunFailureMessage) {
       throw new Error(productRunFailureMessage)
+    }
+    if (pollingLimitFailureMessage) {
+      throw new Error(pollingLimitFailureMessage)
     }
 
     success = true
@@ -423,6 +360,11 @@ export async function run(): Promise<void> {
       // dashboard is the source of truth for final results.
       core.notice(runStillProcessingMessage)
       core.setOutput('message', runStillProcessingMessage)
+      core.setOutput('run-status', runStillProcessingStatus ?? 'active')
+      core.setOutput('run-complete', 'false')
+      if (finalDashboardUrl) {
+        core.setOutput('dashboard-url', finalDashboardUrl)
+      }
     } else {
       core.setOutput('message', 'Processing completed successfully.')
     }
@@ -456,6 +398,9 @@ export async function run(): Promise<void> {
 
     core.error(errorMessage)
     core.setFailed(errorMessage)
+    if (!finalRunStatusOutput) {
+      finalRunStatusOutput = store.id ? 'failed' : 'not_created'
+    }
   } finally {
     // Always try to finalize and get summary when we have a run ID
     // This ensures summary data is available even on timeout or failure
@@ -477,6 +422,9 @@ export async function run(): Promise<void> {
       // Use finalize summary if we don't already have one from polling
       if (finalizeSummary && !finalSummary) {
         finalSummary = finalizeSummary
+      }
+      if (!finalRunStatusOutput) {
+        finalRunStatusOutput = 'completed'
       }
     } else if (store.id) {
       core.warning(
@@ -518,6 +466,14 @@ export async function run(): Promise<void> {
         ? new Map(Object.entries(finalSummary.issue_titles))
         : undefined
     const dashboardUrl = finalDashboardUrl ?? getDashboardUrl(getApiUrl())
+    setRunEvidenceOutputs(
+      store.id || null,
+      finalRunStatusOutput || (store.id ? 'unknown' : 'not_created'),
+      store.id ? dashboardUrl : undefined,
+      success &&
+        !runStillActiveAfterPollingLimit &&
+        finalRunStatusOutput === 'completed'
+    )
 
     // Build grouping config for summary display
     const groupingEnabled = getGroupingEnabled()

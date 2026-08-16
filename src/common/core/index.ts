@@ -1,7 +1,4 @@
 // src/common/core/index.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 import * as core from '@actions/core'
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
@@ -23,12 +20,10 @@ export interface SubmitPayloadOptions {
   createIssuesForIncompleteRemediations: boolean
   commentModificationMode: string
   prAudience?: string
-  llmProfile?: string
   maxVulnerabilitiesPerPr?: number
   groupingStrategy?: string
   groupingStage?: string
   allowMissingRepoAccess?: boolean
-  experiment?: boolean
 }
 
 export interface StatusRequestOptions {
@@ -109,9 +104,6 @@ export function buildSubmitFormData(
   }
 
   formData.append('processing_mode', payload.processingMode)
-  if (payload.llmProfile !== undefined) {
-    formData.append('llm_profile', payload.llmProfile)
-  }
   formData.append('auto_create_prs', String(payload.autoCreatePrs))
   formData.append(
     'create_issues_for_incomplete_remediations',
@@ -142,9 +134,6 @@ export function buildSubmitFormData(
       'allow_missing_repo_access',
       String(payload.allowMissingRepoAccess)
     )
-  }
-  if (payload.experiment === true) {
-    formData.append('experiment', 'true')
   }
 
   return formData

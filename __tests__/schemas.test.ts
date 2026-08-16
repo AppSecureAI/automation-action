@@ -1,7 +1,4 @@
 // __tests__/schemas.test.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 /**
  * Unit tests for src/schemas.ts
@@ -430,13 +427,13 @@ describe('schemas.ts', () => {
       const parsed = ResponseStatusSchema.safeParse({
         ...testData,
         run_status: 'paused',
-        status_reason: 'sustained Bedrock throttling'
+        status_reason: 'sustained provider throttling'
       })
 
       // A paused status must validate; otherwise it would surface as an error.
       expect(parsed.success).toBe(true)
       expect(parsed.data?.run_status).toBe('paused')
-      expect(parsed.data?.status_reason).toBe('sustained Bedrock throttling')
+      expect(parsed.data?.status_reason).toBe('sustained provider throttling')
     })
 
     test('accepts pause_reason on a paused run_status', () => {

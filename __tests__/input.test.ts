@@ -1,7 +1,4 @@
 // __tests__/input.test.ts
-// Copyright (c) 2026 AppSecAI, Inc. All rights reserved.
-// This software and its source code are the proprietary information of AppSecAI, Inc.
-// Unauthorized copying, modification, distribution, or use of this software is strictly prohibited.
 
 /**
  * Unit tests for src/input.ts
@@ -21,25 +18,15 @@ const {
   getTriageMethod,
   getUseRemediateCc,
   getRemediateMethod,
-  getLlmProfile,
   getUseValidateCc,
   getValidateMethod,
   getUseRemediateLoopCc,
   getAutoCreatePrs,
   getDebug,
+  getAllowLongRunHandoff,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
   getPrAudience,
-  getRegressionEvidenceBaseRef,
-  getRegressionEvidenceBaseSha,
-  getRegressionEvidenceHeadRef,
-  getRegressionEvidenceHeadSha,
-  getRegressionEvidenceCoverageArtifacts,
-  getRegressionEvidenceTestCommands,
-  getRegressionEvidenceOutputJsonPath,
-  getRegressionEvidenceOutputMarkdownPath,
-  getRegressionEvidenceAllowPartial,
-  getRegressionEvidenceFailOnAtRisk,
   getGroupingEnabled,
   getGroupingStrategy,
   isGroupingStrategyConfigured,
@@ -53,7 +40,6 @@ const {
 const {
   ProcessingModeExternal,
   CommentModificationMode,
-  LlmProfile,
   GroupingStrategy,
   GroupingStage
 } = await import('../src/types.js')
@@ -73,12 +59,12 @@ describe('input.ts', () => {
       'INPUT_API_URL',
       'INPUT_TOKEN',
       'INPUT_DEBUG',
+      'INPUT_ALLOW_LONG_RUN_HANDOFF',
       'INPUT_PROCESSING_MODE',
       'INPUT_USE_TRIAGE_CC',
       'INPUT_TRIAGE_METHOD',
       'INPUT_USE_REMEDIATE_CC',
       'INPUT_REMEDIATE_METHOD',
-      'INPUT_LLM_PROFILE',
       'INPUT_USE_VALIDATE_CC',
       'INPUT_VALIDATE_METHOD',
       'INPUT_USE_REMEDIATE_LOOP_CC',
@@ -86,7 +72,6 @@ describe('input.ts', () => {
       'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'INPUT_COMMENT_MODIFICATION_MODE',
       'INPUT_PR_AUDIENCE',
-      'INPUT_LLM_PROFILE',
       'INPUT_REGRESSION_EVIDENCE_BASE_REF',
       'INPUT_REGRESSION_EVIDENCE_BASE_SHA',
       'INPUT_REGRESSION_EVIDENCE_HEAD_REF',
@@ -108,7 +93,6 @@ describe('input.ts', () => {
       'TRIAGE_METHOD',
       'USE_REMEDIATE_CC',
       'REMEDIATE_METHOD',
-      'APPSECAI_LLM_PROFILE',
       'USE_VALIDATE_CC',
       'VALIDATE_METHOD',
       'USE_REMEDIATE_LOOP_CC',
@@ -116,7 +100,6 @@ describe('input.ts', () => {
       'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'COMMENT_MODIFICATION_MODE',
       'PR_AUDIENCE',
-      'LLM_PROFILE',
       'REGRESSION_EVIDENCE_BASE_REF',
       'REGRESSION_EVIDENCE_BASE_SHA',
       'REGRESSION_EVIDENCE_HEAD_REF',
@@ -132,7 +115,8 @@ describe('input.ts', () => {
       'MAX_VULNERABILITIES_PER_PR',
       'GROUPING_STAGE',
       'UPDATE_CONTEXT',
-      'ALLOW_MISSING_REPO_ACCESS'
+      'ALLOW_MISSING_REPO_ACCESS',
+      'ALLOW_LONG_RUN_HANDOFF'
     ]
     configEnvVars.forEach((key) => {
       delete process.env[key]
@@ -309,16 +293,22 @@ describe('input.ts', () => {
       expect(getPrAudience()).toBe('security,engineering')
     })
 
-    it('prefers INPUT_PR_AUDIENCE environment variable over core.getInput', () => {
+    it('uses INPUT_PR_AUDIENCE environment variable when no explicit input is set', () => {
       process.env.INPUT_PR_AUDIENCE = 'engineering'
-      core.getInput.mockReturnValue('security')
+      core.getInput.mockReturnValue('')
       expect(getPrAudience()).toBe('engineering')
     })
 
-    it('prefers PR_AUDIENCE workflow environment variable', () => {
-      process.env.INPUT_PR_AUDIENCE = 'engineering'
+    it('prefers explicit pr-audience input over workflow environment fallback', () => {
+      process.env.INPUT_PR_AUDIENCE = 'security'
       process.env.PR_AUDIENCE = 'security,engineering'
-      core.getInput.mockReturnValue('security')
+      core.getInput.mockReturnValue('engineering')
+      expect(getPrAudience()).toBe('engineering')
+    })
+
+    it('uses PR_AUDIENCE workflow environment variable when no explicit input is set', () => {
+      process.env.PR_AUDIENCE = 'security,engineering'
+      core.getInput.mockReturnValue('')
       expect(getPrAudience()).toBe('security,engineering')
     })
   })
@@ -696,47 +686,6 @@ describe('input.ts', () => {
       })
     })
 
-    describe('getLlmProfile', () => {
-      it('returns undefined when omitted', () => {
-        core.getInput.mockReturnValue('')
-        expect(getLlmProfile()).toBeUndefined()
-      })
-
-      it.each([
-        LlmProfile.PROD,
-        LlmProfile.MOCK,
-        LlmProfile.CHEAP,
-        LlmProfile.BALANCED,
-        LlmProfile.FINAL
-      ])('returns valid profile %s', (profile) => {
-        core.getInput.mockImplementation((name) => {
-          if (name === 'llm-profile') return profile
-          return ''
-        })
-        expect(getLlmProfile()).toBe(profile)
-      })
-
-      it('throws for invalid value', () => {
-        core.getInput.mockImplementation((name) => {
-          if (name === 'llm-profile') return 'turbo'
-          return ''
-        })
-        expect(() => getLlmProfile()).toThrow('Invalid llm-profile')
-      })
-
-      it('prefers APPSECAI_LLM_PROFILE workflow env var', () => {
-        process.env.APPSECAI_LLM_PROFILE = LlmProfile.CHEAP
-        core.getInput.mockReturnValue(LlmProfile.FINAL)
-        expect(getLlmProfile()).toBe(LlmProfile.CHEAP)
-      })
-
-      it('prefers INPUT_LLM_PROFILE environment variable over core.getInput', () => {
-        process.env.INPUT_LLM_PROFILE = LlmProfile.BALANCED
-        core.getInput.mockReturnValue(LlmProfile.FINAL)
-        expect(getLlmProfile()).toBe(LlmProfile.BALANCED)
-      })
-    })
-
     describe('getGroupingEnabled', () => {
       it('returns true when grouping-enabled is true', () => {
         process.env.GROUPING_ENABLED = 'true'
@@ -1014,6 +963,43 @@ describe('input.ts', () => {
       })
     })
 
+    describe('getAllowLongRunHandoff', () => {
+      it('returns true when allow-long-run-handoff is true', () => {
+        process.env.ALLOW_LONG_RUN_HANDOFF = 'true'
+        expect(getAllowLongRunHandoff()).toBe(true)
+      })
+
+      it('returns false when allow-long-run-handoff is false', () => {
+        process.env.ALLOW_LONG_RUN_HANDOFF = 'false'
+        expect(getAllowLongRunHandoff()).toBe(false)
+      })
+
+      it('returns false by default', () => {
+        core.getInput.mockReturnValue('')
+        expect(getAllowLongRunHandoff()).toBe(false)
+      })
+
+      it('returns false and warns for invalid value', () => {
+        process.env.ALLOW_LONG_RUN_HANDOFF = 'invalid'
+        expect(getAllowLongRunHandoff()).toBe(false)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid allow-long-run-handoff value')
+        )
+      })
+
+      it('prefers ALLOW_LONG_RUN_HANDOFF workflow env var', () => {
+        process.env.ALLOW_LONG_RUN_HANDOFF = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getAllowLongRunHandoff()).toBe(true)
+      })
+
+      it('prefers INPUT_ALLOW_LONG_RUN_HANDOFF environment variable', () => {
+        process.env.INPUT_ALLOW_LONG_RUN_HANDOFF = 'true'
+        core.getInput.mockReturnValue('false')
+        expect(getAllowLongRunHandoff()).toBe(true)
+      })
+    })
+
     describe('getAllowMissingRepoAccess', () => {
       it('returns true when allow-missing-repo-access is true', () => {
         process.env.ALLOW_MISSING_REPO_ACCESS = 'true'
@@ -1049,53 +1035,6 @@ describe('input.ts', () => {
         core.getInput.mockReturnValue('false')
         expect(getAllowMissingRepoAccess()).toBe(true)
       })
-    })
-  })
-
-  describe('regression evidence getters', () => {
-    it('reads regression evidence refs and artifact paths from workflow env', () => {
-      process.env.REGRESSION_EVIDENCE_BASE_REF = 'origin/main'
-      process.env.REGRESSION_EVIDENCE_BASE_SHA = 'abc123'
-      process.env.REGRESSION_EVIDENCE_HEAD_REF = 'HEAD'
-      process.env.REGRESSION_EVIDENCE_HEAD_SHA = 'def456'
-      process.env.REGRESSION_EVIDENCE_COVERAGE_ARTIFACTS =
-        'coverage/a.json,coverage/b.json'
-      process.env.REGRESSION_EVIDENCE_TEST_COMMANDS =
-        'npm test -- {{tests}}\\nnpm run test:smoke'
-
-      expect(getRegressionEvidenceBaseRef()).toBe('origin/main')
-      expect(getRegressionEvidenceBaseSha()).toBe('abc123')
-      expect(getRegressionEvidenceHeadRef()).toBe('HEAD')
-      expect(getRegressionEvidenceHeadSha()).toBe('def456')
-      expect(getRegressionEvidenceCoverageArtifacts()).toBe(
-        'coverage/a.json,coverage/b.json'
-      )
-      expect(getRegressionEvidenceTestCommands()).toBe(
-        'npm test -- {{tests}}\\nnpm run test:smoke'
-      )
-    })
-
-    it('uses default output paths when not provided', () => {
-      core.getInput.mockReturnValue('')
-      expect(getRegressionEvidenceOutputJsonPath()).toBe(
-        'regression-evidence.json'
-      )
-      expect(getRegressionEvidenceOutputMarkdownPath()).toBe(
-        'regression-evidence.md'
-      )
-    })
-
-    it('parses boolean policy flags and warns on invalid values', () => {
-      process.env.REGRESSION_EVIDENCE_ALLOW_PARTIAL = 'true'
-      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'false'
-      expect(getRegressionEvidenceAllowPartial()).toBe(true)
-      expect(getRegressionEvidenceFailOnAtRisk()).toBe(false)
-
-      process.env.REGRESSION_EVIDENCE_ALLOW_PARTIAL = 'maybe'
-      process.env.REGRESSION_EVIDENCE_FAIL_ON_AT_RISK = 'maybe'
-      expect(getRegressionEvidenceAllowPartial()).toBe(true)
-      expect(getRegressionEvidenceFailOnAtRisk()).toBe(false)
-      expect(core.warning).toHaveBeenCalled()
     })
   })
 })

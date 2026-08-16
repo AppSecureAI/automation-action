@@ -62,6 +62,7 @@ jobs:
         uses: AppSecureAI/automation-action@v1
         with:
           file: opengrep-results.sarif
+          processing-mode: group_cc
 ```
 
 Run the workflow manually from the GitHub Actions tab for the first scan. The
@@ -115,16 +116,19 @@ jobs:
 | ------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------ | --------------- |
 | `file`                                      | input | One SARIF, JSON, CSV, TSV, or XML report to submit.                                                                      | unset           |
 | `files`                                     | input | Newline- or comma-separated report paths for a multi-scanner run.                                                        | unset           |
+| `processing-mode`                           | input | Product processing mode: `individual`, `individual_cc`, or `group_cc`.                                                   | `individual_cc` |
 | `update-context`                            | input | Request fresh repository security context before the scan.                                                               | `false`         |
 | `allow-missing-repo-access`                 | input | Start the run even if the AppSecAI GitHub App cannot yet push to the target repository (see below).                      | `false`         |
-| `PR_AUDIENCE`                               | env   | Ordered reviewer audiences for generated remediation PR content, for example `security,engineering`.                     | unset           |
-| `PROCESSING_MODE`                           | env   | Processing mode. Use `group_cc` to group related findings into fewer remediation pull requests.                          | `individual_cc` |
+| `allow-long-run-handoff`                    | input | Exit successfully when the run is still active after the monitoring window. Keep `false` for CI gates.                   | `false`         |
+| `pr-audience`                               | input | Ordered reviewer audiences for generated remediation PR content. This explicit input overrides `PR_AUDIENCE`.            | unset           |
+| `PR_AUDIENCE`                               | env   | Fallback ordered reviewer audiences when `pr-audience` is not set, for example `security,engineering`.                   | unset           |
+| `PROCESSING_MODE`                           | env   | Workflow-level override for `processing-mode`.                                                                           | unset           |
 | `AUTO_CREATE_PRS`                           | env   | Open remediation pull requests when fixes are ready.                                                                     | `false`         |
 | `CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS` | env   | Create GitHub Issues for eligible remediation outcomes that do not produce PRs, such as remediation validation failures. | `false`         |
 | `COMMENT_MODIFICATION_MODE`                 | env   | Controls how existing comments are preserved when remediation changes are prepared.                                      | `basic`         |
 
-Advanced settings such as grouping strategy, maximum vulnerabilities per PR, and
-regression evidence are documented in the
+Advanced settings such as grouping strategy and maximum vulnerabilities per PR
+are documented in the
 [configuration guide](https://portal.cloud.appsecai.io/docs/configuration).
 Scanner-specific examples are in the
 [scanner examples](https://portal.cloud.appsecai.io/docs/configuration#scanner-examples),
@@ -160,6 +164,18 @@ until the repository is added to the App. When left at the default (`false`),
 the action fails fast with a clear, actionable message if the App lacks push
 access.
 
+## Long-Running Scans
+
+By default, the action fails closed if AppSecAI has not reached a terminal run
+status by the end of the GitHub Action monitoring window. That keeps CI gates
+from passing before analysis results are available.
+
+For workflows that intentionally submit work and let teams review final results
+later in the portal, set `allow-long-run-handoff: true`. In that mode the action
+exits successfully, skips final summary computation, sets `run-complete` to
+`false`, and includes the latest status and dashboard URL outputs when the
+server provides them.
+
 ## Supported Inputs
 
 AppSecAI can process scanner outputs in SARIF, JSON, CSV, TSV, and XML formats.
@@ -172,6 +188,15 @@ After a run completes, review GitHub Actions logs, AppSecAI portal results, and
 any pull requests or issues created by the action. For help interpreting
 findings and fix outcomes, see the
 [results guide](https://portal.cloud.appsecai.io/docs/results).
+
+The action exposes these run outputs for downstream workflow steps:
+
+| Output          | Description                                                                    |
+| --------------- | ------------------------------------------------------------------------------ |
+| `run-id`        | AppSecAI run ID, when a run was created.                                       |
+| `run-status`    | Final observed run status, or `not_created` if no run was created.             |
+| `run-complete`  | `true` only when the run reached a completed terminal state during the action. |
+| `dashboard-url` | AppSecAI dashboard URL for the run, when available.                            |
 
 ## Troubleshooting
 
