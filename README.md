@@ -27,8 +27,6 @@ name: AppSecAI Security Analysis
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
