@@ -302,6 +302,47 @@ export interface ProcessStatus {
 }
 
 /**
+ * Product-owned activity that can overlap the legacy scanner lifecycle.
+ * Fields remain additive so the Action can report model progress without
+ * interpreting it as the run result.
+ */
+export interface ProcessActivityPartition {
+  partition_id?: string
+  label?: string
+  language?: string
+  status?: string
+  processed_items?: number
+  total_items?: number
+  progress_percentage?: number
+  completed_at?: string | null
+  terminal_reason?: string | null
+  [key: string]: unknown
+}
+
+export interface ProcessActivity {
+  activity_id?: string
+  label?: string
+  status?: string
+  progress_percentage?: number
+  processed_items?: number
+  total_items?: number
+  started_at?: string | null
+  completed_at?: string | null
+  terminal_reason?: string | null
+  error_message?: string | null
+  elapsed_ms?: number | null
+  budget_ms?: number | null
+  eta_ms?: number | null
+  eta_evidence?: string | null
+  partitions?: ProcessActivityPartition[]
+  [key: string]: unknown
+}
+
+export type ProcessActivities =
+  | Record<string, ProcessActivity>
+  | ProcessActivity[]
+
+/**
  * Process tracking for each stage of a run.
  * Mirrors Medusa/Product API's RunProcessTracking model.
  */
@@ -326,6 +367,8 @@ export interface RunProcessTracking {
   group_validate_status?: ProcessStatus
   /** Overall run status */
   overall_status?: ProcessStatus
+  /** Product-owned overlapping Find/model activities. */
+  activities?: ProcessActivities | null
 }
 
 /**

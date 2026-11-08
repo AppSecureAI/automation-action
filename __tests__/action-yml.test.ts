@@ -36,6 +36,29 @@ describe('action.yml', () => {
     expect(inputSource).toContain('ALLOW_MISSING_REPO_ACCESS')
   })
 
+  it('declares auto-remediate defaulting to true and plumbs it to the submit form', () => {
+    const actionYaml = fs.readFileSync(
+      path.join(process.cwd(), 'action.yml'),
+      'utf8'
+    )
+    const inputSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'input.ts'),
+      'utf8'
+    )
+    const runtimeSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'common', 'core', 'index.ts'),
+      'utf8'
+    )
+
+    expect(actionYaml).toMatch(
+      /\n {2}auto-remediate:\n(?: {4}.*\n| {6}.*\n)*? {4}default: 'true'\n/
+    )
+    expect(inputSource).toContain("'auto-remediate'")
+    expect(inputSource).toContain("'INPUT_AUTO_REMEDIATE'")
+    expect(inputSource).toContain("'AUTO_REMEDIATE'")
+    expect(runtimeSource).toContain("formData.append('auto_remediate'")
+  })
+
   it('passes the PR audience input through to the Node runtime', () => {
     const actionYaml = fs.readFileSync(
       path.join(process.cwd(), 'action.yml'),
@@ -70,6 +93,23 @@ describe('action.yml', () => {
     expect(actionYaml).toContain('dashboard-url:')
     expect(inputSource).toContain("'allow-long-run-handoff'")
     expect(inputSource).toContain('ALLOW_LONG_RUN_HANDOFF')
+  })
+
+  it('keeps compatibility default and provides a canonical Integration path', () => {
+    const workflow = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        '.github',
+        'workflows',
+        'scan-triage-remediation-integration.yml'
+      ),
+      'utf8'
+    )
+
+    expect(workflow).toContain('api_url:')
+    expect(workflow).toContain("default: 'https://gh.cloud.appsecai.io'")
+    expect(workflow).toContain("- 'https://portal.cloud.appsecai.io/medusa'")
+    expect(workflow).toContain('api-url: ${{ inputs.api_url }}')
   })
 
   it('declares and plumbs every supported Product processing mode', () => {

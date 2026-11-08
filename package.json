@@ -1,7 +1,7 @@
 {
   "name": "automation-action",
   "description": "Automation Action",
-  "version": "1.1.31",
+  "version": "1.2.0",
   "author": "AppSecAI",
   "type": "module",
   "private": true,
@@ -49,9 +49,9 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^7.0.0",
-    "axios": "^1.15.0",
+    "axios": "^1.21.0",
     "semver": "^7.7.3",
-    "zod": "^3.25.56"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/compat": "^1.2.9",
@@ -92,8 +92,8 @@
     "@octokit/request-error": "^5.1.1",
     "@octokit/core": "^5.2.2",
     "@octokit/graphql": "^7.1.1",
-    "undici": "7.29.0",
-    "follow-redirects": "^1.16.0",
+    "undici": "7.30.2",
+    "follow-redirects": "^1.16.3",
     "anymatch": {
       "picomatch": "^2.3.2"
     },

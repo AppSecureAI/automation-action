@@ -32,12 +32,14 @@ const mockIsGroupingStageConfigured = jest.fn()
 const mockGetPrAudience = jest.fn()
 const mockGetUpdateContext = jest.fn()
 const mockGetAllowMissingRepoAccess = jest.fn()
+const mockGetAutoRemediate = jest.fn()
 
 jest.mock('../src/input', () => ({
   __esModule: true,
   getApiUrl: mockGetApiUrl,
   getMode: mockGetMode,
   getAutoCreatePrs: mockGetAutoCreatePrs,
+  getAutoRemediate: mockGetAutoRemediate,
   getCreateIssuesForIncompleteRemediations:
     mockGetCreateIssuesForIncompleteRemediations,
   getCommentModificationMode: mockGetCommentModificationMode,
@@ -97,6 +99,7 @@ describe('service.ts', () => {
     mockGetApiUrl.mockReturnValue('https://some-url')
     mockGetMode.mockReturnValue('individual')
     mockGetAutoCreatePrs.mockReturnValue('true')
+    mockGetAutoRemediate.mockReturnValue(true)
     mockGetCreateIssuesForIncompleteRemediations.mockReturnValue('true')
     mockGetCommentModificationMode.mockReturnValue('basic')
     mockGetMaxVulnerabilitiesPerPr.mockReturnValue(10)
@@ -452,6 +455,61 @@ describe('service.ts', () => {
             msg.includes('update-context is set but is not supported')
           )
         ).toBe(false)
+      })
+    })
+
+    describe('auto_remediate form field', () => {
+      const savedEnv: Record<string, string | undefined> = {}
+      const envKeys = ['AUTO_REMEDIATE', 'INPUT_AUTO_REMEDIATE']
+
+      beforeEach(() => {
+        for (const k of envKeys) {
+          savedEnv[k] = process.env[k]
+          delete process.env[k]
+        }
+        axios.post.mockResolvedValue({
+          data: {
+            message: 'File processed successfully',
+            run_id: 'run-1',
+            steps: []
+          }
+        })
+      })
+
+      afterEach(() => {
+        for (const k of envKeys) {
+          if (savedEnv[k] === undefined) {
+            delete process.env[k]
+          } else {
+            process.env[k] = savedEnv[k]
+          }
+        }
+      })
+
+      it('sends auto_remediate=true by default so Action runs remediate', async () => {
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [url, formData] = axios.post.mock.calls[0] as [string, FormData]
+        expect(url).toBe('https://some-url/api-product/submit')
+        expect(formData.get('auto_remediate')).toBe('true')
+      })
+
+      it('sends auto_remediate=false when the auto-remediate input is false', async () => {
+        core.getInput.mockImplementation((name: string) => {
+          if (name === 'api-url') return 'https://some-url'
+          if (name === 'comment-modification-mode') return 'basic'
+          if (name === 'auto-remediate') return 'false'
+          return ''
+        })
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [string, FormData]
+        expect(formData.get('auto_remediate')).toBe('false')
+      })
+
+      it('sends auto_remediate=false when AUTO_REMEDIATE env var is false', async () => {
+        process.env.AUTO_REMEDIATE = 'false'
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [string, FormData]
+        expect(formData.get('auto_remediate')).toBe('false')
       })
     })
 
@@ -1020,6 +1078,32 @@ describe('service.ts', () => {
       expect(core.info).toHaveBeenCalledWith(
         '[Analysis Processing Status]: Remediation stage completed (no push) - marking run as complete'
       )
+    })
+
+    it('does not turn an independent model activity failure into a scan failure', async () => {
+      axios.get.mockResolvedValue({
+        data: {
+          message: 'Scan still running',
+          results: null,
+          process_tracking: {
+            find_status: { status: 'in_progress' },
+            activities: {
+              find: { activity_id: 'find', status: 'in_progress' },
+              code_model: {
+                activity_id: 'code_model',
+                status: 'failed',
+                terminal_reason: 'bounded_timeout'
+              }
+            }
+          },
+          summary: null
+        }
+      })
+
+      const result = await getStatus('test-id')
+
+      expect(result).toEqual(expect.objectContaining({ status: 'progress' }))
+      expect(result.error).toBeUndefined()
     })
   })
 

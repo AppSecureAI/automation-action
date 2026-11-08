@@ -77,17 +77,17 @@ export const RunSummarySchema = z.object({
   needs_manual_review_count: z.number().default(0),
   handled_error_count: z.number().default(0),
   has_handled_errors: z.boolean().default(false),
-  cwe_breakdown: z.record(z.number()).default({}),
-  severity_breakdown: z.record(z.number()).default({}),
+  cwe_breakdown: z.record(z.string(), z.number()).default({}),
+  severity_breakdown: z.record(z.string(), z.number()).default({}),
   remediation_success: z.number().default(0),
   remediation_failed: z.number().default(0),
   pr_urls: z.array(z.string()).default([]),
-  pr_titles: z.record(z.string()).optional(),
+  pr_titles: z.record(z.string(), z.string()).optional(),
   pr_count: z.number().default(0),
   customer_visible_pr_count: z.number().optional(),
   issue_urls: z.array(z.string()).default([]),
-  issue_titles: z.record(z.string()).nullable().optional(),
-  issue_titles_by_url: z.record(z.string()).nullable().optional(),
+  issue_titles: z.record(z.string(), z.string()).nullable().optional(),
+  issue_titles_by_url: z.record(z.string(), z.string()).nullable().optional(),
   issue_count: z.number().default(0),
   skipped_count: z.number().default(0),
   issues_validation_warning: z.number().optional(),
@@ -110,8 +110,8 @@ export const RunSummarySchema = z.object({
   push_failed_count: z.number().optional(),
   github_push_failure_count: z.number().optional(),
   not_attempted_count: z.number().optional(),
-  outcome_breakdown: z.record(z.number()).optional(),
-  push_outcome_breakdown: z.record(z.number()).optional()
+  outcome_breakdown: z.record(z.string(), z.number()).optional(),
+  push_outcome_breakdown: z.record(z.string(), z.number()).optional()
 })
 
 /**
@@ -137,7 +137,7 @@ export const RunResponseSchema = z.object({
 
 export const SolverResultSchema = z.object({
   count: z.number(),
-  extras: z.record(z.any())
+  extras: z.record(z.string(), z.any())
 })
 
 export const SolverResultsSchema = z.object({
@@ -193,18 +193,60 @@ export const ProcessStatusSchema = z.object({
   additional_context_required_count: z.number().default(0) // PRs with 'Additional Context Required' prefix
 })
 
-export const RunProcessTrackingSchema = z.object({
-  find_status: ProcessStatusSchema.optional(),
-  triage_status: ProcessStatusSchema.optional(),
-  remediate_status: ProcessStatusSchema.optional(),
-  validate_status: ProcessStatusSchema.optional(),
-  push_status: ProcessStatusSchema.optional(),
-  remediation_validation_loop_status: ProcessStatusSchema.optional(),
-  grouping_status: ProcessStatusSchema.optional(),
-  group_remediate_status: ProcessStatusSchema.optional(),
-  group_validate_status: ProcessStatusSchema.optional(),
-  overall_status: ProcessStatusSchema.optional()
-})
+const ProcessActivityPartitionSchema = z
+  .object({
+    partition_id: z.string().optional(),
+    label: z.string().optional(),
+    language: z.string().optional(),
+    status: z.string().optional(),
+    processed_items: z.number().optional(),
+    total_items: z.number().optional(),
+    progress_percentage: z.number().optional(),
+    completed_at: z.string().nullish(),
+    terminal_reason: z.string().nullish()
+  })
+  .loose()
+
+const ProcessActivitySchema = z
+  .object({
+    activity_id: z.string().optional(),
+    label: z.string().optional(),
+    status: z.string().default('not_started'),
+    progress_percentage: z.number().optional(),
+    processed_items: z.number().optional(),
+    total_items: z.number().optional(),
+    started_at: z.string().nullish(),
+    completed_at: z.string().nullish(),
+    terminal_reason: z.string().nullish(),
+    error_message: z.string().nullish(),
+    elapsed_ms: z.number().nullish(),
+    budget_ms: z.number().nullish(),
+    eta_ms: z.number().nullish(),
+    eta_evidence: z.string().nullish(),
+    partitions: z.array(ProcessActivityPartitionSchema).optional()
+  })
+  .loose()
+
+const ProcessActivitiesSchema = z.union([
+  z.record(z.string(), ProcessActivitySchema),
+  z.array(ProcessActivitySchema)
+])
+
+export const RunProcessTrackingSchema = z
+  .object({
+    find_status: ProcessStatusSchema.optional(),
+    triage_status: ProcessStatusSchema.optional(),
+    remediate_status: ProcessStatusSchema.optional(),
+    validate_status: ProcessStatusSchema.optional(),
+    push_status: ProcessStatusSchema.optional(),
+    remediation_validation_loop_status: ProcessStatusSchema.optional(),
+    grouping_status: ProcessStatusSchema.optional(),
+    group_remediate_status: ProcessStatusSchema.optional(),
+    group_validate_status: ProcessStatusSchema.optional(),
+    overall_status: ProcessStatusSchema.optional(),
+    activities: ProcessActivitiesSchema.nullable().optional()
+  })
+  .loose()
 
 export const ResponseStatusSchema = z.object({
   message: z.string(),

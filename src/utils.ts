@@ -3,6 +3,8 @@
 import * as core from '@actions/core'
 import {
   ProcessStatusValue,
+  type ProcessActivity,
+  type ProcessActivities,
   type ProcessStatus,
   type RunProcessTracking,
   type RunSummary
@@ -16,6 +18,11 @@ import {
 import { parsePrUrl } from './titles.js'
 import type { GroupingConfig } from './types.js'
 
+type LegacyProcessTrackingField = Exclude<
+  keyof RunProcessTracking,
+  'activities'
+>
+
 /**
  * Mapping of internal stage names to user-friendly display names
  */
@@ -26,6 +33,16 @@ export const STAGE_DISPLAY_NAMES: Record<string, string> = {
   remediation_loop: 'Remediation',
   remediation_validation_loop: 'Remediation',
   push: 'Pull Requests'
+}
+
+/** Names used by Product for activities that overlap scanner execution. */
+export const ACTIVITY_DISPLAY_NAMES: Record<string, string> = {
+  find: 'OpenGrep Find',
+  opengrep: 'OpenGrep Find',
+  code_model: 'Building internal code models',
+  codeModel: 'Building internal code models',
+  cpg: 'Building internal code models',
+  cpg_prewarm: 'Building internal code models'
 }
 
 /**
@@ -469,7 +486,7 @@ export function getDashboardUrl(apiUrl: string): string {
       parsed.protocol === 'https:' &&
       parsed.hostname.endsWith('.appsecai.net') &&
       labels.length >= 4 &&
-      (labels[0] === 'gh' || labels[0] === 'api') &&
+      (labels[0] === 'gh' || labels[0] === 'api' || labels[0] === 'app') &&
       labels[1] !== 'cloud'
 
     if (isNonProductionGateway) {
@@ -770,6 +787,128 @@ export function formatStageStatus(
   return `${displayName}: ${status.status}`
 }
 
+function activityEntries(
+  activities: ProcessActivities | null | undefined
+): Array<[string, ProcessActivity]> {
+  if (!activities) {
+    return []
+  }
+  if (Array.isArray(activities)) {
+    return activities.map((activity, index) => [
+      activity.activity_id ?? `activity_${index}`,
+      activity
+    ])
+  }
+  return Object.entries(activities)
+}
+
+function activityDisplayName(name: string, activity: ProcessActivity): string {
+  const normalized = name.replace(/-/g, '_')
+  return (
+    ACTIVITY_DISPLAY_NAMES[normalized] ??
+    ACTIVITY_DISPLAY_NAMES[activity.activity_id ?? ''] ??
+    activity.label ??
+    name
+  )
+}
+
+function activityPartitionCounts(activity: ProcessActivity): {
+  ready: number
+  total: number
+} {
+  const partitions = activity.partitions ?? []
+  const ready = partitions.filter((partition) =>
+    ['ready', 'completed', 'succeeded'].includes(
+      (partition.status ?? '').toLowerCase()
+    )
+  ).length
+  return { ready, total: partitions.length }
+}
+
+/**
+ * Format a model/Find activity independently of the Action's scan result.
+ * Activity failures are deliberately informational and never feed into the
+ * Action's success/failure decision.
+ */
+export function formatActivityStatus(
+  name: string,
+  activity: ProcessActivity
+): string {
+  const displayName = activityDisplayName(name, activity)
+  const status = (activity.status ?? 'not_started').toLowerCase()
+  const counts = activityPartitionCounts(activity)
+  const progress =
+    typeof activity.progress_percentage === 'number' &&
+    Number.isFinite(activity.progress_percentage)
+      ? Math.max(0, Math.min(100, activity.progress_percentage))
+      : null
+  const reason = activity.terminal_reason ?? activity.error_message
+  const isCompleted = ['completed', 'ready', 'succeeded'].includes(status)
+  const isFailed = [
+    'failed',
+    'skipped',
+    'timeout',
+    'timed_out',
+    'cancelled',
+    'canceled'
+  ].includes(status)
+
+  if (isFailed) {
+    return `${STATUS_ICONS.failed} ${displayName}: ${status === 'skipped' ? 'Skipped' : 'Failed'}${reason ? ` - ${reason}` : ''}`
+  }
+  if (isCompleted) {
+    const detail =
+      counts.total > 0
+        ? ` (${counts.ready}/${counts.total} partitions ready)`
+        : ''
+    return `${STATUS_ICONS.completed} ${displayName}: Completed${detail}`
+  }
+  if (status === 'not_started') {
+    return `${STATUS_ICONS.pending} ${displayName}: Pending`
+  }
+
+  const details: string[] = []
+  if (counts.total > 0) {
+    details.push(`${counts.ready}/${counts.total} partitions ready`)
+  } else if (
+    activity.processed_items !== undefined ||
+    activity.total_items !== undefined
+  ) {
+    details.push(
+      `${activity.processed_items ?? 0}/${activity.total_items ?? 0}`
+    )
+  }
+  if (progress !== null) {
+    details.push(`${progress.toFixed(0)}%`)
+  }
+  if (
+    typeof activity.eta_ms === 'number' &&
+    Number.isFinite(activity.eta_ms) &&
+    typeof activity.eta_evidence === 'string' &&
+    activity.eta_evidence.trim().length > 0
+  ) {
+    details.push(`ETA ${Math.ceil(activity.eta_ms / 1000)}s`)
+  }
+  return `${STATUS_ICONS.in_progress} ${displayName}: ${
+    status === 'initiated' ? 'Initializing...' : 'In Progress'
+  }${details.length > 0 ? ` (${details.join(', ')})` : ''}`
+}
+
+/** Log model/Find activity lines without changing run-result semantics. */
+export function logConcurrentActivities(
+  tracking: RunProcessTracking,
+  prefixLabel: string
+): void {
+  const hasLegacyFind = Boolean(tracking.find_status)
+  for (const [name, activity] of activityEntries(tracking.activities)) {
+    const normalized = name.replace(/-/g, '_').toLowerCase()
+    if (hasLegacyFind && ['find', 'opengrep'].includes(normalized)) {
+      continue
+    }
+    core.info(`${prefixLabel}: ${formatActivityStatus(name, activity)}`)
+  }
+}
+
 /**
  * Log all process tracking stages
  * @param tracking The RunProcessTracking object
@@ -786,7 +925,10 @@ export function logProcessTracking(
   }
 
   // Define the stages to display in order with user-friendly names
-  const stages: Array<{ field: keyof RunProcessTracking; name: string }> = [
+  const stages: Array<{
+    field: LegacyProcessTrackingField
+    name: string
+  }> = [
     { field: 'find_status', name: 'find' },
     { field: 'triage_status', name: 'triage' },
     { field: 'remediation_validation_loop_status', name: 'remediation_loop' },
@@ -809,6 +951,8 @@ export function logProcessTracking(
       core.info(`${prefixLabel}: ${formatted}`)
     }
   }
+
+  logConcurrentActivities(tracking, prefixLabel)
 }
 
 /**
@@ -1030,17 +1174,18 @@ export async function writeJobSummary(
   // Build the stages table
   if (tracking) {
     const stages = [
-      { field: 'find_status' as keyof RunProcessTracking, name: 'find' },
+      { field: 'find_status' as LegacyProcessTrackingField, name: 'find' },
       {
-        field: 'reconcile_status' as keyof RunProcessTracking,
+        field: 'reconcile_status' as LegacyProcessTrackingField,
         name: 'reconcile'
       },
-      { field: 'triage_status' as keyof RunProcessTracking, name: 'triage' },
+      { field: 'triage_status' as LegacyProcessTrackingField, name: 'triage' },
       {
-        field: 'remediation_validation_loop_status' as keyof RunProcessTracking,
+        field:
+          'remediation_validation_loop_status' as LegacyProcessTrackingField,
         name: 'remediation_loop'
       },
-      { field: 'push_status' as keyof RunProcessTracking, name: 'push' }
+      { field: 'push_status' as LegacyProcessTrackingField, name: 'push' }
     ]
 
     const tableData: Array<Array<{ data: string; header?: boolean }>> = [

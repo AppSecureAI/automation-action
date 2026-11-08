@@ -17,6 +17,7 @@ export interface RuntimeInputFile {
 export interface SubmitPayloadOptions {
   processingMode: string
   autoCreatePrs: boolean
+  autoRemediate: boolean
   createIssuesForIncompleteRemediations: boolean
   commentModificationMode: string
   prAudience?: string
@@ -105,6 +106,7 @@ export function buildSubmitFormData(
 
   formData.append('processing_mode', payload.processingMode)
   formData.append('auto_create_prs', String(payload.autoCreatePrs))
+  formData.append('auto_remediate', String(payload.autoRemediate))
   formData.append(
     'create_issues_for_incomplete_remediations',
     String(payload.createIssuesForIncompleteRemediations)

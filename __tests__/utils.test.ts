@@ -418,6 +418,9 @@ describe('utils.ts', () => {
       expect(getDashboardUrl('https://api.preview.appsecai.net:8443')).toBe(
         'https://app.preview.appsecai.net:8443/'
       )
+      expect(getDashboardUrl('https://app.prod.appsecai.net/medusa')).toBe(
+        'https://app.prod.appsecai.net/'
+      )
     })
 
     it('defaults customer-facing links to the production dashboard', () => {

@@ -23,6 +23,7 @@ describe('common core runtime', () => {
       {
         processingMode: 'individual_cc',
         autoCreatePrs: false,
+        autoRemediate: true,
         createIssuesForIncompleteRemediations: false,
         commentModificationMode: 'basic'
       }
@@ -30,6 +31,7 @@ describe('common core runtime', () => {
 
     expect(formData.get('processing_mode')).toBe('individual_cc')
     expect(formData.get('auto_create_prs')).toBe('false')
+    expect(formData.get('auto_remediate')).toBe('true')
     expect(formData.get('create_issues_for_incomplete_remediations')).toBe(
       'false'
     )
@@ -48,6 +50,7 @@ describe('common core runtime', () => {
       {
         processingMode: 'group_cc',
         autoCreatePrs: true,
+        autoRemediate: false,
         createIssuesForIncompleteRemediations: true,
         commentModificationMode: 'verbose',
         groupingStrategy: 'smart',
@@ -60,6 +63,7 @@ describe('common core runtime', () => {
     expect(formData.getAll('files')).toHaveLength(2)
     expect(formData.get('processing_mode')).toBe('group_cc')
     expect(formData.get('auto_create_prs')).toBe('true')
+    expect(formData.get('auto_remediate')).toBe('false')
     expect(formData.get('grouping_strategy')).toBe('smart')
     expect(formData.get('grouping_stage')).toBe('pre_remediation')
     expect(formData.get('experiment')).toBeNull()
@@ -78,6 +82,7 @@ describe('common core runtime', () => {
       {
         processingMode: 'individual_cc',
         autoCreatePrs: false,
+        autoRemediate: true,
         createIssuesForIncompleteRemediations: false,
         commentModificationMode: 'basic'
       }

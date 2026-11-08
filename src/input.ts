@@ -202,6 +202,26 @@ export function getUseRemediateLoopCc(): boolean {
   return value === 'true'
 }
 
+/**
+ * Whether the run should remediate findings after triage.
+ *
+ * GitHub Action runs remediate by default. Set `auto-remediate: false` for
+ * triage-only runs. The value is always sent to the submit API so the
+ * backend never falls back to its own (triage-only) default.
+ */
+export function getAutoRemediate(): boolean {
+  const value =
+    getInputValue('auto-remediate', 'INPUT_AUTO_REMEDIATE', 'AUTO_REMEDIATE') ||
+    'true'
+  if (value !== 'true' && value !== 'false') {
+    core.warning(
+      `Invalid auto-remediate value "${value}". Must be "true" or "false". Using default: true`
+    )
+    return true
+  }
+  return value === 'true'
+}
+
 export function getAutoCreatePrs(): boolean {
   const value =
     getInputValue(

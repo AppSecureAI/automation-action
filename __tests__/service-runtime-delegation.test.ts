@@ -30,6 +30,7 @@ const mockIsGroupingStageConfigured = jest.fn()
 const mockGetUpdateContext = jest.fn()
 const mockGetPrAudience = jest.fn()
 const mockGetAllowMissingRepoAccess = jest.fn()
+const mockGetAutoRemediate = jest.fn()
 
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('@actions/github', () => github)
@@ -46,6 +47,7 @@ jest.unstable_mockModule('../src/input.js', () => ({
   getApiUrl: mockGetApiUrl,
   getMode: mockGetMode,
   getAutoCreatePrs: mockGetAutoCreatePrs,
+  getAutoRemediate: mockGetAutoRemediate,
   getCreateIssuesForIncompleteRemediations:
     mockGetCreateIssuesForIncompleteRemediations,
   getCommentModificationMode: mockGetCommentModificationMode,
@@ -79,6 +81,7 @@ describe('service runtime delegation', () => {
     mockGetApiUrl.mockReturnValue('https://some-url')
     mockGetMode.mockReturnValue('individual_cc')
     mockGetAutoCreatePrs.mockReturnValue(false)
+    mockGetAutoRemediate.mockReturnValue(true)
     mockGetCreateIssuesForIncompleteRemediations.mockReturnValue(false)
     mockGetCommentModificationMode.mockReturnValue('basic')
     mockGetMaxVulnerabilitiesPerPr.mockReturnValue(10)
@@ -114,6 +117,7 @@ describe('service runtime delegation', () => {
       {
         processingMode: 'individual_cc',
         autoCreatePrs: false,
+        autoRemediate: true,
         createIssuesForIncompleteRemediations: false,
         commentModificationMode: 'basic',
         maxVulnerabilitiesPerPr: undefined,

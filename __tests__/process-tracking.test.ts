@@ -7,8 +7,12 @@ import * as core from '../__fixtures__/core.js'
 jest.unstable_mockModule('@actions/core', () => core)
 
 // Import after mocking
-const { formatStageStatus, logProcessTracking, getDisplayName } =
-  await import('../src/utils')
+const {
+  formatActivityStatus,
+  formatStageStatus,
+  logProcessTracking,
+  getDisplayName
+} = await import('../src/utils')
 
 describe('getDisplayName', () => {
   it('returns user-friendly name for find', () => {
@@ -1193,5 +1197,59 @@ describe('logProcessTracking', () => {
     expect(core.info).toHaveBeenCalledWith(
       '[RUN_STATUS]: ✅ Pull Requests: Completed (No customer-visible PRs created)'
     )
+  })
+
+  it('logs model activity beside scanner progress without duplicating legacy Find', () => {
+    logProcessTracking(
+      {
+        find_status: {
+          status: 'in_progress',
+          progress_percentage: 45,
+          total_items: 10,
+          processed_items: 4,
+          success_count: 4,
+          error_count: 0,
+          false_positive_count: 0,
+          self_validation_warning_count: 0,
+          self_validation_failure_count: 0,
+          additional_context_required_count: 0
+        },
+        activities: {
+          find: {
+            activity_id: 'find',
+            status: 'in_progress',
+            progress_percentage: 45
+          },
+          code_model: {
+            activity_id: 'code_model',
+            status: 'building',
+            partitions: [
+              { partition_id: 'python', status: 'ready' },
+              { partition_id: 'java', status: 'building' }
+            ]
+          }
+        }
+      },
+      '[RUN_STATUS]'
+    )
+
+    expect(core.info).toHaveBeenCalledWith(
+      '[RUN_STATUS]: ⏳ Building internal code models: In Progress (1/2 partitions ready)'
+    )
+    expect(
+      core.info.mock.calls.filter((call) =>
+        String(call[0]).includes('OpenGrep Find')
+      )
+    ).toHaveLength(0)
+  })
+
+  it('keeps activity failure informational', () => {
+    expect(
+      formatActivityStatus('code_model', {
+        activity_id: 'code_model',
+        status: 'failed',
+        terminal_reason: 'worker timeout'
+      })
+    ).toBe('❌ Building internal code models: Failed - worker timeout')
   })
 })

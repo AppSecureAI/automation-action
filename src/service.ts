@@ -21,6 +21,7 @@ import {
   getApiUrl,
   getMode,
   getAutoCreatePrs,
+  getAutoRemediate,
   getCreateIssuesForIncompleteRemediations,
   getCommentModificationMode,
   getGroupingStage,
@@ -743,7 +744,7 @@ const ACTIVE_RECONCILIATION_STATUSES = new Set([
 ])
 
 const RECONCILIATION_STAGE_LABELS: Array<{
-  key: keyof RunProcessTracking
+  key: Exclude<keyof RunProcessTracking, 'activities'>
   label: string
 }> = [
   { key: 'remediation_validation_loop_status', label: 'remediation' },
@@ -826,6 +827,9 @@ function buildSubmitPayloadOptions(mode: string): SubmitPayloadOptions {
   return {
     processingMode: mode,
     autoCreatePrs: getAutoCreatePrs(),
+    // auto_remediate is always sent: Hydra treats an omitted value as false,
+    // which would make every Action run triage-only.
+    autoRemediate: getAutoRemediate(),
     createIssuesForIncompleteRemediations:
       getCreateIssuesForIncompleteRemediations(),
     commentModificationMode: getCommentModificationMode(),

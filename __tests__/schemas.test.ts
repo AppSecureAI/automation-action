@@ -626,6 +626,32 @@ describe('schemas.ts', () => {
       expect(parsed.success).toBe(true)
     })
 
+    test('preserves concurrent Find and code-model activities', () => {
+      const testData = {
+        activities: {
+          find: {
+            activity_id: 'find',
+            status: 'in_progress',
+            progress_percentage: 45,
+            producer_extension: 'preserve-me'
+          },
+          code_model: {
+            activity_id: 'code_model',
+            status: 'building',
+            partitions: [
+              { partition_id: 'python', status: 'ready', cache_hit: true },
+              { partition_id: 'java', status: 'building' }
+            ]
+          }
+        }
+      }
+
+      const parsed = RunProcessTrackingSchema.safeParse(testData)
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.activities).toEqual(testData.activities)
+    })
+
     test('must handle legacy reconcile_status field gracefully by ignoring it', () => {
       const processStatus = {
         status: 'completed',

@@ -22,6 +22,7 @@ const {
   getValidateMethod,
   getUseRemediateLoopCc,
   getAutoCreatePrs,
+  getAutoRemediate,
   getDebug,
   getAllowLongRunHandoff,
   getCreateIssuesForIncompleteRemediations,
@@ -69,6 +70,7 @@ describe('input.ts', () => {
       'INPUT_VALIDATE_METHOD',
       'INPUT_USE_REMEDIATE_LOOP_CC',
       'INPUT_AUTO_CREATE_PRS',
+      'INPUT_AUTO_REMEDIATE',
       'INPUT_CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'INPUT_COMMENT_MODIFICATION_MODE',
       'INPUT_PR_AUDIENCE',
@@ -97,6 +99,7 @@ describe('input.ts', () => {
       'VALIDATE_METHOD',
       'USE_REMEDIATE_LOOP_CC',
       'AUTO_CREATE_PRS',
+      'AUTO_REMEDIATE',
       'CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS',
       'COMMENT_MODIFICATION_MODE',
       'PR_AUDIENCE',
@@ -997,6 +1000,53 @@ describe('input.ts', () => {
         process.env.INPUT_ALLOW_LONG_RUN_HANDOFF = 'true'
         core.getInput.mockReturnValue('false')
         expect(getAllowLongRunHandoff()).toBe(true)
+      })
+    })
+
+    describe('getAutoRemediate', () => {
+      it('returns true by default when no input or env var is set', () => {
+        core.getInput.mockReturnValue('')
+        expect(getAutoRemediate()).toBe(true)
+        expect(core.getInput).toHaveBeenCalledWith('auto-remediate')
+        expect(core.warning).not.toHaveBeenCalled()
+      })
+
+      it('returns false when the auto-remediate action input is false', () => {
+        core.getInput.mockImplementation((name: string) =>
+          name === 'auto-remediate' ? 'false' : ''
+        )
+        expect(getAutoRemediate()).toBe(false)
+        expect(core.warning).not.toHaveBeenCalled()
+      })
+
+      it('returns true when the auto-remediate action input is true', () => {
+        core.getInput.mockImplementation((name: string) =>
+          name === 'auto-remediate' ? 'true' : ''
+        )
+        expect(getAutoRemediate()).toBe(true)
+      })
+
+      it('returns default true and warns for an invalid value', () => {
+        core.getInput.mockImplementation((name: string) =>
+          name === 'auto-remediate' ? 'yes' : ''
+        )
+        expect(getAutoRemediate()).toBe(true)
+        expect(core.warning).toHaveBeenCalledWith(
+          'Invalid auto-remediate value "yes". Must be "true" or "false". Using default: true'
+        )
+      })
+
+      it('prefers INPUT_AUTO_REMEDIATE over the action input', () => {
+        process.env.INPUT_AUTO_REMEDIATE = 'false'
+        core.getInput.mockReturnValue('true')
+        expect(getAutoRemediate()).toBe(false)
+      })
+
+      it('prefers AUTO_REMEDIATE workflow env var over INPUT_AUTO_REMEDIATE', () => {
+        process.env.AUTO_REMEDIATE = 'false'
+        process.env.INPUT_AUTO_REMEDIATE = 'true'
+        core.getInput.mockReturnValue('true')
+        expect(getAutoRemediate()).toBe(false)
       })
     })
 

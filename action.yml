@@ -38,6 +38,13 @@ inputs:
     required: false
     default: individual_cc
 
+  auto-remediate:
+    description:
+      Remediate findings after triage. Defaults to true so Action runs produce
+      fixes. Set to 'false' for triage-only runs.
+    required: false
+    default: 'true'
+
   update-context:
     description: Trigger fresh security context extraction before the scan
     required: false
