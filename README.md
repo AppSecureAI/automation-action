@@ -110,22 +110,22 @@ jobs:
 
 ## Common Options
 
-| Setting                                     | Type  | Description                                                                                                                   | Default          |
-| ------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `api-url`                                   | input | Optional AppSecAI API base URL. Leave unset unless AppSecAI Support provides a custom endpoint.                               | standard service |
-| `file`                                      | input | One SARIF, JSON, CSV, TSV, or XML report to submit.                                                                           | unset            |
-| `files`                                     | input | Newline- or comma-separated report paths for a multi-scanner run.                                                             | unset            |
-| `processing-mode`                           | input | Product processing mode: `individual`, `individual_cc`, or `group_cc`.                                                        | `individual_cc`  |
-| `auto-remediate`                            | input | Remediate findings after triage. Set to `'false'` for triage-only runs. Overridden by `AUTO_REMEDIATE` when that env is set.  | `true`           |
-| `update-context`                            | input | Request fresh repository security context before the scan.                                                                    | `false`          |
-| `allow-missing-repo-access`                 | input | Start the run even if the AppSecAI GitHub App cannot yet push to the target repository (see below).                           | `false`          |
-| `allow-long-run-handoff`                    | input | Explicitly allow an active run with a dashboard URL to be handed off after the monitoring window; the default is fail-closed. | `false`          |
-| `pr-audience`                               | input | Ordered reviewer audiences for generated remediation PR content. This explicit input overrides `PR_AUDIENCE`.                 | unset            |
-| `PR_AUDIENCE`                               | env   | Fallback ordered reviewer audiences when `pr-audience` is not set, for example `security,engineering`.                        | unset            |
-| `PROCESSING_MODE`                           | env   | Workflow-level override for `processing-mode`.                                                                                | unset            |
-| `AUTO_CREATE_PRS`                           | env   | Open remediation pull requests when fixes are ready.                                                                          | `false`          |
-| `CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS` | env   | Create GitHub Issues for eligible remediation outcomes that do not produce PRs, such as remediation validation failures.      | `false`          |
-| `COMMENT_MODIFICATION_MODE`                 | env   | Controls how existing comments are preserved when remediation changes are prepared.                                           | `basic`          |
+| Setting                                     | Type  | Description                                                                                                                                                                          | Default          |
+| ------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
+| `api-url`                                   | input | Optional AppSecAI API base URL. Leave unset unless AppSecAI Support provides a custom endpoint.                                                                                      | standard service |
+| `file`                                      | input | One SARIF, JSON, CSV, TSV, or XML report to submit.                                                                                                                                  | unset            |
+| `files`                                     | input | Newline- or comma-separated report paths for a multi-scanner run.                                                                                                                    | unset            |
+| `processing-mode`                           | input | Product processing mode: `individual`, `individual_cc`, or `group_cc`.                                                                                                               | `individual_cc`  |
+| `auto-remediate`                            | input | Leave unset to use the organization setting (remediation is on by default); set `'true'` or `'false'` to override for this run. Overridden by `AUTO_REMEDIATE` when that env is set. | unset            |
+| `update-context`                            | input | Request fresh repository security context before the scan.                                                                                                                           | `false`          |
+| `allow-missing-repo-access`                 | input | Start the run even if the AppSecAI GitHub App cannot yet push to the target repository (see below).                                                                                  | `false`          |
+| `allow-long-run-handoff`                    | input | Explicitly allow an active run with a dashboard URL to be handed off after the monitoring window; the default is fail-closed.                                                        | `false`          |
+| `pr-audience`                               | input | Ordered reviewer audiences for generated remediation PR content. This explicit input overrides `PR_AUDIENCE`.                                                                        | unset            |
+| `PR_AUDIENCE`                               | env   | Fallback ordered reviewer audiences when `pr-audience` is not set, for example `security,engineering`.                                                                               | unset            |
+| `PROCESSING_MODE`                           | env   | Workflow-level override for `processing-mode`.                                                                                                                                       | unset            |
+| `AUTO_CREATE_PRS`                           | env   | Open remediation pull requests when fixes are ready.                                                                                                                                 | `false`          |
+| `CREATE_ISSUES_FOR_INCOMPLETE_REMEDIATIONS` | env   | Create GitHub Issues for eligible remediation outcomes that do not produce PRs, such as remediation validation failures.                                                             | `false`          |
+| `COMMENT_MODIFICATION_MODE`                 | env   | Controls how existing comments are preserved when remediation changes are prepared.                                                                                                  | `basic`          |
 
 Advanced settings such as grouping strategy and maximum vulnerabilities per PR
 are documented in the

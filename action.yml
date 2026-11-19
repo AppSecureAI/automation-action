@@ -40,10 +40,10 @@ inputs:
 
   auto-remediate:
     description:
-      Remediate findings after triage. Defaults to true so Action runs produce
-      fixes. Set to 'false' for triage-only runs.
+      Leave unset to use the organization setting (remediation is on by
+      default); set 'true' or 'false' to override for this run.
     required: false
-    default: 'true'
+    default: ''
 
   update-context:
     description: Trigger fresh security context extraction before the scan

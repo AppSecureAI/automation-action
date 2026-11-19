@@ -486,11 +486,39 @@ describe('service.ts', () => {
         }
       })
 
-      it('sends auto_remediate=true by default so Action runs remediate', async () => {
+      it('omits auto_remediate when unset so the organization setting applies', async () => {
         await submitRun(Buffer.from('{}'), 'file.json')
         const [url, formData] = axios.post.mock.calls[0] as [string, FormData]
         expect(url).toBe('https://some-url/api-product/submit')
+        expect(formData.has('auto_remediate')).toBe(false)
+        expect(formData.get('processing_mode')).toBe('individual_cc')
+      })
+
+      it('sends auto_remediate=true when the auto-remediate input is true', async () => {
+        core.getInput.mockImplementation((name: string) => {
+          if (name === 'api-url') return 'https://some-url'
+          if (name === 'comment-modification-mode') return 'basic'
+          if (name === 'auto-remediate') return 'true'
+          return ''
+        })
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [string, FormData]
         expect(formData.get('auto_remediate')).toBe('true')
+      })
+
+      it('warns and omits auto_remediate for an invalid input value', async () => {
+        core.getInput.mockImplementation((name: string) => {
+          if (name === 'api-url') return 'https://some-url'
+          if (name === 'comment-modification-mode') return 'basic'
+          if (name === 'auto-remediate') return 'maybe'
+          return ''
+        })
+        await submitRun(Buffer.from('{}'), 'file.json')
+        const [, formData] = axios.post.mock.calls[0] as [string, FormData]
+        expect(formData.has('auto_remediate')).toBe(false)
+        expect(core.warning).toHaveBeenCalledWith(
+          expect.stringContaining('Invalid auto-remediate value "maybe"')
+        )
       })
 
       it('sends auto_remediate=false when the auto-remediate input is false', async () => {

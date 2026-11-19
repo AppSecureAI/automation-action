@@ -1004,10 +1004,18 @@ describe('input.ts', () => {
     })
 
     describe('getAutoRemediate', () => {
-      it('returns true by default when no input or env var is set', () => {
+      it('returns undefined when no input or env var is set', () => {
         core.getInput.mockReturnValue('')
-        expect(getAutoRemediate()).toBe(true)
+        expect(getAutoRemediate()).toBeUndefined()
         expect(core.getInput).toHaveBeenCalledWith('auto-remediate')
+        expect(core.warning).not.toHaveBeenCalled()
+      })
+
+      it('returns undefined for a whitespace-only input', () => {
+        core.getInput.mockImplementation((name: string) =>
+          name === 'auto-remediate' ? '   ' : ''
+        )
+        expect(getAutoRemediate()).toBeUndefined()
         expect(core.warning).not.toHaveBeenCalled()
       })
 
@@ -1026,13 +1034,13 @@ describe('input.ts', () => {
         expect(getAutoRemediate()).toBe(true)
       })
 
-      it('returns default true and warns for an invalid value', () => {
+      it('warns and returns undefined for an invalid value', () => {
         core.getInput.mockImplementation((name: string) =>
           name === 'auto-remediate' ? 'yes' : ''
         )
-        expect(getAutoRemediate()).toBe(true)
+        expect(getAutoRemediate()).toBeUndefined()
         expect(core.warning).toHaveBeenCalledWith(
-          'Invalid auto-remediate value "yes". Must be "true" or "false". Using default: true'
+          'Invalid auto-remediate value "yes". Must be "true" or "false". Leaving it unset so the organization setting applies.'
         )
       })
 

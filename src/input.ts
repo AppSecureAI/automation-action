@@ -203,21 +203,27 @@ export function getUseRemediateLoopCc(): boolean {
 }
 
 /**
- * Whether the run should remediate findings after triage.
+ * Run-level override for remediating findings after triage.
  *
- * GitHub Action runs remediate by default. Set `auto-remediate: false` for
- * triage-only runs. The value is always sent to the submit API so the
- * backend never falls back to its own (triage-only) default.
+ * Returns `undefined` when the input is unset (or invalid) so the submit form
+ * omits `auto_remediate` and the backend resolves the organization/application
+ * automation setting, then the platform default (remediation on). An explicit
+ * `'true'` or `'false'` overrides those settings for this run only.
  */
-export function getAutoRemediate(): boolean {
-  const value =
-    getInputValue('auto-remediate', 'INPUT_AUTO_REMEDIATE', 'AUTO_REMEDIATE') ||
-    'true'
+export function getAutoRemediate(): boolean | undefined {
+  const value = getInputValue(
+    'auto-remediate',
+    'INPUT_AUTO_REMEDIATE',
+    'AUTO_REMEDIATE'
+  ).trim()
+  if (value === '') {
+    return undefined
+  }
   if (value !== 'true' && value !== 'false') {
     core.warning(
-      `Invalid auto-remediate value "${value}". Must be "true" or "false". Using default: true`
+      `Invalid auto-remediate value "${value}". Must be "true" or "false". Leaving it unset so the organization setting applies.`
     )
-    return true
+    return undefined
   }
   return value === 'true'
 }

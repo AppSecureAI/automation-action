@@ -827,8 +827,9 @@ function buildSubmitPayloadOptions(mode: string): SubmitPayloadOptions {
   return {
     processingMode: mode,
     autoCreatePrs: getAutoCreatePrs(),
-    // auto_remediate is always sent: Hydra treats an omitted value as false,
-    // which would make every Action run triage-only.
+    // auto_remediate is sent only when the user sets it. When omitted, the
+    // backend applies the org/app automation setting, then the platform
+    // default (on), so an org-level false is not overridden by the Action.
     autoRemediate: getAutoRemediate(),
     createIssuesForIncompleteRemediations:
       getCreateIssuesForIncompleteRemediations(),

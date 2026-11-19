@@ -41,6 +41,21 @@ describe('common core runtime', () => {
     expect(formData.get('grouping_enabled')).toBeNull()
   })
 
+  it('omits auto_remediate when it is not set', () => {
+    const formData = buildSubmitFormData(
+      [{ path: 'results.sarif', buffer: Buffer.from('{}') }],
+      {
+        processingMode: 'individual_cc',
+        autoCreatePrs: false,
+        createIssuesForIncompleteRemediations: false,
+        commentModificationMode: 'basic'
+      }
+    )
+
+    expect(formData.has('auto_remediate')).toBe(false)
+    expect(formData.get('auto_create_prs')).toBe('false')
+  })
+
   it('uses repeated files fields for multi-file submissions', () => {
     const formData = buildSubmitFormData(
       [

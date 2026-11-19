@@ -36,7 +36,7 @@ describe('action.yml', () => {
     expect(inputSource).toContain('ALLOW_MISSING_REPO_ACCESS')
   })
 
-  it('declares auto-remediate defaulting to true and plumbs it to the submit form', () => {
+  it('declares auto-remediate defaulting to unset and plumbs it to the submit form', () => {
     const actionYaml = fs.readFileSync(
       path.join(process.cwd(), 'action.yml'),
       'utf8'
@@ -51,7 +51,7 @@ describe('action.yml', () => {
     )
 
     expect(actionYaml).toMatch(
-      /\n {2}auto-remediate:\n(?: {4}.*\n| {6}.*\n)*? {4}default: 'true'\n/
+      /\n {2}auto-remediate:\n(?: {4}.*\n| {6}.*\n)*? {4}default: ''\n/
     )
     expect(inputSource).toContain("'auto-remediate'")
     expect(inputSource).toContain("'INPUT_AUTO_REMEDIATE'")
